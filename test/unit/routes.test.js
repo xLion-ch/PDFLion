@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { describe, it } from "node:test";
 import {
   docPath,
@@ -9,7 +10,10 @@ import {
   viewerUrl,
 } from "../../src/main/routes.js";
 
-const mounts = { viewer: "/app/viewer", pdflion: "/app/src/viewer" };
+// Absolute on each platform: `/app` on macOS, `C:\app` (the current drive) on Windows.
+const app = path.resolve("/app");
+const mounts = { viewer: path.join(app, "viewer"), pdflion: path.join(app, "src", "viewer") };
+const isWindows = process.platform === "win32";
 const token = "0b6c3a52-5d0e-4c55-9d1e-6f1c2f0e8a41";
 
 /**
@@ -95,25 +99,25 @@ describe("resolveUrl", () => {
   it("maps each mount to its root", () => {
     assert.equal(
       resolveUrl("pdflion://app/viewer/web/viewer.html", mounts),
-      "/app/viewer/web/viewer.html",
+      path.join(mounts.viewer, "web", "viewer.html"),
     );
     assert.equal(
       resolveUrl("pdflion://app/pdflion/bridge.js", mounts),
-      "/app/src/viewer/bridge.js",
+      path.join(mounts.pdflion, "bridge.js"),
     );
   });
 
   it("ignores the query and fragment", () => {
     assert.equal(
       resolveUrl("pdflion://app/viewer/web/viewer.html?file=#page=2", mounts),
-      "/app/viewer/web/viewer.html",
+      path.join(mounts.viewer, "web", "viewer.html"),
     );
   });
 
   it("decodes percent-encoded names", () => {
     assert.equal(
       resolveUrl("pdflion://app/viewer/web/locale/en%2DUS/viewer.ftl", mounts),
-      "/app/viewer/web/locale/en-US/viewer.ftl",
+      path.join(mounts.viewer, "web", "locale", "en-US", "viewer.ftl"),
     );
   });
 
@@ -150,40 +154,60 @@ describe("resolveUrl", () => {
     });
   }
 
+  for (const url of [
+    "pdflion://app/viewer/..%5C..%5Cpackage.json",
+    "pdflion://app/viewer/web%5C..%5C..%5C..%5Cpackage.json",
+    "pdflion://app/viewer/..%5Cviewer-sibling%5Csecret",
+    "pdflion://app/viewer/C:%5CWindows%5Cwin.ini",
+    "pdflion://app/viewer/C:/Windows/win.ini",
+    "pdflion://app/viewer/%5CWindows%5Cwin.ini",
+    "pdflion://app/viewer/%5C%5Cserver%5Cshare%5Cx.pdf",
+  ]) {
+    it(
+      `rejects Windows traversal: ${url}`,
+      { skip: !isWindows && "backslashes and drive letters are plain characters here" },
+      () => {
+        assert.equal(resolveUrl(url, mounts), null);
+      },
+    );
+  }
+
   it("decodes only once", () => {
     assert.equal(
       resolveUrl("pdflion://app/viewer/%252e%252e%252fpackage.json", mounts),
-      "/app/viewer/%2e%2e%2fpackage.json",
+      path.join(mounts.viewer, "%2e%2e%2fpackage.json"),
     );
   });
 });
 
 describe("resolveInside", () => {
+  const root = path.resolve("/root");
+
   it("resolves paths inside the root", () => {
-    assert.equal(resolveInside("/root", "a/b.txt"), "/root/a/b.txt");
-    assert.equal(resolveInside("/root", "a/../b.txt"), "/root/b.txt");
+    assert.equal(resolveInside(root, "a/b.txt"), path.join(root, "a", "b.txt"));
+    assert.equal(resolveInside(root, "a/../b.txt"), path.join(root, "b.txt"));
   });
 
   it("allows names that merely start with two dots", () => {
-    assert.equal(resolveInside("/root", "..hidden"), "/root/..hidden");
+    assert.equal(resolveInside(root, "..hidden"), path.join(root, "..hidden"));
   });
 
   it("rejects the root itself", () => {
-    assert.equal(resolveInside("/root", "."), null);
-    assert.equal(resolveInside("/root", "a/.."), null);
+    assert.equal(resolveInside(root, "."), null);
+    assert.equal(resolveInside(root, "a/.."), null);
   });
 
   it("rejects paths that leave the root", () => {
-    assert.equal(resolveInside("/root", ".."), null);
-    assert.equal(resolveInside("/root", "../x"), null);
-    assert.equal(resolveInside("/root", "a/../../x"), null);
-    assert.equal(resolveInside("/root", "/etc/passwd"), null);
-    assert.equal(resolveInside("/root", "../root-sibling/x"), null);
+    assert.equal(resolveInside(root, ".."), null);
+    assert.equal(resolveInside(root, "../x"), null);
+    assert.equal(resolveInside(root, "a/../../x"), null);
+    assert.equal(resolveInside(root, "/etc/passwd"), null);
+    assert.equal(resolveInside(root, "../root-sibling/x"), null);
   });
 
   it("rejects null bytes and malformed escapes", () => {
-    assert.equal(resolveInside("/root", "a%00.txt"), null);
-    assert.equal(resolveInside("/root", "%E0%A4%A"), null);
-    assert.equal(resolveInside("/root", "%"), null);
+    assert.equal(resolveInside(root, "a%00.txt"), null);
+    assert.equal(resolveInside(root, "%E0%A4%A"), null);
+    assert.equal(resolveInside(root, "%"), null);
   });
 });

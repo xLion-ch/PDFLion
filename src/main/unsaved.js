@@ -1,16 +1,23 @@
 /**
  * Asks before unsaved changes are lost, when a document window closes or the
- * app quits, the way Mac document apps do. "Unsaved" is the window's edited
- * state, which bridge.js reports and the close button shows as a dot.
+ * app quits, the way document apps do on macOS and Windows. "Unsaved" is the
+ * window's edited state, which bridge.js reports and windows.js shows.
  */
 import path from "node:path";
 import { app, BrowserWindow, dialog } from "electron";
 import { runCommand } from "./ipc.js";
+import { documentFile, isEdited } from "./windows.js";
 
-/** Buttons of the save prompt. macOS shows the first one rightmost. */
-const SAVE = 0;
-const CANCEL = 1;
-const DONT_SAVE = 2;
+const SAVE = "Save";
+const CANCEL = "Cancel";
+const DONT_SAVE = "Don’t Save";
+
+/**
+ * The save prompt's buttons, in each platform's order. macOS shows the first
+ * one rightmost, Windows leftmost.
+ */
+const BUTTONS =
+  process.platform === "darwin" ? [SAVE, CANCEL, DONT_SAVE] : [SAVE, DONT_SAVE, CANCEL];
 
 /** Windows the user has decided about, which may now close. */
 const decided = new WeakSet();
@@ -24,7 +31,7 @@ let reviewingQuit = false;
 export function guardUnsavedChanges() {
   app.on("browser-window-created", (_event, win) => {
     win.on("close", (event) => {
-      if (decided.has(win) || !win.isDocumentEdited()) return;
+      if (decided.has(win) || !isEdited(win)) return;
       event.preventDefault();
       reviewAndClose(win);
     });
@@ -36,7 +43,7 @@ export function guardUnsavedChanges() {
 
   app.on("before-quit", (event) => {
     const edited = BrowserWindow.getAllWindows().filter(
-      (win) => win.isDocumentEdited() && !decided.has(win),
+      (win) => isEdited(win) && !decided.has(win),
     );
     if (edited.length === 0) return;
     event.preventDefault();
@@ -90,17 +97,19 @@ async function reviewAndQuit(windows) {
 
 /**
  * @param {BrowserWindow} win
- * @returns {Promise<number>} SAVE, CANCEL or DONT_SAVE
+ * @returns {Promise<string>} SAVE, CANCEL or DONT_SAVE
  */
 async function askToSave(win) {
-  const name = path.basename(win.getRepresentedFilename());
+  const name = path.basename(documentFile(win) ?? "");
   const { response } = await dialog.showMessageBox(win, {
     type: "warning",
     message: `Do you want to save the changes made to the document “${name}”?`,
     detail: "Your changes will be lost if you don’t save them.",
-    buttons: ["Save", "Cancel", "Don’t Save"],
-    defaultId: SAVE,
-    cancelId: CANCEL,
+    buttons: BUTTONS,
+    defaultId: BUTTONS.indexOf(SAVE),
+    cancelId: BUTTONS.indexOf(CANCEL),
+    // Windows would otherwise show Save and Don't Save as command links.
+    noLink: true,
   });
-  return response === SAVE || response === DONT_SAVE ? response : CANCEL;
+  return BUTTONS[response] ?? CANCEL;
 }

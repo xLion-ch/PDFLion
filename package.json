@@ -2,16 +2,16 @@
   "name": "pdflion",
   "productName": "PDFLion",
   "version": "0.1.0",
-  "description": "A native macOS PDF viewer built on pdf.js",
+  "description": "A PDF viewer for macOS and Windows, built on pdf.js",
   "private": true,
   "type": "module",
   "main": "src/main/main.js",
   "scripts": {
-    "prestart": "test -f vendor/pdf.js/build/generic/web/viewer.html || scripts/update-pdfjs.sh --build",
+    "prestart": "node scripts/update-pdfjs.js --build-if-missing",
     "start": "electron .",
-    "pdfjs:check": "scripts/update-pdfjs.sh --check",
-    "pdfjs:update": "scripts/update-pdfjs.sh",
-    "pdfjs:build": "scripts/update-pdfjs.sh --build",
+    "pdfjs:check": "node scripts/update-pdfjs.js --check",
+    "pdfjs:update": "node scripts/update-pdfjs.js",
+    "pdfjs:build": "node scripts/update-pdfjs.js --build",
     "test": "node --test \"test/unit/**/*.test.js\""
   },
   "devDependencies": {

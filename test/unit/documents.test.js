@@ -11,6 +11,11 @@ import {
   writeFileAtomic,
 } from "../../src/main/documents.js";
 
+const isWindows = process.platform === "win32";
+
+/** Windows has a read-only flag where macOS has POSIX permissions. */
+const posixOnly = isWindows && "needs POSIX permissions";
+
 describe("documents", () => {
   it("resolves a registered token to its path", () => {
     const token = register("/Users/me/a.pdf");
@@ -65,7 +70,7 @@ describe("writeFileAtomic", () => {
     assert.deepEqual(await leftovers(), []);
   });
 
-  it("replaces a file and keeps its permissions", async () => {
+  it("replaces a file and keeps its permissions", { skip: posixOnly }, async () => {
     const file = path.join(dir, "existing.pdf");
     await fs.writeFile(file, "old");
     await fs.chmod(file, 0o640);
@@ -79,12 +84,18 @@ describe("writeFileAtomic", () => {
     const file = path.join(dir, "read-only.pdf");
     await fs.writeFile(file, "old");
     await fs.chmod(file, 0o444);
-    await assert.rejects(writeFileAtomic(file, bytes("new")), { code: "EACCES" });
-    assert.equal(await read(file), "old");
-    assert.deepEqual(await leftovers(), []);
+    try {
+      await assert.rejects(writeFileAtomic(file, bytes("new")), {
+        code: isWindows ? "EPERM" : "EACCES",
+      });
+      assert.equal(await read(file), "old");
+      assert.deepEqual(await leftovers(), []);
+    } finally {
+      await fs.chmod(file, 0o644); // Windows won't delete a read-only file
+    }
   });
 
-  it("leaves the file intact when the write fails", async () => {
+  it("leaves the file intact when the write fails", { skip: posixOnly }, async () => {
     const locked = path.join(dir, "locked");
     await fs.mkdir(locked);
     const file = path.join(locked, "doc.pdf");

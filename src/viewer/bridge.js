@@ -13,6 +13,9 @@
   /** `LinkTarget.BLANK` in web/pdf_link_service.js. */
   const LINK_TARGET_BLANK = 2;
 
+  /** Whether shortcuts use ⌘, as on macOS, rather than Ctrl, as on Windows. */
+  const isMac = window.pdflion.platform === "darwin";
+
   /** Whether the document has changes since it was opened or last saved. */
   let edited = false;
 
@@ -45,9 +48,10 @@
     saveAs: (app) => save(app, window.pdflion.saveAs),
   };
 
-  // On macOS the page gets ⌘-key events before the native menu, and the menu
-  // only gets the ones the page leaves unhandled. Capturing on window runs
-  // before pdf.js's listeners, so these keys skip pdf.js and reach the menu.
+  // The page gets key events before the native menu, on macOS and Windows
+  // alike, and the menu only gets the ones the page leaves unhandled.
+  // Capturing on window runs before pdf.js's listeners, so these keys skip
+  // pdf.js and reach the menu.
   window.addEventListener(
     "keydown",
     (event) => {
@@ -84,15 +88,20 @@
   /**
    * Whether a key is a shortcut of the native menu (src/main/menu.js) that
    * pdf.js also acts on: ⌘O, ⌘S, ⌘P, ⌘F, ⇧⌘F, ⌘+, ⌘=, ⌘− and ⌘0, in
-   * web/app.js onKeyDown and web/pdf_print_service.js. pdf.js would open its
-   * own file picker, download instead of saving, open Find on ⇧⌘F, and reset
-   * the zoom after ⌘0.
+   * web/app.js onKeyDown and web/pdf_print_service.js, with Ctrl for ⌘ on
+   * Windows. pdf.js would open its own file picker, download instead of
+   * saving, open Find on ⇧⌘F, and reset the zoom after ⌘0.
+   *
+   * On Windows also F4, Toggle Sidebar there. pdf.js toggles the sidebar on F4
+   * too, without preventDefault(), so the sidebar would toggle twice.
    *
    * @param {KeyboardEvent} event
    * @returns {boolean}
    */
   function isMenuShortcut({ key, metaKey, ctrlKey, altKey, shiftKey }) {
-    if (!metaKey || ctrlKey || altKey) return false;
+    if (key === "F4") return !isMac && !metaKey && !ctrlKey && !altKey && !shiftKey;
+    const [commandKey, otherKey] = isMac ? [metaKey, ctrlKey] : [ctrlKey, metaKey];
+    if (!commandKey || otherKey || altKey) return false;
     switch (key.toLowerCase()) {
       case "o":
       case "s":

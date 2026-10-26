@@ -10,13 +10,13 @@ import path from "node:path";
 import { BrowserWindow, ipcMain } from "electron";
 import { isViewerUrl } from "./routes.js";
 import { saveDocument, saveDocumentAs } from "./saving.js";
-import { openDocument } from "./windows.js";
+import { openDocument, setEdited } from "./windows.js";
 
 /** More than anyone drops at once, and few enough to open as windows. */
 const MAX_DROPPED_FILES = 100;
 
-/** macOS's PATH_MAX. */
-const MAX_PATH_LENGTH = 1024;
+/** Windows' longest path. macOS's PATH_MAX is 1024. */
+const MAX_PATH_LENGTH = 32767;
 
 /** Larger than any PDF pdf.js can hold in memory. */
 const MAX_DOCUMENT_BYTES = 2 ** 31;
@@ -36,8 +36,9 @@ export function handleIpc() {
   });
 
   ipcMain.on("pdflion:set-edited", (event, edited) => {
-    if (!fromViewer(event) || typeof edited !== "boolean") return;
-    BrowserWindow.fromWebContents(event.sender)?.setDocumentEdited(edited);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || !fromViewer(event) || typeof edited !== "boolean") return;
+    setEdited(win, edited);
   });
 
   ipcMain.handle("pdflion:save", (event, bytes) => {

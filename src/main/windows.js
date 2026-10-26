@@ -1,5 +1,6 @@
 /**
- * One BrowserWindow per document, plus the Open panel that leads to them.
+ * One BrowserWindow per document, its edited state, and the Open panel that
+ * leads to them.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -8,8 +9,17 @@ import * as documents from "./documents.js";
 import { preloadPath } from "./paths.js";
 import { isViewerUrl, viewerUrl } from "./routes.js";
 
+const isMac = process.platform === "darwin";
+
 /** @type {Map<string, BrowserWindow>} document token -> window */
 const windows = new Map();
+
+/**
+ * Windows whose document has unsaved changes. Electron's isDocumentEdited()
+ * works only on macOS.
+ * @type {WeakSet<BrowserWindow>}
+ */
+const editedWindows = new WeakSet();
 
 /** Link schemes that open in the default browser or mail app. */
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
@@ -71,9 +81,15 @@ export async function openDocument(file) {
     documents.unregister(token);
   });
   keepOnViewer(win);
+  if (!isMac) {
+    // The window shows the page's title, marked while edited.
+    win.on("page-title-updated", (event, title) => {
+      event.preventDefault();
+      win.setTitle(windowTitle(win, title));
+    });
+  }
 
-  win.setRepresentedFilename(realPath);
-  app.addRecentDocument(realPath);
+  setRepresentedFile(win, realPath);
   win.loadURL(viewerUrl(token, name));
 }
 
@@ -96,23 +112,70 @@ export function documentToken(win) {
 }
 
 /**
+ * @param {BrowserWindow} win
+ * @returns {string | undefined} the path of the file `win` shows
+ */
+export function documentFile(win) {
+  const token = documentToken(win);
+  return token && documents.resolve(token);
+}
+
+/**
+ * Makes a window stand for `file`: in its title bar's proxy icon on macOS,
+ * and in recent documents (the Dock menu and File > Open Recent on macOS, the
+ * taskbar's jump list on Windows).
+ *
+ * @param {BrowserWindow} win
+ * @param {string} file real path
+ */
+export function setRepresentedFile(win, file) {
+  if (isMac) win.setRepresentedFilename(file);
+  app.addRecentDocument(file);
+}
+
+/**
+ * Records whether a window's document has unsaved changes, and shows it: as
+ * the dot in the close button on macOS, and as a "*" before the title on
+ * Windows, like Notepad.
+ *
+ * @param {BrowserWindow} win
+ * @param {boolean} edited
+ */
+export function setEdited(win, edited) {
+  if (edited) editedWindows.add(win);
+  else editedWindows.delete(win);
+  if (isMac) win.setDocumentEdited(edited);
+  else win.setTitle(windowTitle(win, win.webContents.getTitle()));
+}
+
+/**
+ * @param {BrowserWindow} win
+ * @returns {boolean} whether the document in `win` has unsaved changes
+ */
+export function isEdited(win) {
+  return editedWindows.has(win);
+}
+
+/**
  * Shows the Open panel and opens each chosen PDF. Does nothing while the
  * panel is already up, e.g. when the Dock icon is clicked again.
  *
- * @returns {Promise<void>}
+ * @returns {Promise<void>} settles once the chosen files have opened, or
+ *   failed to
  */
 export async function showOpenPanel() {
   if (openPanelShown) return;
   openPanelShown = true;
+  let filePaths;
   try {
-    const { filePaths } = await dialog.showOpenDialog({
+    ({ filePaths } = await dialog.showOpenDialog({
       properties: ["openFile", "multiSelections"],
       filters: [{ name: "PDF Documents", extensions: ["pdf"] }],
-    });
-    for (const file of filePaths) openDocument(file);
+    }));
   } finally {
     openPanelShown = false;
   }
+  await Promise.all(filePaths.map(openDocument));
 }
 
 /**
@@ -129,6 +192,15 @@ function keepOnViewer(win) {
     if (EXTERNAL_PROTOCOLS.has(URL.parse(url)?.protocol ?? "")) shell.openExternal(url);
     return { action: "deny" };
   });
+}
+
+/**
+ * @param {BrowserWindow} win
+ * @param {string} title the page's title
+ * @returns {string} the window title Windows shows for it
+ */
+function windowTitle(win, title) {
+  return isEdited(win) ? `*${title}` : title;
 }
 
 /**

@@ -2,8 +2,9 @@
  * The only module that knows where files live in dev versus a packaged build.
  *
  * In dev, `electron .` makes the app path the repo root. Packaged, the app path
- * is `Contents/Resources/app.asar`, and the pdf.js build is copied next to it
- * into `Contents/Resources/pdfjs`.
+ * is `app.asar` in the resources directory (`Contents/Resources/` on macOS,
+ * `resources\` on Windows), and the pdf.js build is copied next to it into
+ * `pdfjs`.
  */
 import path from "node:path";
 import { app } from "electron";

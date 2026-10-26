@@ -74,7 +74,7 @@ export function resolveUrl(url, mounts) {
 /**
  * Resolves a percent-encoded relative path against `root`. Returns null if the
  * decoded path leaves `root`, e.g. through `..%2F`, which URL parsing leaves
- * encoded.
+ * encoded, or on Windows through `..%5C`, a drive letter or a UNC path.
  *
  * @param {string} root absolute directory
  * @param {string} encodedPath

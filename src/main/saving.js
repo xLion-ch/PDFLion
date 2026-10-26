@@ -4,10 +4,10 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { app, dialog } from "electron";
+import { dialog } from "electron";
 import * as documents from "./documents.js";
 import { docPath } from "./routes.js";
-import { documentToken } from "./windows.js";
+import { documentToken, setRepresentedFile } from "./windows.js";
 
 /**
  * Phrased like macOS's "could not be saved" alerts.
@@ -18,6 +18,8 @@ const SAVE_ERRORS = {
   EPERM: "You don’t have permission to save the file.",
   EROFS: "The volume is read-only.",
   ENOSPC: "There isn’t enough space on the disk.",
+  // Windows: another app has the file open.
+  EBUSY: "The file is in use by another app.",
 };
 
 /**
@@ -73,8 +75,7 @@ export async function saveDocumentAs(win, bytes) {
   }
 
   documents.update(token, file);
-  win.setRepresentedFilename(file);
-  app.addRecentDocument(file);
+  setRepresentedFile(win, file);
   return docPath(token, path.basename(file));
 }
 

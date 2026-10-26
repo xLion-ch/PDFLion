@@ -1,14 +1,18 @@
 /**
- * The native application menu. Standard items use Electron roles. Items that
- * act on the document send a command to the focused window's bridge.js, and
- * are disabled while no document window is focused.
+ * The native application menu: the menu bar on macOS, each window's menu bar
+ * on Windows. Standard items use Electron roles. Items that act on the
+ * document send a command to the focused window's bridge.js, and are disabled
+ * while no document window is focused.
  *
- * Shortcuts follow Preview. bridge.js keeps pdf.js from acting on the ones
- * pdf.js also binds, so keep its isMenuShortcut() in sync with them.
+ * On macOS, shortcuts follow Preview. Windows uses Ctrl where macOS uses ⌘,
+ * except where noted. bridge.js keeps pdf.js from acting on the ones pdf.js
+ * also binds, so keep its isMenuShortcut() in sync with them.
  */
 import { app, BrowserWindow, Menu, shell } from "electron";
 import { runCommand } from "./ipc.js";
 import { isDocumentWindow, showOpenPanel } from "./windows.js";
+
+const isMac = process.platform === "darwin";
 
 const REPOSITORY_URL = "https://github.com/c14ud3/PDFLion";
 
@@ -27,23 +31,29 @@ export function installMenu() {
 /** @returns {Electron.MenuItemConstructorOptions[]} */
 function template() {
   return [
-    { role: "appMenu" },
+    ...onMac({ role: "appMenu" }),
     {
       label: "File",
       submenu: [
-        { label: "Open…", accelerator: "Cmd+O", click: () => showOpenPanel() },
-        { role: "recentDocuments", submenu: [{ role: "clearRecentDocuments" }] },
+        { label: "Open…", accelerator: "CmdOrCtrl+O", click: () => showOpenPanel() },
+        // The role is macOS only. Windows lists recent files in the taskbar's
+        // jump list.
+        ...onMac({ role: "recentDocuments", submenu: [{ role: "clearRecentDocuments" }] }),
         { type: "separator" },
         { role: "close" },
-        commandItem("Save", "save", "Cmd+S"),
-        commandItem("Save As…", "saveAs", "Shift+Cmd+S"),
+        commandItem("Save", "save", "CmdOrCtrl+S"),
+        commandItem("Save As…", "saveAs", "Shift+CmdOrCtrl+S"),
         { type: "separator" },
-        commandItem("Print…", "print", "Cmd+P"),
+        commandItem("Print…", "print", "CmdOrCtrl+P"),
+        // Exit, which has no shortcut on Windows: Alt+F4 closes the window,
+        // and closing the last one quits.
+        ...onWindows({ type: "separator" }, { role: "quit" }),
       ],
     },
     {
-      // Electron's editMenu role, plus Find. Copy and Select All act on the
-      // text layer, or on form fields and annotations while one has focus.
+      // Electron's editMenu role for each platform, plus Find. Copy and Select
+      // All act on the text layer, or on form fields and annotations while one
+      // has focus.
       label: "Edit",
       submenu: [
         { role: "undo" },
@@ -52,34 +62,40 @@ function template() {
         { role: "cut" },
         { role: "copy" },
         { role: "paste" },
-        { role: "pasteAndMatchStyle" },
+        ...onMac({ role: "pasteAndMatchStyle" }),
         { role: "delete" },
+        ...onWindows({ type: "separator" }),
         { role: "selectAll" },
         { type: "separator" },
-        commandItem("Find…", "find", "Cmd+F"),
-        { type: "separator" },
-        {
-          label: "Speech",
-          submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }],
-        },
+        commandItem("Find…", "find", "CmdOrCtrl+F"),
+        ...onMac(
+          { type: "separator" },
+          {
+            label: "Speech",
+            submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }],
+          },
+        ),
       ],
     },
     {
       // Not the zoomIn and resetZoom roles: they scale the whole UI, not the page.
       label: "View",
       submenu: [
-        commandItem("Toggle Sidebar", "toggleSidebar", "Alt+Cmd+S"),
+        // Not Ctrl+Alt+S on Windows, which is AltGr+S, a character on many
+        // keyboards. F4 is pdf.js's own shortcut for it, and Acrobat's.
+        commandItem("Toggle Sidebar", "toggleSidebar", isMac ? "Alt+Cmd+S" : "F4"),
         { type: "separator" },
-        commandItem("Actual Size", "actualSize", "Cmd+0"),
-        commandItem("Zoom In", "zoomIn", "Cmd+Plus"),
+        commandItem("Actual Size", "actualSize", "CmdOrCtrl+0"),
+        commandItem("Zoom In", "zoomIn", "CmdOrCtrl+Plus"),
         // ⌘= as well, since + needs Shift on many keyboards.
-        { ...commandItem("Zoom In", "zoomIn", "Cmd+=", "zoomInEquals"), visible: false },
-        commandItem("Zoom Out", "zoomOut", "Cmd+-"),
+        { ...commandItem("Zoom In", "zoomIn", "CmdOrCtrl+=", "zoomInEquals"), visible: false },
+        commandItem("Zoom Out", "zoomOut", "CmdOrCtrl+-"),
         { type: "separator" },
-        commandItem("Rotate Left", "rotateLeft", "Cmd+L"),
-        commandItem("Rotate Right", "rotateRight", "Cmd+R"),
+        commandItem("Rotate Left", "rotateLeft", "CmdOrCtrl+L"),
+        commandItem("Rotate Right", "rotateRight", "CmdOrCtrl+R"),
         { type: "separator" },
-        commandItem("Presentation Mode", "presentation", "Shift+Cmd+F"),
+        commandItem("Presentation Mode", "presentation", "Shift+CmdOrCtrl+F"),
+        // ⌃⌘F on macOS, F11 on Windows.
         { role: "togglefullscreen" },
         ...(app.isPackaged
           ? []
@@ -91,14 +107,33 @@ function template() {
             ]),
       ],
     },
-    { role: "windowMenu" },
+    // Windows apps have no Window menu: the title bar minimizes and closes.
+    ...onMac({ role: "windowMenu" }),
     {
       role: "help",
       submenu: [
         { label: "PDFLion on GitHub", click: () => shell.openExternal(REPOSITORY_URL) },
+        // On macOS, About is in the app menu.
+        ...onWindows({ type: "separator" }, { role: "about" }),
       ],
     },
   ];
+}
+
+/**
+ * @param {Electron.MenuItemConstructorOptions[]} items
+ * @returns {Electron.MenuItemConstructorOptions[]} `items` on macOS, else none
+ */
+function onMac(...items) {
+  return isMac ? items : [];
+}
+
+/**
+ * @param {Electron.MenuItemConstructorOptions[]} items
+ * @returns {Electron.MenuItemConstructorOptions[]} `items` on Windows, else none
+ */
+function onWindows(...items) {
+  return isMac ? [] : items;
 }
 
 /**
