@@ -1,16 +1,15 @@
 /**
  * The `pdflion://` scheme. Windows load everything from `pdflion://app/`: the
- * pdf.js generic viewer at `/viewer/` and `src/viewer/` at `/pdflion/`. One
- * origin for all of it keeps the viewer's same-origin `file=` check happy.
+ * pdf.js generic viewer at `/viewer/`, `src/viewer/` at `/pdflion/`, and
+ * opened documents at `/doc/<token>/<name>`. One origin for all of it keeps
+ * the viewer's same-origin `file=` check happy.
  */
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
+import * as documents from "./documents.js";
 import { pdflionRoot, viewerRoot } from "./paths.js";
-import { ORIGIN, SCHEME, resolveUrl } from "./routes.js";
-
-/** The page every window loads, followed by `?file=…`. */
-export const VIEWER_URL = `${ORIGIN}/viewer/web/viewer.html`;
+import { SCHEME, docToken, resolveUrl } from "./routes.js";
 
 const mounts = { viewer: viewerRoot, pdflion: pdflionRoot };
 const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
@@ -66,9 +65,30 @@ export function handleProtocol() {
  * @returns {Promise<Response>}
  */
 async function serve(request) {
+  const token = docToken(request.url);
+  if (token) {
+    const file = documents.resolve(token);
+    // Whatever the extension, it was opened as a PDF.
+    return file ? serveFile(file, { "Content-Type": "application/pdf" }) : notFound();
+  }
+
   const file = resolveUrl(request.url, mounts);
   if (!file) return notFound();
 
+  /** @type {Record<string, string>} */
+  const headers = {};
+  const type = CONTENT_TYPES[path.extname(file)];
+  if (type) headers["Content-Type"] = type;
+  if (file === viewerHtml) headers["Content-Security-Policy"] = VIEWER_CSP;
+  return serveFile(file, headers);
+}
+
+/**
+ * @param {string} file absolute path
+ * @param {Record<string, string>} overrides headers to set on top of Chromium's
+ * @returns {Promise<Response>}
+ */
+async function serveFile(file, overrides) {
   let response;
   try {
     response = await net.fetch(pathToFileURL(file).href);
@@ -77,9 +97,7 @@ async function serve(request) {
   }
 
   const headers = new Headers(response.headers);
-  const type = CONTENT_TYPES[path.extname(file)];
-  if (type) headers.set("Content-Type", type);
-  if (file === viewerHtml) headers.set("Content-Security-Policy", VIEWER_CSP);
+  for (const [name, value] of Object.entries(overrides)) headers.set(name, value);
   return new Response(response.body, { status: response.status, headers });
 }
 

@@ -1,8 +1,63 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { resolveInside, resolveUrl } from "../../src/main/routes.js";
+import { docToken, resolveInside, resolveUrl, viewerUrl } from "../../src/main/routes.js";
 
 const mounts = { viewer: "/app/viewer", pdflion: "/app/src/viewer" };
+const token = "0b6c3a52-5d0e-4c55-9d1e-6f1c2f0e8a41";
+
+/**
+ * Follows a viewer URL to the document URL the way pdf.js v6.4.299 does: its
+ * parseQueryString decodes `file` once with URLSearchParams, then the result is
+ * resolved against the viewer's location.
+ *
+ * @param {string} url
+ */
+function documentUrlFor(url) {
+  const file = new URLSearchParams(new URL(url).search).get("file");
+  return new URL(file ?? "", url);
+}
+
+describe("viewerUrl", () => {
+  it("points the viewer at a same-origin /doc/ URL", () => {
+    const url = viewerUrl(token, "Report.pdf");
+    assert.ok(url.startsWith("pdflion://app/viewer/web/viewer.html?file="));
+    assert.equal(documentUrlFor(url).href, `pdflion://app/doc/${token}/Report.pdf`);
+  });
+
+  for (const name of [
+    "Report #2.pdf",
+    "what?.pdf",
+    "100% done.pdf",
+    "a+b & c=d;.pdf",
+    "Ünïcödé 文件.pdf",
+    "colon:in name.pdf",
+  ]) {
+    it(`round-trips the token and name: ${name}`, () => {
+      const docUrl = documentUrlFor(viewerUrl(token, name));
+      assert.equal(docUrl.search, "");
+      assert.equal(docUrl.hash, "");
+      assert.equal(docToken(docUrl.href), token);
+      assert.equal(decodeURIComponent(docUrl.pathname.split("/").pop() ?? ""), name);
+    });
+  }
+});
+
+describe("docToken", () => {
+  it("extracts the token", () => {
+    assert.equal(docToken(`pdflion://app/doc/${token}/x.pdf`), token);
+    assert.equal(docToken(`pdflion://app/doc/${token}/x.pdf?a=1#page=3`), token);
+  });
+
+  it("rejects anything else", () => {
+    assert.equal(docToken(`pdflion://app/doc/${token}`), null);
+    assert.equal(docToken(`pdflion://app/doc/${token}/`), null);
+    assert.equal(docToken(`pdflion://app/doc/${token}/a/b.pdf`), null);
+    assert.equal(docToken(`pdflion://app/viewer/doc/${token}/x.pdf`), null);
+    assert.equal(docToken(`pdflion://evil/doc/${token}/x.pdf`), null);
+    assert.equal(docToken(`https://app/doc/${token}/x.pdf`), null);
+    assert.equal(docToken("not a url"), null);
+  });
+});
 
 describe("resolveUrl", () => {
   it("maps each mount to its root", () => {

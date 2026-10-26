@@ -32,9 +32,9 @@ This is the target layout. Directories appear as PLAN.md phases land.
 src/main/        main process: one module per concern
   main.js        app lifecycle, open-file queue
   protocol.js    pdflion:// scheme handler
-  routes.js      pdflion:// URL to file mapping, Electron-free so unit tests can import it
+  routes.js      pdflion:// URL layout: viewer URLs, /doc/ tokens, mount paths. Electron-free so unit tests can import it
   documents.js   token registry for opened files, save / save as
-  windows.js     one BrowserWindow per document
+  windows.js     one BrowserWindow per document, the Open panel
   menu.js        native menu
   paths.js       the only place that knows dev vs packaged locations
 src/preload/

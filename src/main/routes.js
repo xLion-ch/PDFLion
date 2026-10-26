@@ -1,11 +1,39 @@
 /**
- * Maps `pdflion://app/<mount>/<path>` URLs to files below each mount's root.
+ * The URL layout of `pdflion://app/`: mounts at `/<mount>/<path>` map to files
+ * below each mount's root, and `/doc/<token>/<name>` names an opened document.
  * Kept free of Electron imports so the unit tests can run it under plain Node.
  */
 import path from "node:path";
 
 export const SCHEME = "pdflion";
 export const ORIGIN = `${SCHEME}://app`;
+
+/** The page every window loads, followed by `?file=…`. */
+export const VIEWER_URL = `${ORIGIN}/viewer/web/viewer.html`;
+
+/**
+ * The viewer URL for an opened document. `name` sits in the path so pdf.js
+ * derives a sensible title and download name from it. pdf.js decodes `file`
+ * once and resolves it against the viewer URL, so it stays same-origin.
+ *
+ * @param {string} token from the documents registry
+ * @param {string} name file name, e.g. `Report #2.pdf`
+ * @returns {string}
+ */
+export function viewerUrl(token, name) {
+  const params = new URLSearchParams({ file: `/doc/${token}/${encodeURIComponent(name)}` });
+  return `${VIEWER_URL}?${params}`;
+}
+
+/**
+ * Returns the token of a `/doc/<token>/<name>` URL, or null for any other URL.
+ *
+ * @param {string} url
+ * @returns {string | null}
+ */
+export function docToken(url) {
+  return /^\/doc\/([^/]+)\/[^/]+$/.exec(appPathname(url) ?? "")?.[1] ?? null;
+}
 
 /**
  * Returns the file a URL names, or null if it names no mount or escapes the
@@ -16,9 +44,7 @@ export const ORIGIN = `${SCHEME}://app`;
  * @returns {string | null}
  */
 export function resolveUrl(url, mounts) {
-  const parsed = URL.parse(url);
-  if (parsed?.protocol !== `${SCHEME}:` || parsed.host !== "app") return null;
-  const [, mount, rest] = /^\/([^/]+)\/(.+)$/.exec(parsed.pathname) ?? [];
+  const [, mount, rest] = /^\/([^/]+)\/(.+)$/.exec(appPathname(url) ?? "") ?? [];
   if (!rest || !Object.hasOwn(mounts, mount)) return null;
   return resolveInside(mounts[mount], rest);
 }
@@ -52,4 +78,14 @@ export function resolveInside(root, encodedPath) {
     return null;
   }
   return file;
+}
+
+/**
+ * @param {string} url
+ * @returns {string | null} the still percent-encoded path, if `url` is ours
+ */
+function appPathname(url) {
+  const parsed = URL.parse(url);
+  if (parsed?.protocol !== `${SCHEME}:` || parsed.host !== "app") return null;
+  return parsed.pathname;
 }
