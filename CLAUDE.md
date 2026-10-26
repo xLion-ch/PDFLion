@@ -44,7 +44,7 @@ src/viewer/      served at pdflion://app/pdflion/, injected into viewer.html
 resources/       icon, entitlements (electron-builder buildResources)
 scripts/
   update-pdfjs.sh
-test/unit/       node --test
+test/unit/       node --test, files named *.test.js
 test/e2e/        Playwright against the real app
 vendor/pdf.js/   submodule, never edit
 ```
@@ -60,8 +60,6 @@ npm test                 # unit tests
 npm run test:e2e         # Playwright smoke tests
 npm run dist             # .dmg / .zip in dist/
 ```
-
-Until `package.json` exists (PLAN.md phase 1), call the script directly: `scripts/update-pdfjs.sh --build`.
 
 ## pdf.js
 
