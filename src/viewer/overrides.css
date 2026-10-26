@@ -1,6 +1,13 @@
 /*
- * Adjustments to pdf.js's viewer UI, injected after viewer.css. Selectors were
- * checked against pdf.js v6.4.299's web/viewer.html.
+ * Adjustments to pdf.js's viewer UI, injected after viewer.css. Selectors and
+ * variables were checked against pdf.js v6.4.299's web/viewer.html and
+ * web/viewer.css.
+ *
+ * The viewer is restyled in Material Design 3: its colour roles, shapes, state
+ * layers and Material Symbols icons. Most of it sets variables viewer.css
+ * already reads, including the Firefox design tokens it falls back on, such as
+ * --text-color and --button-background-color. Colours are set only outside
+ * forced-colors mode, so pdf.js's high contrast styles still apply there.
  */
 
 /* File > Open… and drag and drop replace Open, File > Save and Save As replace Save. */
@@ -18,5 +25,777 @@
 @media not all and (max-width: 750px) {
   #secondaryToolbarButtonContainer > .visibleMediumView + .horizontalToolbarSeparator {
     display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Material tokens
+ *
+ * The colour scheme is Material's monochrome scheme, as material-color-utilities
+ * generates it (SchemeMonochrome, contrast 0): near-white in light mode and
+ * near-black in dark mode. Its primary, pure black or white there, is softened
+ * to the on-surface tone.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --md-sys-color-primary: light-dark(#1b1b1b, #e2e2e2);
+  --md-sys-color-on-primary: light-dark(#f9f9f9, #1b1b1b);
+  --md-sys-color-secondary: light-dark(#5e5e5e, #c6c6c6);
+  --md-sys-color-secondary-container: light-dark(#d4d4d4, #474747);
+  --md-sys-color-on-secondary-container: light-dark(#1b1b1b, #e2e2e2);
+  --md-sys-color-error: light-dark(#ba1a1a, #ffb4ab);
+  --md-sys-color-error-container: light-dark(#ffdad6, #93000a);
+  --md-sys-color-on-error-container: light-dark(#410002, #ffdad6);
+  --md-sys-color-surface-dim: light-dark(#dadada, #131313);
+  --md-sys-color-surface-container-low: light-dark(#f3f3f3, #1b1b1b);
+  --md-sys-color-surface-container: light-dark(#eeeeee, #1f1f1f);
+  --md-sys-color-surface-container-high: light-dark(#e8e8e8, #2a2a2a);
+  --md-sys-color-surface-container-highest: light-dark(#e2e2e2, #353535);
+  --md-sys-color-on-surface: light-dark(#1b1b1b, #e2e2e2);
+  --md-sys-color-on-surface-variant: light-dark(#474747, #c6c6c6);
+  --md-sys-color-outline: light-dark(#777777, #919191);
+  --md-sys-color-outline-variant: light-dark(#c6c6c6, #474747);
+  --md-sys-color-scrim: rgb(0 0 0 / 0.32);
+
+  /* The light scheme's primary, for outlines drawn on the white page. */
+  --md-page-outline-color: #1b1b1b;
+
+  --md-sys-elevation-1: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px 1px rgb(0 0 0 / 0.15);
+  --md-sys-elevation-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 6px 2px rgb(0 0 0 / 0.15);
+  --md-sys-elevation-3: 0 1px 3px rgb(0 0 0 / 0.3), 0 4px 8px 3px rgb(0 0 0 / 0.15);
+
+  /* State layers: hovered, focused and pressed. */
+  --md-hover: 8%;
+  --md-pressed: 10%;
+
+  --md-shape-full: 9999px;
+  --md-shape-extra-small: 4px;
+  --md-shape-small: 8px;
+  --md-shape-medium: 12px;
+  --md-shape-large: 16px;
+  --md-shape-extra-large: 28px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Icons: Material Symbols Outlined, 20px, from google/material-design-icons
+ * (Apache-2.0), in src/viewer/icons/. spread_odd.svg and spread_even.svg are
+ * drawn for PDFLion in the same style.
+ *
+ * Absolute URLs, because these replace variables that viewer.css, in another
+ * directory, declares.
+ * ------------------------------------------------------------------------- */
+
+:root {
+  --icon-size: 20px;
+
+  --toolbarButton-viewsManagerToggle-icon: url(/pdflion/icons/menu.svg);
+  --toolbarButton-secondaryToolbarToggle-icon: url(/pdflion/icons/more_vert.svg);
+  --toolbarButton-pageUp-icon: url(/pdflion/icons/keyboard_arrow_up.svg);
+  --toolbarButton-pageDown-icon: url(/pdflion/icons/keyboard_arrow_down.svg);
+  --toolbarButton-zoomOut-icon: url(/pdflion/icons/zoom_out.svg);
+  --toolbarButton-zoomIn-icon: url(/pdflion/icons/zoom_in.svg);
+  --toolbarButton-search-icon: url(/pdflion/icons/search.svg);
+  --findbarButton-previous-icon: url(/pdflion/icons/keyboard_arrow_up.svg);
+  --findbarButton-next-icon: url(/pdflion/icons/keyboard_arrow_down.svg);
+  --toolbarButton-editorComment-icon: url(/pdflion/icons/add_comment.svg);
+  --toolbarButton-editorFreeText-icon: url(/pdflion/icons/text_fields.svg);
+  --toolbarButton-editorHighlight-icon: url(/pdflion/icons/ink_highlighter.svg);
+  --toolbarButton-editorInk-icon: url(/pdflion/icons/draw.svg);
+  --toolbarButton-editorStamp-icon: url(/pdflion/icons/add_photo_alternate.svg);
+  --toolbarButton-editorSignature-icon: url(/pdflion/icons/signature.svg);
+  --toolbarButton-signaturePropertiesVerified-icon: url(/pdflion/icons/verified_user.svg);
+  --toolbarButton-signaturePropertiesError-icon: url(/pdflion/icons/gpp_bad.svg);
+  --toolbarButton-print-icon: url(/pdflion/icons/print.svg);
+  --toolbarButton-openFile-icon: url(/pdflion/icons/folder_open.svg);
+  --toolbarButton-download-icon: url(/pdflion/icons/download.svg);
+  --toolbarButton-presentationMode-icon: url(/pdflion/icons/slideshow.svg);
+  --toolbarButton-bookmark-icon: url(/pdflion/icons/link.svg);
+  --toolbarButton-viewThumbnail-icon: url(/pdflion/icons/grid_view.svg);
+  --toolbarButton-viewOutline-icon: url(/pdflion/icons/toc.svg);
+  --toolbarButton-viewAttachments-icon: url(/pdflion/icons/attach_file.svg);
+  --toolbarButton-viewLayers-icon: url(/pdflion/icons/layers.svg);
+  --toolbarButton-currentOutlineItem-icon: url(/pdflion/icons/my_location.svg);
+  --toolbarButton-menuArrow-icon: url(/pdflion/icons/arrow_drop_down.svg);
+  --secondaryToolbarButton-firstPage-icon: url(/pdflion/icons/vertical_align_top.svg);
+  --secondaryToolbarButton-lastPage-icon: url(/pdflion/icons/vertical_align_bottom.svg);
+  --secondaryToolbarButton-rotateCcw-icon: url(/pdflion/icons/rotate_left.svg);
+  --secondaryToolbarButton-rotateCw-icon: url(/pdflion/icons/rotate_right.svg);
+  --secondaryToolbarButton-selectTool-icon: url(/pdflion/icons/arrow_selector_tool.svg);
+  --secondaryToolbarButton-handTool-icon: url(/pdflion/icons/pan_tool.svg);
+  --secondaryToolbarButton-scrollPage-icon: url(/pdflion/icons/view_day.svg);
+  --secondaryToolbarButton-scrollVertical-icon: url(/pdflion/icons/view_agenda.svg);
+  --secondaryToolbarButton-scrollHorizontal-icon: url(/pdflion/icons/view_week.svg);
+  --secondaryToolbarButton-scrollWrapped-icon: url(/pdflion/icons/view_module.svg);
+  --secondaryToolbarButton-spreadNone-icon: url(/pdflion/icons/crop_portrait.svg);
+  --secondaryToolbarButton-spreadOdd-icon: url(/pdflion/icons/spread_odd.svg);
+  --secondaryToolbarButton-spreadEven-icon: url(/pdflion/icons/spread_even.svg);
+  --secondaryToolbarButton-documentProperties-icon: url(/pdflion/icons/info.svg);
+  --editorParams-stampAddImage-icon: url(/pdflion/icons/add.svg);
+}
+
+#viewsManager {
+  --views-manager-button-icon: url(/pdflion/icons/grid_view.svg);
+  --views-manager-button-arrow-icon: url(/pdflion/icons/arrow_drop_down.svg);
+  --views-manager-add-file-button-icon: url(/pdflion/icons/add.svg);
+  --current-outline-button-icon: url(/pdflion/icons/my_location.svg);
+  --menuitem-thumbnailsView-icon: url(/pdflion/icons/grid_view.svg);
+  --menuitem-outlinesView-icon: url(/pdflion/icons/toc.svg);
+  --menuitem-attachmentsView-icon: url(/pdflion/icons/attach_file.svg);
+  --menuitem-layersView-icon: url(/pdflion/icons/layers.svg);
+  --manage-button-icon: url(/pdflion/icons/arrow_drop_down.svg);
+  --close-button-icon: url(/pdflion/icons/close.svg);
+}
+
+.treeView {
+  --treeitem-expanded-icon: url(/pdflion/icons/keyboard_arrow_down.svg);
+  --treeitem-collapsed-icon: url(/pdflion/icons/keyboard_arrow_right.svg);
+}
+
+.popupMenu {
+  --menuitem-checkmark-icon: url(/pdflion/icons/check.svg);
+  --menu-icon-size: 20px;
+}
+
+.messageBar {
+  --closing-button-icon: url(/pdflion/icons/close.svg);
+}
+
+/* viewer.css sets this on a selector three classes deep, hence !important. */
+.editToolbar {
+  --editor-toolbar-delete-image: url(/pdflion/icons/delete.svg) !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * Shapes and sizes
+ * ------------------------------------------------------------------------- */
+
+:root {
+  /* A 48px top app bar holding 40px icon buttons. */
+  --toolbar-height: 48px;
+  --toolbar-horizontal-padding: 4px;
+  --toolbar-vertical-padding: 4px;
+  --toolbar-icon-opacity: 1;
+  --doorhanger-icon-opacity: 1;
+
+  /* Firefox design tokens viewer.css falls back on. */
+  --button-border-radius: var(--md-shape-full);
+  --button-font-size: 14px;
+  --button-font-weight: 500;
+  --button-min-height: 40px;
+  --button-padding: 0 24px;
+  --border-radius-small: var(--md-shape-small);
+  --border-radius-medium: var(--md-shape-medium);
+  --focus-outline-width: 3px;
+}
+
+#toolbarContainer {
+  --menuitem-height: 36px;
+
+  #toolbarViewer #toolbarViewerLeft {
+    margin-inline-start: 0;
+  }
+}
+
+.toolbarHorizontalGroup {
+  gap: 2px;
+}
+
+/* Icon buttons */
+.toolbarButton {
+  border-radius: var(--md-shape-full);
+
+  &:focus-visible {
+    outline: var(--focus-ring-outline);
+    outline-offset: -3px;
+  }
+
+  &:is([disabled="disabled"], [disabled]) {
+    opacity: 0.38;
+  }
+}
+
+/* Icon buttons in pairs get no divider between them. */
+.splitToolbarButtonSeparator {
+  display: none;
+}
+
+.verticalToolbarSeparator {
+  height: 24px;
+  margin-inline: 6px;
+}
+
+/* Outlined text fields: the page number and the find field. */
+.toolbarField {
+  height: 36px;
+  margin: 0;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-radius: var(--md-shape-extra-small);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+#pageNumber {
+  width: 56px;
+  padding-inline: 8px;
+}
+
+.toolbarLabel {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* The zoom menu, as an outlined select. */
+.dropdownToolbarButton {
+  height: 36px;
+  border-radius: var(--md-shape-extra-small);
+  overflow: hidden;
+
+  > select {
+    height: 100%;
+    font-size: 14px;
+    padding-inline: 12px 36px;
+  }
+
+  &::after {
+    width: 24px;
+    height: 24px;
+    inset-inline-end: 6px;
+  }
+}
+
+/*
+ * Narrow windows get 32px icon buttons. pdf.js only starts hiding toolbar
+ * items at 750px, and the 40px buttons would push the last ones out of the
+ * window before then.
+ */
+@media all and (max-width: 900px) {
+  :root {
+    --toolbar-vertical-padding: 8px;
+  }
+
+  .toolbarHorizontalGroup {
+    gap: 0;
+  }
+
+  #toolbarContainer #toolbarViewer .toolbarButtonSpacer {
+    width: 0;
+  }
+
+  .verticalToolbarSeparator {
+    margin-inline: 4px;
+  }
+
+  #pageNumber {
+    width: 48px;
+  }
+
+  .dropdownToolbarButton {
+    > select {
+      padding-inline: 8px 32px;
+    }
+
+    &::after {
+      inset-inline-end: 4px;
+    }
+  }
+}
+
+/* From pdf.js's 690px step down to its 560px one, which hides the zoom menu. */
+@media all and (max-width: 690px) {
+  .verticalToolbarSeparator {
+    margin-inline: 2px;
+  }
+
+  .dropdownToolbarButton {
+    > select {
+      font-size: 13px;
+      padding-inline: 8px 28px;
+    }
+
+    &::after {
+      inset-inline-end: 2px;
+    }
+  }
+}
+
+/* Menus and popovers: no arrow, aligned with the button that opens them. */
+.doorHanger,
+.doorHangerRight {
+  inset-block-start: calc(100% + 8px);
+  border-radius: var(--md-shape-extra-small);
+
+  &::before,
+  &::after {
+    display: none;
+  }
+}
+
+.doorHanger {
+  inset-inline-start: 0;
+}
+
+.doorHangerRight {
+  inset-inline-end: 0;
+}
+
+#findbar,
+.editorParamsToolbar {
+  border-radius: var(--md-shape-medium);
+}
+
+.toolbarButtonWithContainer .menu {
+  padding-block: 8px;
+}
+
+#secondaryToolbar {
+  width: max-content;
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.horizontalToolbarSeparator {
+  margin: 4px 0;
+}
+
+/* Menu items */
+.toolbarButton.labeled {
+  border-radius: 0;
+  gap: 12px;
+  padding-inline: 12px 16px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.popupMenu {
+  --menuitem-border-radius: 0;
+  --menuitem-gap: 12px;
+
+  padding: 8px 0;
+  border-radius: var(--md-shape-extra-small);
+
+  &.withMark {
+    --menu-mark-icon-size: 20px;
+  }
+
+  > button {
+    height: 36px;
+    padding-inline: calc(12px + var(--menu-mark-icon-size) + var(--menuitem-gap)) 16px;
+    border: none;
+
+    &.selected::after {
+      width: 20px;
+      height: 20px;
+      inset-inline-start: 12px;
+    }
+
+    &:not(.noIcon)::before {
+      width: 20px;
+      height: 20px;
+    }
+
+    > span {
+      padding-inline-start: 0;
+      font-size: 14px;
+      font-weight: 400;
+    }
+  }
+}
+
+/* The find bar, with filter chips for its options. */
+#findbar {
+  --findbar-padding: 4px;
+
+  padding: 4px 8px;
+  gap: 4px 8px;
+
+  #findInputContainer #findInput {
+    width: 220px;
+    padding-inline: 12px;
+  }
+
+  #findbarOptionsOneContainer,
+  #findbarOptionsTwoContainer {
+    gap: 8px;
+  }
+
+  .toggleButton {
+    flex-direction: row;
+    gap: 8px;
+    height: 32px;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    border-radius: var(--md-shape-small);
+    font-weight: 500;
+
+    > label {
+      padding-inline: 15px;
+      line-height: 30px;
+      cursor: pointer;
+    }
+
+    &:has(> input:checked) {
+      padding-inline-start: 7px;
+
+      &::before {
+        content: "";
+        width: 18px;
+        height: 18px;
+        background-color: currentColor;
+        mask-image: url(/pdflion/icons/check.svg);
+        mask-size: cover;
+      }
+
+      > label {
+        padding-inline-start: 0;
+      }
+    }
+
+    &:has(> input:focus-visible) {
+      outline: var(--focus-ring-outline);
+      outline-offset: 2px;
+    }
+  }
+
+  #findbarMessageContainer #findResultsCount {
+    padding-block: 0;
+  }
+}
+
+/* The views manager, as a side sheet. */
+.sidebar {
+  --sidebar-border-radius: var(--md-shape-large);
+}
+
+#viewsManager {
+  --image-border-width: 4px;
+
+  #viewsManagerHeader .viewsManagerLabel {
+    font-size: 16px;
+    font-weight: 500;
+  }
+}
+
+.treeView {
+  .treeItem > a {
+    box-sizing: border-box;
+    min-width: calc(100% - 8px);
+    margin-bottom: 2px;
+    padding: 8px 12px;
+    font-size: 14px;
+    line-height: 20px;
+
+    &,
+    &:hover {
+      border-radius: 18px;
+    }
+  }
+
+  &.withNesting .treeItemToggler {
+    &::before {
+      top: 10px;
+    }
+
+    &:hover + a,
+    &:hover ~ .treeItems {
+      border-radius: 18px;
+    }
+  }
+}
+
+.editorParamsToolbar .editorParamsLabel {
+  font-size: 14px;
+}
+
+/* Dialogs */
+dialog,
+.dialog {
+  padding: 24px;
+  border-radius: var(--md-shape-extra-large);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+dialog :focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: 2px;
+}
+
+/* Wider columns for the larger text. Each group of rows is its own table, so the widths stay fixed. */
+#documentPropertiesDialog .row {
+  > span {
+    width: 180px;
+  }
+
+  > p {
+    max-width: 300px;
+  }
+}
+
+.dialog .mainContainer .title > span {
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 32px;
+}
+
+dialog .buttonRow {
+  justify-content: flex-end;
+}
+
+/* The loading bar, as a linear progress indicator. */
+#toolbarContainer #loadingBar {
+  border-bottom: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Colours
+ * ------------------------------------------------------------------------- */
+
+@media not (forced-colors: active) {
+  :root {
+    accent-color: var(--md-sys-color-primary);
+
+    /* pdf.js's own variables */
+    --main-color: var(--md-sys-color-on-surface);
+    --body-bg-color: var(--md-sys-color-surface-dim);
+    --progressBar-color: var(--md-sys-color-primary);
+    --progressBar-bg-color: var(--md-sys-color-secondary-container);
+    --progressBar-blend-color: color-mix(in srgb, var(--md-sys-color-primary) 50%, var(--md-sys-color-secondary-container));
+    --toolbar-icon-bg-color: var(--md-sys-color-on-surface-variant);
+    --toolbar-icon-hover-bg-color: var(--md-sys-color-on-surface-variant);
+    --toolbar-bg-color: var(--md-sys-color-surface-container-low);
+    --toolbar-box-shadow: none;
+    --button-hover-color: color-mix(in srgb, var(--md-sys-color-on-surface-variant) var(--md-hover), transparent);
+    --toggled-btn-color: var(--md-sys-color-on-secondary-container);
+    --toggled-btn-bg-color: var(--md-sys-color-secondary-container);
+    --toggled-hover-active-btn-color: color-mix(in srgb, var(--md-sys-color-on-secondary-container) var(--md-pressed), var(--md-sys-color-secondary-container));
+    --dropdown-btn-bg-color: transparent;
+    --dropdown-btn-border: 1px solid var(--md-sys-color-outline);
+    --separator-color: var(--md-sys-color-outline-variant);
+    --field-color: var(--md-sys-color-on-surface);
+    --field-bg-color: transparent;
+    --field-border-color: var(--md-sys-color-outline);
+    --doorhanger-bg-color: var(--md-sys-color-surface-container);
+    --doorhanger-border-color: transparent;
+    --doorhanger-hover-color: var(--md-sys-color-on-surface);
+    --doorhanger-separator-color: var(--md-sys-color-outline-variant);
+    --focus-ring-color: var(--md-sys-color-secondary);
+    --text-primary-color: var(--md-sys-color-on-surface);
+    --link-fg-color: var(--md-sys-color-primary);
+    --link-hover-fg-color: var(--md-sys-color-primary);
+    --hover-filter: none;
+    --button-disabled-opacity: 0.38;
+
+    /* Buttons: filled for the main action, outlined for the others. */
+    --button-primary-bg-color: var(--md-sys-color-primary);
+    --button-primary-fg-color: var(--md-sys-color-on-primary);
+    --button-primary-hover-bg-color: color-mix(in srgb, var(--md-sys-color-on-primary) var(--md-hover), var(--md-sys-color-primary));
+    --button-primary-active-bg-color: color-mix(in srgb, var(--md-sys-color-on-primary) var(--md-pressed), var(--md-sys-color-primary));
+    --button-secondary-bg-color: transparent;
+    --button-secondary-fg-color: var(--md-sys-color-primary);
+    --button-secondary-border-color: var(--md-sys-color-outline);
+    --button-secondary-hover-bg-color: color-mix(in srgb, var(--md-sys-color-primary) var(--md-hover), transparent);
+    --button-secondary-hover-border-color: var(--md-sys-color-outline);
+    --button-secondary-active-bg-color: color-mix(in srgb, var(--md-sys-color-primary) var(--md-pressed), transparent);
+    --button-secondary-active-border-color: var(--md-sys-color-outline);
+
+    /* Firefox design tokens viewer.css falls back on */
+    --text-color: var(--md-sys-color-on-surface);
+    --background-color-box: var(--md-sys-color-surface-container);
+    --background-color-canvas: var(--md-sys-color-surface-container-high);
+    --color-accent-primary: var(--md-sys-color-primary);
+    --color-accent-primary-hover: var(--md-sys-color-primary);
+    --focus-outline-color: var(--md-sys-color-secondary);
+    --link-color: var(--md-sys-color-primary);
+    --link-color-hover: var(--md-sys-color-primary);
+    --border-color-interactive: var(--md-sys-color-outline);
+
+    /* Annotation editors on the page */
+    --outline-color: var(--md-page-outline-color);
+  }
+
+  .toolbarButton {
+    &:active {
+      background-color: color-mix(in srgb, var(--md-sys-color-on-surface-variant) var(--md-pressed), transparent);
+    }
+
+    &.toggled:is(:hover, :focus-visible) {
+      background-color: color-mix(in srgb, var(--md-sys-color-on-secondary-container) var(--md-hover), var(--md-sys-color-secondary-container));
+
+      &::before {
+        background-color: var(--toggled-btn-color);
+      }
+    }
+  }
+
+  .toolbarField:focus {
+    border-color: var(--md-sys-color-primary);
+    box-shadow: inset 0 0 0 1px var(--md-sys-color-primary);
+  }
+
+  .dropdownToolbarButton {
+    > select:is(:hover, :focus-visible) {
+      color: var(--main-color);
+    }
+
+    &:has(> select:focus-visible) {
+      border-color: var(--md-sys-color-primary);
+      box-shadow: inset 0 0 0 1px var(--md-sys-color-primary);
+    }
+  }
+
+  .toolbarLabel {
+    color: var(--md-sys-color-on-surface-variant);
+  }
+
+  .doorHanger,
+  .doorHangerRight {
+    box-shadow: var(--md-sys-elevation-2);
+  }
+
+  #findbar {
+    background-color: var(--doorhanger-bg-color);
+
+    .toggleButton {
+      border-color: var(--md-sys-color-outline-variant);
+      color: var(--md-sys-color-on-surface-variant);
+
+      &:is(:hover, :has(> input:focus-visible)) {
+        color: var(--md-sys-color-on-surface-variant);
+        background-color: var(--button-hover-color);
+      }
+
+      &:has(> input:checked) {
+        border-color: transparent;
+        color: var(--md-sys-color-on-secondary-container);
+        background-color: var(--md-sys-color-secondary-container);
+
+        &:is(:hover, :has(> input:focus-visible)) {
+          background-color: color-mix(in srgb, var(--md-sys-color-on-secondary-container) var(--md-hover), var(--md-sys-color-secondary-container));
+        }
+      }
+    }
+
+    #findInputContainer #findInput[data-status="notFound"] {
+      background-color: transparent;
+      border-color: var(--md-sys-color-error);
+      box-shadow: inset 0 0 0 1px var(--md-sys-color-error);
+    }
+
+    #findbarMessageContainer {
+      #findResultsCount {
+        background-color: transparent;
+        color: var(--md-sys-color-on-surface-variant);
+      }
+
+      #findMsg[data-status="notFound"] {
+        color: var(--md-sys-color-error);
+      }
+    }
+  }
+
+  .popupMenu {
+    --menu-bg: var(--md-sys-color-surface-container);
+    --menu-text-color: var(--md-sys-color-on-surface);
+    --menu-border-color: transparent;
+    --menu-box-shadow: var(--md-sys-elevation-2);
+    --menuitem-hover-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-hover), transparent);
+    --menuitem-active-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-pressed), transparent);
+    --menuitem-focus-bg: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-hover), transparent);
+    --menuitem-focus-outline-color: var(--md-sys-color-secondary);
+    --menuitem-focus-border-color: transparent;
+    --disabled-opacity: 0.38;
+  }
+
+  .sidebar {
+    --sidebar-bg-color: var(--md-sys-color-surface-container-low);
+    --sidebar-border-color: transparent;
+    --sidebar-box-shadow: var(--md-sys-elevation-1);
+    --resizer-hover-bg-color: var(--md-sys-color-primary);
+  }
+
+  #viewsManager {
+    --sidebar-bg-color: var(--md-sys-color-surface-container-low);
+    --sidebar-backdrop-filter: none;
+    --header-bg: transparent;
+    --header-shadow: none;
+    --views-text-color: var(--md-sys-color-on-surface);
+    --button-fg: var(--md-sys-color-on-surface-variant);
+    --button-no-bg: transparent;
+    --button-bg: transparent;
+    --button-hover-bg: color-mix(in srgb, var(--md-sys-color-on-surface-variant) var(--md-hover), transparent);
+    --button-hover-fg: var(--md-sys-color-on-surface-variant);
+    --button-active-bg: color-mix(in srgb, var(--md-sys-color-on-surface-variant) var(--md-pressed), transparent);
+    --button-active-fg: var(--md-sys-color-on-surface-variant);
+    --button-focus-no-bg: transparent;
+    --button-focus-outline-color: var(--md-sys-color-secondary);
+    --button-focus-border-color: transparent;
+    --status-actions-bg: transparent;
+    --status-undo-bg: var(--md-sys-color-secondary-container);
+    --indicator-color: var(--md-sys-color-primary);
+    --status-warning-bg: var(--md-sys-color-error-container);
+    --indicator-warning-color: var(--md-sys-color-on-error-container);
+    --image-border-color: var(--md-sys-color-outline-variant);
+    --image-hover-border-color: var(--md-sys-color-outline);
+    --image-current-border-color: var(--md-sys-color-primary);
+    --image-current-focused-outline-color: var(--md-sys-color-secondary);
+    --image-page-number-bg: var(--md-sys-color-surface-container-highest);
+    --image-page-number-fg: var(--md-sys-color-on-surface-variant);
+    --image-current-page-number-fg: var(--md-sys-color-on-primary);
+  }
+
+  .treeView {
+    --treeitem-color: var(--md-sys-color-on-surface-variant);
+    --treeitem-bg-color: color-mix(in srgb, var(--md-sys-color-on-surface) var(--md-hover), transparent);
+    --treeitem-hover-color: var(--md-sys-color-on-surface);
+    --treeitem-selected-color: var(--md-sys-color-on-secondary-container);
+    --treeitem-selected-bg-color: var(--md-sys-color-secondary-container);
+  }
+
+  /*
+   * The toolbar of the selected annotation. viewer.css sets these on a
+   * selector three classes deep, hence !important.
+   */
+  .editToolbar {
+    --editor-toolbar-bg-color: var(--md-sys-color-surface-container) !important;
+    --editor-toolbar-fg-color: var(--md-sys-color-on-surface-variant) !important;
+    --editor-toolbar-border-color: transparent !important;
+    --editor-toolbar-hover-bg-color: color-mix(in srgb, var(--md-sys-color-on-surface-variant) var(--md-hover), var(--md-sys-color-surface-container)) !important;
+    --editor-toolbar-shadow: var(--md-sys-elevation-2) !important;
+  }
+
+  .colorPicker {
+    --hover-outline-color: var(--md-sys-color-outline);
+    --selected-outline-color: var(--md-sys-color-primary);
+    --swatch-border-color: var(--md-sys-color-outline-variant);
+  }
+
+  dialog,
+  .dialog {
+    border: none;
+    color: var(--md-sys-color-on-surface);
+    background-color: var(--md-sys-color-surface-container-high);
+    box-shadow: var(--md-sys-elevation-3);
+  }
+
+  dialog::backdrop {
+    background-color: var(--md-sys-color-scrim);
+  }
+
+  .dialog {
+    --dialog-bg-color: var(--md-sys-color-surface-container-high);
+    --text-secondary-color: var(--md-sys-color-on-surface-variant);
+    --separator-color: var(--md-sys-color-outline-variant);
+    --textarea-border-color: var(--md-sys-color-outline);
+    --textarea-bg-color: transparent;
+    --textarea-fg-color: var(--md-sys-color-on-surface);
+    --input-text-bg-color: transparent;
+    --input-text-fg-color: var(--md-sys-color-on-surface);
+  }
+
+  dialog :link {
+    color: var(--md-sys-color-primary);
   }
 }

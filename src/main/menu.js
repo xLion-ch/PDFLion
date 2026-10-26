@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, Menu, shell } from "electron";
+import { creditsText } from "./credits.js";
 import { runCommand } from "./ipc.js";
 import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
 import { clearRecentDocuments, onRecentDocumentsChange, recentDocuments } from "./recent.js";
@@ -40,17 +41,22 @@ export function installMenu() {
 }
 
 /**
- * The About panel: PDFLion's version and the pdf.js release it's built on.
+ * The About panel: PDFLion's version, and the projects it's built on and with
+ * (credits.js), with the versions of pdf.js, Electron, Chromium and Node.js.
  * macOS shows it from the app menu, Windows from Help > About PDFLion.
  */
 function setAboutPanel() {
-  const pdfjs = pdfjsVersion();
   const version = app.getVersion();
   app.setAboutPanelOptions({
     applicationName: app.name,
     // macOS adds "Version" itself.
     applicationVersion: isMac ? version : `Version ${version}`,
-    ...(pdfjs && { credits: `Built on pdf.js ${pdfjs}` }),
+    credits: creditsText({
+      "pdf.js": pdfjsVersion(),
+      Electron: process.versions.electron,
+      Chromium: process.versions.chrome,
+      "Node.js": process.versions.node,
+    }),
     ...(isMac
       ? // Otherwise macOS adds the bundle's build number: Electron's in dev,
         // and the version again once packaged.

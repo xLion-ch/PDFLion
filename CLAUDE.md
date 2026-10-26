@@ -8,7 +8,7 @@ A PDF viewer for macOS (Apple silicon and Intel) and Windows: Mozilla's [pdf.js]
 
 - **Never edit `vendor/pdf.js/`.** It is a git submodule pinned to an upstream release tag. All customisation happens outside it:
   - `src/viewer/bridge.js` is a main-world script that sets `PDFViewerApplicationOptions` and drives `PDFViewerApplication`.
-  - `src/viewer/overrides.css` adjusts the viewer UI.
+  - `src/viewer/overrides.css` restyles the viewer UI in Material Design 3, with Material Symbols icons from `src/viewer/icons/`.
   - The `pdflion://` protocol handler (`src/main/protocol.js`) injects both into `viewer.html` as it serves it.
 
   If something seems to need a pdf.js patch, look for a way through those three first. If there really is none, stop and ask.
@@ -48,12 +48,14 @@ src/main/        main process: one module per concern
   ipc.js         IPC handlers (sender and payload checks), runCommand() to bridge.js
   permissions.js web permission handlers: deny all but full screen and clipboard writes
   menu.js        native menu, with macOS-only and Windows-only items, and the About panel
+  credits.js     the third-party projects the About panel lists (Electron-free, unit tested)
   paths.js       the only place that knows dev vs packaged locations
 src/preload/
   preload.cjs    contextBridge API exposed as window.pdflion
 src/viewer/      served at pdflion://app/pdflion/, injected into viewer.html
   bridge.js
-  overrides.css
+  overrides.css  Material Design 3 theme, mostly through the variables viewer.css reads
+  icons/         Material Symbols (Apache-2.0) for the toolbar and menus
 resources/       icon, entitlements (electron-builder buildResources); about-icon.png also ships in the app
 scripts/
   update-pdfjs.js  plain Node, so it runs on Windows too
@@ -91,9 +93,10 @@ npm run dist -- --dir    # just the apps in dist/, without installers
 - Updating to a new release:
   1. Run `npm run pdfjs:update`.
   2. Read the upstream release notes.
-  3. Check `bridge.js` and `overrides.css` against the new `web/app.js` and `web/viewer.html`. That includes `isMenuShortcut` in `bridge.js` against pdf.js's key handling in `onKeyDown` (`web/app.js`) and `web/pdf_print_service.js`, for ⌘ on macOS and for Ctrl and F4 on Windows. Also check the range transport in `bridge.js` against `PDFDataRangeTransport` (`src/display/api.js`) and `src/display/transport_stream.js`, and against `getNetworkStream` (`src/display/network_stream.js`), in case pdf.js now makes range requests for other schemes itself. Also check the CSP header in `protocol.js` against the `<meta>` CSP in `web/viewer.html`. Chromium enforces both, so the header must not be stricter than what pdf.js needs.
-  4. Run the unit and e2e tests on macOS and Windows.
-  5. Commit `Update pdf.js to vX.Y.Z`, containing the submodule bump plus any bridge fixes it required.
+  3. Check `bridge.js` and `overrides.css` against the new `web/app.js` and `web/viewer.html`. That includes `isMenuShortcut` in `bridge.js` against pdf.js's key handling in `onKeyDown` (`web/app.js`) and `web/pdf_print_service.js`, for ⌘ on macOS and for Ctrl and F4 on Windows. Also check the range transport in `bridge.js` against `PDFDataRangeTransport` (`src/display/api.js`) and `src/display/transport_stream.js`, and against `getNetworkStream` (`src/display/network_stream.js`), in case pdf.js now makes range requests for other schemes itself. Check the variables and selectors in `overrides.css` against `web/viewer.css`: pdf.js renames them, and a missing one fails silently, leaving that part in pdf.js's own style. Also check the CSP header in `protocol.js` against the `<meta>` CSP in `web/viewer.html`. Chromium enforces both, so the header must not be stricter than what pdf.js needs.
+  4. Check what pdf.js bundles against the "pdf.js includes" group in `src/main/credits.js` and README's Credits: the projects in `vendor/pdf.js/external/` and the license files in the build's `web/` folders. A release can add or drop one.
+  5. Run the unit and e2e tests on macOS and Windows.
+  6. Commit `Update pdf.js to vX.Y.Z`, containing the submodule bump plus any bridge fixes it required.
 
 ## How the viewer is served
 
@@ -153,7 +156,7 @@ Reviewed in October 2026, for Electron 45, against the [checklist](https://www.e
 ## Tests
 
 - `npm test` runs `node --test "test/unit/**/*.test.js"`. The glob is quoted so Node expands it: since Node 21, `node --test` treats a directory argument as a file.
-- Modules that unit tests import stay free of Electron: `routes.js`, `ranges.js`, `documents.js` and `placement.js`.
+- Modules that unit tests import stay free of Electron: `routes.js`, `ranges.js`, `documents.js`, `placement.js` and `credits.js`.
 - `bridge.test.js` runs `bridge.js` itself in `node:vm`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge starts using something new from the page, add it to the stand-ins. The test also reads `menu.js` for `commandItem("label", "command", …)` calls, to check that the bridge knows every command.
 - `npm run test:e2e` drives the dev app with Playwright. Each launch gets its own `--user-data-dir`. `test/e2e/pdfs.js` writes the test PDFs, so no binary fixtures are committed. The suite is the safety net for pdf.js updates, so it must cover every bridge command. `windows.spec.js` runs only on Windows.
 - In end-to-end tests, `page.evaluate()` counts as a user gesture. Where user activation matters, read the page from main with `webContents.executeJavaScript()`.
@@ -167,6 +170,7 @@ These were settled on purpose. Change them only on purpose.
 - Windows x64 only. Windows on Arm runs it emulated. Adding `arm64` would run it natively there.
 - Launching without a file shows the Open panel, like Preview. On Windows the app then quits if the panel is cancelled, because a Windows app without windows has nothing to show. The alternative is an empty viewer window.
 - No code signing, no notarization, no CI and no auto-updates. Releases are built by hand, as the README describes. On macOS, auto-updates would need a Developer ID signature anyway: Electron's updater accepts only an update signed like the running app, and an ad-hoc signature differs with every build.
+- The viewer follows Material Design 3, as CSS on top of pdf.js's own UI rather than a UI library. The colour scheme is Material's monochrome one: near-white in light mode, near-black in dark mode. Text uses the system font, not Roboto. Colours apply only outside forced-colors mode, which keeps pdf.js's high contrast styles.
 - Window placement is kept in `state.json`, not with Electron's `windowStatePersistence`. That remembers each window under a unique name, so it can't give a new document the last window's place.
 
 ## Known limitations
@@ -178,4 +182,5 @@ These were settled on purpose. Change them only on purpose.
 
 - Small modules in `src/main/`, one responsibility each, and no catch-all `utils.js`.
 - Dev-vs-packaged path logic lives only in `src/main/paths.js`.
+- Every third-party project PDFLion uses goes into the About panel and the README, with its link and license: `CREDITS` in `src/main/credits.js`, and Credits in `README.md`. That includes what only builds or tests the app, what pdf.js or Electron brings along, and design resources such as icons and fonts. `credits.test.js` fails when the two don't list the same links.
 - Commit messages use the imperative mood and a short subject, e.g. `Add native File menu`.

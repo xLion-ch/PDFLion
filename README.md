@@ -80,7 +80,7 @@ npm run pdfjs:update   # switch to it and rebuild pdf.js
 PDFLion keeps the Electron side thin. pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. The app adds to it from outside:
 
 - `src/viewer/bridge.js` connects the menus to pdf.js.
-- `src/viewer/overrides.css` adjusts its interface.
+- `src/viewer/overrides.css` restyles its interface in Material Design 3.
 
 The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLAUDE.md) describes the architecture, the ground rules, the security model and the decisions behind them.
 
@@ -133,4 +133,34 @@ PDFLion is licensed under the [Apache License 2.0](LICENSE).
 
 ## Credits
 
-PDFLion is built on [pdf.js](https://github.com/mozilla/pdf.js) by Mozilla, under the Apache License 2.0, and on [Electron](https://www.electronjs.org), under the MIT License. The pdf.js build includes fonts, colour profiles and image decoders under their own licenses, which ship with the app in `pdfjs/`.
+PDFLion is built on:
+
+- [pdf.js](https://github.com/mozilla/pdf.js) by Mozilla (Apache-2.0)
+- [Electron](https://www.electronjs.org) (MIT)
+- [Material Symbols](https://github.com/google/material-design-icons) by Google, the viewer's icons (Apache-2.0)
+- [Material Design 3](https://m3.material.io) by Google, the design guidelines the viewer follows
+
+pdf.js includes:
+
+- [Fluent](https://github.com/projectfluent/fluent.js) by Mozilla, which localizes the viewer (Apache-2.0)
+- the viewer's translations, by [Firefox's localizers](https://github.com/mozilla-l10n/firefox-l10n) (MPL-2.0)
+- [OpenJPEG](https://github.com/uclouvain/openjpeg), for JPEG 2000 images (BSD-2-Clause)
+- the JBIG2 image decoder and the Foxit fonts from [PDFium](https://pdfium.googlesource.com/pdfium/) (BSD-3-Clause)
+- [qcms](https://github.com/FirefoxGraphics/qcms) by Mozilla, for colour management (MIT)
+- [QuickJS](https://bellard.org/quickjs/) by Fabrice Bellard and Charlie Gordon, which runs a PDF's scripts in a sandbox (MIT)
+- [Liberation Sans](https://github.com/liberationfonts/liberation-fonts) by Red Hat, for fonts a PDF uses without embedding them (GPL-2.0 with the font exception)
+- [Adobe's CMaps](https://github.com/adobe-type-tools/cmap-resources), for Chinese, Japanese and Korean text (BSD-3-Clause)
+- a CMYK colour profile from [Compact ICC Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles) (CC0-1.0)
+
+Electron includes:
+
+- [Chromium](https://www.chromium.org) (BSD-3-Clause), and the third-party code listed in its `LICENSES.chromium.html`
+- [Node.js](https://nodejs.org) (MIT)
+
+PDFLion is built and tested with:
+
+- [electron-builder](https://www.electron.build) (MIT)
+- [NSIS](https://nsis.sourceforge.io), which electron-builder uses for the Windows installer (Zlib)
+- [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
+
+The license texts ship with the app: pdf.js's and its components' in `pdfjs/`, Electron's in `LICENSE.electron.txt`, and Chromium's in `LICENSES.chromium.html`. The About panel lists the same projects, with the versions of pdf.js, Electron, Chromium and Node.js.
