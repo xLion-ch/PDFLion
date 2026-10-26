@@ -8,6 +8,8 @@ import { app, BrowserWindow, dialog } from "electron";
 import { runCommand } from "./ipc.js";
 import { documentFile, isEdited } from "./windows.js";
 
+const isMac = process.platform === "darwin";
+
 const SAVE = "Save";
 const CANCEL = "Cancel";
 const DONT_SAVE = "Don’t Save";
@@ -16,8 +18,7 @@ const DONT_SAVE = "Don’t Save";
  * The save prompt's buttons, in each platform's order. macOS shows the first
  * one rightmost, Windows leftmost.
  */
-const BUTTONS =
-  process.platform === "darwin" ? [SAVE, CANCEL, DONT_SAVE] : [SAVE, DONT_SAVE, CANCEL];
+const BUTTONS = isMac ? [SAVE, CANCEL, DONT_SAVE] : [SAVE, DONT_SAVE, CANCEL];
 
 /** Windows the user has decided about, which may now close. */
 const decided = new WeakSet();
@@ -39,16 +40,29 @@ export function guardUnsavedChanges() {
     // pdf.js's beforeunload handler blocks unloading whenever a document has
     // form data or annotations, even saved ones. The prompts here replace it.
     win.webContents.on("will-prevent-unload", (event) => event.preventDefault());
+
+    // Windows asks each window before it shuts down, restarts or signs out.
+    // Holding it off shows "PDFLion is preventing shutdown" while the prompts
+    // are up, and the session can end once PDFLion has quit.
+    if (!isMac) win.on("query-session-end", reviewBeforeQuitting);
   });
 
-  app.on("before-quit", (event) => {
-    const edited = BrowserWindow.getAllWindows().filter(
-      (win) => isEdited(win) && !decided.has(win),
-    );
-    if (edited.length === 0) return;
-    event.preventDefault();
-    reviewAndQuit(edited);
-  });
+  app.on("before-quit", reviewBeforeQuitting);
+}
+
+/**
+ * Stops a quit, or the end of a Windows session, while there are edited
+ * windows the user hasn't decided about, and asks about them instead.
+ *
+ * @param {Electron.Event} event
+ */
+function reviewBeforeQuitting(event) {
+  const edited = BrowserWindow.getAllWindows().filter(
+    (win) => isEdited(win) && !decided.has(win),
+  );
+  if (edited.length === 0) return;
+  event.preventDefault();
+  reviewAndQuit(edited);
 }
 
 /**

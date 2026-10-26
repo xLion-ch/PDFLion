@@ -1,0 +1,50 @@
+appId: io.github.c14ud3.pdflion # also APP_ID in src/main/main.js
+productName: PDFLion
+# PDFLion-1.0.0-mac-arm64.dmg, PDFLion-1.0.0-mac-x64.dmg, PDFLion-1.0.0-win-x64.exe, …
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+directories:
+  buildResources: resources
+  output: dist
+files:
+  - src/**
+  - package.json
+  - resources/about-icon.png # Windows' About box
+extraResources:
+  - from: vendor/pdf.js/build/generic
+    to: pdfjs
+    filter: ["**/*", "!**/*.map", "!web/debugger.*", "!web/compressed.tracemonkey-pldi-09.pdf"]
+  - from: vendor/pdf.js/build/version.json
+    to: pdfjs/version.json
+fileAssociations:
+  - ext: pdf
+    name: PDF Document
+    role: Editor
+    rank: Alternate
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  notarize: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+# Electron's compile-time switches, flipped in the packaged binary.
+electronFuses:
+  # Ignore ELECTRON_RUN_AS_NODE, NODE_OPTIONS and --inspect, which would let
+  # anyone who can start PDFLion run code inside it.
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  # Load the app only from app.asar, and only if its hash matches the one
+  # electron-builder records in Info.plist or the .exe.
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  enableCookieEncryption: true
+  # No page loads from file://. Main reads the viewer's files through file://
+  # URLs, which this doesn't affect.
+  grantFileProtocolExtraPrivileges: false

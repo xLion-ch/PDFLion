@@ -7,10 +7,19 @@
  * On macOS, shortcuts follow Preview. Windows uses Ctrl where macOS uses ⌘,
  * except where noted. bridge.js keeps pdf.js from acting on the ones pdf.js
  * also binds, so keep its isMenuShortcut() in sync with them.
+ *
+ * A `&` in a label marks the access key on Windows: `&File` opens with Alt+F.
+ * macOS drops it (Electron's menu controller runs every label through
+ * FixUpWindowsStyleLabel), so role items get labels that read as their
+ * defaults there. A literal `&` is written `&&`.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { app, BrowserWindow, Menu, shell } from "electron";
 import { runCommand } from "./ipc.js";
-import { isDocumentWindow, showOpenPanel } from "./windows.js";
+import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
+import { clearRecentDocuments, onRecentDocumentsChange, recentDocuments } from "./recent.js";
+import { isDocumentWindow, openDocument, showOpenPanel } from "./windows.js";
 
 const isMac = process.platform === "darwin";
 
@@ -20,12 +29,50 @@ const REPOSITORY_URL = "https://github.com/c14ud3/PDFLion";
 const documentItems = new Set();
 
 export function installMenu() {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template()));
-  updateDocumentItems();
+  setAboutPanel();
+  setMenu();
   app.on("browser-window-focus", updateDocumentItems);
   app.on("browser-window-blur", updateDocumentItems);
   // Closing the focused window doesn't always emit a blur first.
   app.on("browser-window-created", (_event, win) => win.on("closed", updateDocumentItems));
+  // Windows' File > Open Recent lists them. On macOS the role does.
+  if (!isMac) onRecentDocumentsChange(setMenu);
+}
+
+/**
+ * The About panel: PDFLion's version and the pdf.js release it's built on.
+ * macOS shows it from the app menu, Windows from Help > About PDFLion.
+ */
+function setAboutPanel() {
+  const pdfjs = pdfjsVersion();
+  const version = app.getVersion();
+  app.setAboutPanelOptions({
+    applicationName: app.name,
+    // macOS adds "Version" itself.
+    applicationVersion: isMac ? version : `Version ${version}`,
+    ...(pdfjs && { credits: `Built on pdf.js ${pdfjs}` }),
+    ...(isMac
+      ? // Otherwise macOS adds the bundle's build number: Electron's in dev,
+        // and the version again once packaged.
+        { version: "" }
+      : { iconPath: aboutIconPath }),
+  });
+}
+
+/** @returns {string | null} the version of the pdf.js build being served */
+function pdfjsVersion() {
+  try {
+    const { version } = JSON.parse(fs.readFileSync(pdfjsVersionPath, "utf8"));
+    if (typeof version === "string") return version;
+  } catch (error) {
+    console.warn(`Couldn't read the pdf.js version from ${pdfjsVersionPath}:`, error);
+  }
+  return null;
+}
+
+function setMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template()));
+  updateDocumentItems();
 }
 
 /** @returns {Electron.MenuItemConstructorOptions[]} */
@@ -33,41 +80,43 @@ function template() {
   return [
     ...onMac({ role: "appMenu" }),
     {
-      label: "File",
+      label: "&File",
       submenu: [
-        { label: "Open…", accelerator: "CmdOrCtrl+O", click: () => showOpenPanel() },
-        // The role is macOS only. Windows lists recent files in the taskbar's
-        // jump list.
-        ...onMac({ role: "recentDocuments", submenu: [{ role: "clearRecentDocuments" }] }),
+        { label: "&Open…", accelerator: "CmdOrCtrl+O", click: () => showOpenPanel() },
+        // The role is macOS only.
+        isMac
+          ? { role: "recentDocuments", submenu: [{ role: "clearRecentDocuments" }] }
+          : recentDocumentsItem(),
         { type: "separator" },
-        { role: "close" },
-        commandItem("Save", "save", "CmdOrCtrl+S"),
-        commandItem("Save As…", "saveAs", "Shift+CmdOrCtrl+S"),
+        // Not the role's "Close Window" on macOS: Preview says Close.
+        { role: "close", label: "&Close" },
+        commandItem("&Save", "save", "CmdOrCtrl+S"),
+        commandItem("Save &As…", "saveAs", "Shift+CmdOrCtrl+S"),
         { type: "separator" },
-        commandItem("Print…", "print", "CmdOrCtrl+P"),
+        commandItem("&Print…", "print", "CmdOrCtrl+P"),
         // Exit, which has no shortcut on Windows: Alt+F4 closes the window,
         // and closing the last one quits.
-        ...onWindows({ type: "separator" }, { role: "quit" }),
+        ...onWindows({ type: "separator" }, { role: "quit", label: "E&xit" }),
       ],
     },
     {
       // Electron's editMenu role for each platform, plus Find. Copy and Select
       // All act on the text layer, or on form fields and annotations while one
       // has focus.
-      label: "Edit",
+      label: "&Edit",
       submenu: [
-        { role: "undo" },
-        { role: "redo" },
+        { role: "undo", label: "&Undo" },
+        { role: "redo", label: "&Redo" },
         { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
+        { role: "cut", label: "Cu&t" },
+        { role: "copy", label: "&Copy" },
+        { role: "paste", label: "&Paste" },
         ...onMac({ role: "pasteAndMatchStyle" }),
-        { role: "delete" },
+        { role: "delete", label: "De&lete" },
         ...onWindows({ type: "separator" }),
-        { role: "selectAll" },
+        { role: "selectAll", label: "Select &All" },
         { type: "separator" },
-        commandItem("Find…", "find", "CmdOrCtrl+F"),
+        commandItem("&Find…", "find", "CmdOrCtrl+F"),
         ...onMac(
           { type: "separator" },
           {
@@ -79,24 +128,24 @@ function template() {
     },
     {
       // Not the zoomIn and resetZoom roles: they scale the whole UI, not the page.
-      label: "View",
+      label: "&View",
       submenu: [
         // Not Ctrl+Alt+S on Windows, which is AltGr+S, a character on many
         // keyboards. F4 is pdf.js's own shortcut for it, and Acrobat's.
-        commandItem("Toggle Sidebar", "toggleSidebar", isMac ? "Alt+Cmd+S" : "F4"),
+        commandItem("Toggle &Sidebar", "toggleSidebar", isMac ? "Alt+Cmd+S" : "F4"),
         { type: "separator" },
-        commandItem("Actual Size", "actualSize", "CmdOrCtrl+0"),
-        commandItem("Zoom In", "zoomIn", "CmdOrCtrl+Plus"),
+        commandItem("&Actual Size", "actualSize", "CmdOrCtrl+0"),
+        commandItem("Zoom &In", "zoomIn", "CmdOrCtrl+Plus"),
         // ⌘= as well, since + needs Shift on many keyboards.
         { ...commandItem("Zoom In", "zoomIn", "CmdOrCtrl+=", "zoomInEquals"), visible: false },
-        commandItem("Zoom Out", "zoomOut", "CmdOrCtrl+-"),
+        commandItem("Zoom &Out", "zoomOut", "CmdOrCtrl+-"),
         { type: "separator" },
-        commandItem("Rotate Left", "rotateLeft", "CmdOrCtrl+L"),
-        commandItem("Rotate Right", "rotateRight", "CmdOrCtrl+R"),
+        commandItem("Rotate &Left", "rotateLeft", "CmdOrCtrl+L"),
+        commandItem("Rotate &Right", "rotateRight", "CmdOrCtrl+R"),
         { type: "separator" },
-        commandItem("Presentation Mode", "presentation", "Shift+CmdOrCtrl+F"),
+        commandItem("&Presentation Mode", "presentation", "Shift+CmdOrCtrl+F"),
         // ⌃⌘F on macOS, F11 on Windows.
-        { role: "togglefullscreen" },
+        { role: "togglefullscreen", label: "Toggle &Full Screen" },
         ...(app.isPackaged
           ? []
           : [
@@ -111,13 +160,55 @@ function template() {
     ...onMac({ role: "windowMenu" }),
     {
       role: "help",
+      label: "&Help",
       submenu: [
-        { label: "PDFLion on GitHub", click: () => shell.openExternal(REPOSITORY_URL) },
+        { label: "PDFLion on &GitHub", click: () => shell.openExternal(REPOSITORY_URL) },
         // On macOS, About is in the app menu.
-        ...onWindows({ type: "separator" }, { role: "about" }),
+        ...onWindows({ type: "separator" }, { role: "about", label: `&About ${app.name}` }),
       ],
     },
   ];
+}
+
+/**
+ * Windows' File > Open Recent, from the list recent.js keeps. Like Office, it
+ * numbers the files, and the numbers are their access keys.
+ *
+ * @returns {Electron.MenuItemConstructorOptions}
+ */
+function recentDocumentsItem() {
+  const files = recentDocuments();
+  const names = files.map((file) => path.basename(file));
+  // The full path only where the name alone is ambiguous.
+  const isUnique = (/** @type {string} */ name) => names.indexOf(name) === names.lastIndexOf(name);
+  return {
+    label: "Open &Recent",
+    enabled: files.length > 0,
+    submenu: [
+      ...files.map((file, index) => ({
+        label: `${numberAccessKey(index + 1)} ${escapeAccessKeys(isUnique(names[index]) ? names[index] : file)}`,
+        click: () => openDocument(file),
+      })),
+      { type: "separator" },
+      { label: "&Clear Recently Opened", click: () => clearRecentDocuments() },
+    ],
+  };
+}
+
+/**
+ * @param {number} number
+ * @returns {string} `number` with its last digit as access key: &1 to &9, 1&0
+ */
+function numberAccessKey(number) {
+  return String(number).replace(/\d$/, "&$&");
+}
+
+/**
+ * @param {string} text
+ * @returns {string} `text` shown as is, without access keys
+ */
+function escapeAccessKeys(text) {
+  return text.replaceAll("&", "&&");
 }
 
 /**

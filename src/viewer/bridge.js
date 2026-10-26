@@ -5,7 +5,8 @@
  *
  * It is the only code that touches pdf.js internals (PDFViewerApplication, its
  * eventBus, AppOptions). They aren't a stable API, so every name here was
- * checked against pdf.js v6.4.299: web/app.js and web/app_options.js.
+ * checked against pdf.js v6.4.299: web/app.js and web/app_options.js, and for
+ * the range transport src/display/api.js and src/display/transport_stream.js.
  */
 "use strict";
 
@@ -74,6 +75,7 @@
       });
 
       const app = window.PDFViewerApplication;
+      loadDocumentsInParts(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
           Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
@@ -84,6 +86,111 @@
     },
     { once: true },
   );
+
+  /**
+   * pdf.js loads a document in parts only from http(s) URLs: it streams the
+   * file and fetches the parts it needs sooner as byte ranges, such as the
+   * cross-reference table at the end. Any other URL it reads whole before
+   * showing anything (getNetworkStream in src/display/network_stream.js). So
+   * for /doc/ URLs, open() gets a range transport that does what pdf.js does
+   * for http(s), and the first page of a big file shows before the rest has
+   * loaded. The viewer's run() calls open() for the `file` parameter.
+   *
+   * @param {any} app
+   */
+  function loadDocumentsInParts(app) {
+    const { open } = app;
+    /** @param {any} args */
+    app.open = async function (args) {
+      const range = isDocumentUrl(args?.url) ? await rangeTransport(args.url) : null;
+      return open.call(this, range ? { ...args, range } : args);
+    };
+  }
+
+  /**
+   * @param {unknown} url
+   * @returns {boolean} whether `url` is a document main serves at /doc/
+   */
+  function isDocumentUrl(url) {
+    if (typeof url !== "string") return false;
+    const parsed = URL.parse(url, location.href);
+    return parsed?.origin === location.origin && parsed.pathname.startsWith("/doc/");
+  }
+
+  /**
+   * Starts reading a document and makes a PDFDataRangeTransport for it, which
+   * hands pdf.js the file from start to end, plus the byte ranges it asks for.
+   * pdf.js stops asking for a range once the stream has brought it, so a
+   * range that fails only matters if the stream fails too. Range requests
+   * name the ETag of the stream, and main refuses them once the file has
+   * changed, so the parts never come from different versions.
+   *
+   * @param {string} url a /doc/ URL
+   * @returns {Promise<any>} the transport, or null to leave the document to
+   *   pdf.js, which then reports what's wrong with it
+   */
+  async function rangeTransport(url) {
+    const controller = new AbortController();
+    const { signal } = controller;
+    let response;
+    try {
+      response = await fetch(url, { signal });
+    } catch {
+      return null;
+    }
+    const length = Number(response.headers.get("Content-Length"));
+    const etag = response.headers.get("ETag");
+    if (!response.ok || !response.body || !etag || !Number.isSafeInteger(length)) {
+      controller.abort();
+      return null;
+    }
+
+    const transport = new window.pdfjsLib.PDFDataRangeTransport(length, null);
+    /**
+     * @param {number} begin
+     * @param {number} end exclusive
+     */
+    transport.requestDataRange = async (begin, end) => {
+      try {
+        const part = await fetch(url, {
+          signal,
+          headers: { Range: `bytes=${begin}-${end - 1}`, "If-Match": etag },
+        });
+        if (part.status !== 206) throw new Error(`Unexpected response ${part.status}`);
+        const chunk = new Uint8Array(await part.arrayBuffer());
+        if (!signal.aborted) transport.onDataRange(begin, chunk);
+      } catch (error) {
+        // Not fatal while the stream is still bringing the file.
+        if (!signal.aborted) console.warn(`Couldn't load bytes ${begin}–${end} of ${url}:`, error);
+      }
+    };
+    // pdf.js aborts when the document closes.
+    transport.abort = () => controller.abort();
+    streamDocument(response.body.getReader(), transport, signal);
+    return transport;
+  }
+
+  /**
+   * Hands pdf.js a document from start to end. If reading fails, pdf.js
+   * fetches the rest as ranges, once it needs them.
+   *
+   * @param {ReadableStreamDefaultReader<Uint8Array>} reader
+   * @param {any} transport
+   * @param {AbortSignal} signal
+   */
+  async function streamDocument(reader, transport, signal) {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        transport.onDataProgressiveRead(value);
+      }
+    } catch (error) {
+      if (signal.aborted) return;
+      console.error("Couldn't read the document to its end:", error);
+    }
+    transport.onDataProgressiveDone();
+  }
 
   /**
    * Whether a key is a shortcut of the native menu (src/main/menu.js) that

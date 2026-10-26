@@ -12,7 +12,10 @@
     "pdfjs:check": "node scripts/update-pdfjs.js --check",
     "pdfjs:update": "node scripts/update-pdfjs.js",
     "pdfjs:build": "node scripts/update-pdfjs.js --build",
-    "test": "node --test \"test/unit/**/*.test.js\""
+    "test": "node --test \"test/unit/**/*.test.js\"",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
   "devDependencies": {
     "electron": "^45.0.0",

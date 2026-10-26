@@ -38,24 +38,30 @@ src/main/        main process: one module per concern
   main.js        app lifecycle, open-file queue, single-instance lock (Windows)
   protocol.js    pdflion:// scheme handler
   routes.js      pdflion:// URL layout: viewer URLs, /doc/ tokens, mount paths. Electron-free so unit tests can import it
+  ranges.js      Range headers for /doc/ (Electron-free, unit tested)
   documents.js   token registry for opened files, atomic writes (Electron-free, unit tested)
   saving.js      Save and Save As: dialogs and error alerts
-  unsaved.js     save prompts when an edited window closes or the app quits
-  windows.js     one BrowserWindow per document, its edited state, the Open panel, navigation guards
+  unsaved.js     save prompts when an edited window closes, the app quits, or a Windows session ends
+  windows.js     one BrowserWindow per document, where it opens, its edited state, the Open panel, navigation guards
+  placement.js   where a new window opens: the last window's place, on screen, cascaded (Electron-free, unit tested)
+  state.js       userData/state.json: the last window placement and, on Windows, recent documents
+  recent.js      recent documents, plus PDFLion's own list for File > Open Recent on Windows
   ipc.js         IPC handlers (sender and payload checks), runCommand() to bridge.js
-  menu.js        native menu, with macOS-only and Windows-only items
+  permissions.js web permission handlers: deny all but full screen and clipboard writes
+  menu.js        native menu, with macOS-only and Windows-only items, and the About panel
   paths.js       the only place that knows dev vs packaged locations
 src/preload/
   preload.cjs    contextBridge API exposed as window.pdflion
 src/viewer/      served at pdflion://app/pdflion/, injected into viewer.html
   bridge.js
   overrides.css
-resources/       icon, entitlements (electron-builder buildResources)
+resources/       icon, entitlements (electron-builder buildResources); about-icon.png also ships in the app
 scripts/
   update-pdfjs.js  plain Node, so it runs on Windows too
 test/unit/       node --test, files named *.test.js
 test/e2e/        Playwright against the real app
 vendor/pdf.js/   submodule, never edit
+electron-builder.yml  packaging: targets, file associations, Electron fuses
 ```
 
 ## Commands
@@ -68,6 +74,7 @@ npm start                # run in dev; npm start -- path/to/file.pdf opens a fil
 npm test                 # unit tests
 npm run test:e2e         # Playwright smoke tests
 npm run dist             # installers for this platform in dist/: Mac .dmg/.zip (arm64 and x64), or the Windows .exe
+npm run dist -- --dir -c.mac.identity=- -c.mac.notarize=false   # unsigned local Mac apps, ad-hoc signed so they run
 ```
 
 ## pdf.js
@@ -83,7 +90,7 @@ npm run dist             # installers for this platform in dist/: Mac .dmg/.zip 
 - Updating to a new release:
   1. Run `npm run pdfjs:update`.
   2. Read the upstream release notes.
-  3. Check `bridge.js` and `overrides.css` against the new `web/app.js` and `web/viewer.html`. That includes `isMenuShortcut` in `bridge.js` against pdf.js's key handling in `onKeyDown` (`web/app.js`) and `web/pdf_print_service.js`, for ⌘ on macOS and for Ctrl and F4 on Windows. Also check the CSP header in `protocol.js` against the `<meta>` CSP in `web/viewer.html`. Chromium enforces both, so the header must not be stricter than what pdf.js needs.
+  3. Check `bridge.js` and `overrides.css` against the new `web/app.js` and `web/viewer.html`. That includes `isMenuShortcut` in `bridge.js` against pdf.js's key handling in `onKeyDown` (`web/app.js`) and `web/pdf_print_service.js`, for ⌘ on macOS and for Ctrl and F4 on Windows. Also check the range transport in `bridge.js` against `PDFDataRangeTransport` (`src/display/api.js`) and `src/display/transport_stream.js`, and against `getNetworkStream` (`src/display/network_stream.js`), in case pdf.js now makes range requests for other schemes itself. Also check the CSP header in `protocol.js` against the `<meta>` CSP in `web/viewer.html`. Chromium enforces both, so the header must not be stricter than what pdf.js needs.
   4. Run the unit and e2e tests on macOS and Windows.
   5. Commit `Update pdf.js to vX.Y.Z`, containing the submodule bump plus any bridge fixes it required.
 
@@ -95,21 +102,36 @@ Everything the window loads comes from the custom privileged scheme `pdflion://a
 |---|---|
 | `/viewer/…` | the pdf.js generic build. For `web/viewer.html`, the handler injects `overrides.css` and `bridge.js` before `</head>` and adds a CSP header |
 | `/pdflion/…` | `src/viewer/` |
-| `/doc/<token>/<name>.pdf` | a file the user opened. The main process mints tokens, so the renderer can only read files the user chose |
+| `/doc/<token>/<name>.pdf` | a file the user opened, whole or as byte ranges. The main process mints tokens, so the renderer can only read files the user chose |
 
 A window loads `pdflion://app/viewer/web/viewer.html?file=/doc/<token>/<name>.pdf`.
 - The document must be same-origin, because the generic viewer rejects a `file=` from any other origin.
 - `bridge.js` sets `defaultUrl` to `""` so the pdf.js demo PDF never opens.
 - `bridge.js` is a classic script. It runs before the viewer's module scripts, so its `webviewerloaded` listener is in place before the viewer initialises.
+- pdf.js makes range requests only for http(s) URLs, so `bridge.js` opens `/doc/` URLs through a `PDFDataRangeTransport`. It streams the file and fetches the parts pdf.js needs sooner as byte ranges, with `If-Match` so that a changed file gets 412.
 - The handler resolves every path against its root and returns 404 for anything that escapes it.
 
 ## Security rules
 
-- Every window uses `contextIsolation: true`, `sandbox: true` and `nodeIntegration: false`.
-- The preload exposes a small, explicit API through `contextBridge` and never exposes `ipcRenderer` itself. Main validates the sender and the payload of every IPC message.
+- Every window uses `contextIsolation: true`, `sandbox: true` and `nodeIntegration: false`, and `app.enableSandbox()` sandboxes every renderer.
+- The preload exposes a small, explicit API through `contextBridge` and never exposes `ipcRenderer` itself. It exposes the API only on the viewer page, since the preload runs in every page a window shows.
+- Main validates the sender and the payload of every IPC message. The sender must be the top frame, and its URL must be the viewer. Don't switch to comparing origins, as the Electron checklist suggests: an `about:blank` page the viewer navigates to has the viewer's origin.
 - Navigation away from `pdflion://app/viewer/` is blocked. External links (`http`, `https`, `mailto` only) open with `shell.openExternal`. Every other `window.open` is denied.
 - `viewer.html` is served with a CSP: no `unsafe-eval`, and `wasm-unsafe-eval` for pdf.js's image decoders.
-- Permission requests are denied by default.
+- Permission requests and checks are denied, except `fullscreen` and `clipboard-sanitized-write` for the viewer (`permissions.js`).
+- The packaged app's Electron fuses (`electron-builder.yml`) turn off `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS`, `--inspect` and file:// privileges. They load the app only from `app.asar`, after checking its hash, and they encrypt cookies.
+
+### Electron security checklist
+
+Reviewed in phase 9 against the [checklist](https://www.electronjs.org/docs/latest/tutorial/security). Items 1–4, 6–10, 13, 14, 16, 18 and 20 are met as the rules above describe. The rest:
+
+- 5 (permission handlers): met, with handlers for requests and checks. PDFLion sets no device or screen-sharing handlers, so WebHID, Web Serial, WebUSB, Bluetooth and `getDisplayMedia` fail.
+- 11, 12 (`<webview>`): not applicable. No window enables `webviewTag`, so no `will-attach-webview` handler.
+- 13 (navigation): `will-navigate` doesn't fire for `about:blank` and `about:srcdoc`, which only page scripts can reach. Those pages get no `window.pdflion`, and main ignores their messages.
+- 15 (`shell.openExternal`): links in PDFs are untrusted, and opening them is deliberate. Only `http`, `https` and `mailto` reach it.
+- 17 (IPC senders): checks the frame's URL rather than its origin, as above.
+- 19 (fuses): all set, see above. `LoadBrowserProcessSpecificV8Snapshot` stays off, because PDFLion has no browser-only snapshot.
+- Downloads keep Electron's default, a save dialog. pdf.js uses them for attachments and for a PDF script's Save As.
 
 ## Conventions
 

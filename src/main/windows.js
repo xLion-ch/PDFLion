@@ -1,15 +1,30 @@
 /**
- * One BrowserWindow per document, its edited state, and the Open panel that
- * leads to them.
+ * One BrowserWindow per document, where it opens, its edited state, and the
+ * Open panel that leads to them.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { BrowserWindow, dialog, screen, shell } from "electron";
 import * as documents from "./documents.js";
 import { preloadPath } from "./paths.js";
+import { parsePlacement, placeWindow } from "./placement.js";
+import { addRecentDocument } from "./recent.js";
 import { isViewerUrl, viewerUrl } from "./routes.js";
+import { getState, setState } from "./state.js";
 
 const isMac = process.platform === "darwin";
+
+/** The state.json key for where the user last left a document window. */
+const PLACEMENT_KEY = "window";
+
+/** The size of the first window, before the user has sized one. */
+const DEFAULT_SIZE = { width: 1000, height: 800 };
+
+/**
+ * Document windows share one macOS tab group, so Window > Merge All Windows
+ * gathers them, and the tab bar's + button opens a document as a new tab.
+ */
+const TABBING_IDENTIFIER = "pdflion";
 
 /** @type {Map<string, BrowserWindow>} document token -> window */
 const windows = new Map();
@@ -42,9 +57,11 @@ let openPanelShown = false;
  * If the file can't be read, shows an error instead and opens no window.
  *
  * @param {string} file absolute path
+ * @param {BrowserWindow} [tabbedWith] macOS: a window to add the new window
+ *   to as a tab
  * @returns {Promise<void>}
  */
-export async function openDocument(file) {
+export async function openDocument(file, tabbedWith) {
   let realPath;
   try {
     // Resolves symlinks and letter case, so each file has exactly one path.
@@ -64,10 +81,12 @@ export async function openDocument(file) {
 
   const token = documents.register(realPath);
   const name = path.basename(realPath);
+  const { bounds, maximized } = newWindowPlacement();
   const win = new BrowserWindow({
     title: name,
-    width: 1000,
-    height: 800,
+    ...bounds,
+    show: !maximized,
+    tabbingIdentifier: TABBING_IDENTIFIER,
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
@@ -75,11 +94,24 @@ export async function openDocument(file) {
       preload: preloadPath,
     },
   });
+  if (maximized) {
+    win.maximize();
+    win.show();
+  }
+  if (tabbedWith && !tabbedWith.isDestroyed()) tabbedWith.addTabbedWindow(win);
   windows.set(token, win);
   win.on("closed", () => {
     windows.delete(token);
     documents.unregister(token);
   });
+  const remember = () => rememberPlacement(win);
+  win.on("resized", remember).on("moved", remember);
+  win.on("maximize", remember).on("unmaximize", remember);
+  win.on("new-window-for-tab", () => showOpenPanel(win));
+  // pdf.js zooms the pages on a pinch. Chromium's own pinch zoom, which
+  // Electron leaves off by default, would scale the whole viewer. Setting the
+  // limits fails until there's a page to apply them to.
+  win.webContents.on("did-finish-load", () => win.webContents.setVisualZoomLevelLimits(1, 1));
   keepOnViewer(win);
   if (!isMac) {
     // The window shows the page's title, marked while edited.
@@ -122,15 +154,15 @@ export function documentFile(win) {
 
 /**
  * Makes a window stand for `file`: in its title bar's proxy icon on macOS,
- * and in recent documents (the Dock menu and File > Open Recent on macOS, the
- * taskbar's jump list on Windows).
+ * and in recent documents (File > Open Recent, plus the Dock menu on macOS and
+ * the taskbar's jump list on Windows).
  *
  * @param {BrowserWindow} win
  * @param {string} file real path
  */
 export function setRepresentedFile(win, file) {
   if (isMac) win.setRepresentedFilename(file);
-  app.addRecentDocument(file);
+  addRecentDocument(file);
 }
 
 /**
@@ -160,10 +192,12 @@ export function isEdited(win) {
  * Shows the Open panel and opens each chosen PDF. Does nothing while the
  * panel is already up, e.g. when the Dock icon is clicked again.
  *
+ * @param {BrowserWindow} [tabbedWith] macOS: a window whose tab bar's + button
+ *   was clicked, to add the new windows to as tabs
  * @returns {Promise<void>} settles once the chosen files have opened, or
  *   failed to
  */
-export async function showOpenPanel() {
+export async function showOpenPanel(tabbedWith) {
   if (openPanelShown) return;
   openPanelShown = true;
   let filePaths;
@@ -175,7 +209,36 @@ export async function showOpenPanel() {
   } finally {
     openPanelShown = false;
   }
-  await Promise.all(filePaths.map(openDocument));
+  await Promise.all(filePaths.map((file) => openDocument(file, tabbedWith)));
+}
+
+/**
+ * Where a new document window goes: see placement.js.
+ *
+ * @returns {import("./placement.js").Placement}
+ */
+function newWindowPlacement() {
+  const remembered = parsePlacement(getState(PLACEMENT_KEY));
+  const primary = screen.getPrimaryDisplay();
+  const workAreas = [primary, ...screen.getAllDisplays().filter(({ id }) => id !== primary.id)].map(
+    (display) => display.workArea,
+  );
+  const occupied = [...windows.values()].map((win) => win.getNormalBounds());
+  return {
+    bounds: placeWindow(remembered?.bounds ?? null, DEFAULT_SIZE, workAreas, occupied),
+    maximized: remembered?.maximized ?? false,
+  };
+}
+
+/**
+ * Remembers where the user left a window, for the next one to open there.
+ * Full screen and minimized are passing states, not placements.
+ *
+ * @param {BrowserWindow} win
+ */
+function rememberPlacement(win) {
+  if (win.isFullScreen() || win.isMinimized()) return;
+  setState(PLACEMENT_KEY, { ...win.getNormalBounds(), maximized: win.isMaximized() });
 }
 
 /**

@@ -8,6 +8,18 @@
  */
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
+// The preload runs in every page a window shows, not only in the viewer. The
+// page can navigate to about:blank or about:srcdoc without will-navigate, and
+// those must not get window.pdflion. Main ignores their messages as well.
+// Electron runs a sandboxed preload as a function, so it can return early.
+if (
+  location.protocol !== "pdflion:" ||
+  location.host !== "app" ||
+  location.pathname !== "/viewer/web/viewer.html"
+) {
+  return;
+}
+
 contextBridge.exposeInMainWorld("pdflion", {
   /** `darwin` or `win32`, for the shortcuts that differ between them. */
   platform: process.platform,

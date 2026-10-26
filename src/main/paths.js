@@ -16,6 +16,14 @@ export const viewerRoot = app.isPackaged
   ? path.join(process.resourcesPath, "pdfjs")
   : path.join(appPath, "vendor", "pdf.js", "build", "generic");
 
+/** The pdf.js build's version.json, e.g. `{ "version": "6.4.299", … }`. */
+export const pdfjsVersionPath = app.isPackaged
+  ? path.join(process.resourcesPath, "pdfjs", "version.json")
+  : path.join(appPath, "vendor", "pdf.js", "build", "version.json");
+
+/** The icon in Windows' About box, 48×48 as Electron recommends for it. */
+export const aboutIconPath = path.join(appPath, "resources", "about-icon.png");
+
 /** `src/viewer/` (bridge.js, overrides.css), served at `pdflion://app/pdflion/`. */
 export const pdflionRoot = path.join(appPath, "src", "viewer");
 

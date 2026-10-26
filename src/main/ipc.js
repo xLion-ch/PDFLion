@@ -96,6 +96,9 @@ function fromViewer(event) {
 }
 
 /**
+ * Only `.pdf` files: the preload sends only files Chromium types as
+ * `application/pdf`, which it does by their extension.
+ *
  * @param {unknown} paths
  * @returns {paths is string[]}
  */
@@ -109,7 +112,8 @@ function isPathList(paths) {
         typeof file === "string" &&
         file.length <= MAX_PATH_LENGTH &&
         !file.includes("\0") &&
-        path.isAbsolute(file),
+        path.isAbsolute(file) &&
+        path.extname(file).toLowerCase() === ".pdf",
     )
   );
 }
