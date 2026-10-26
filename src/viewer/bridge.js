@@ -13,8 +13,18 @@
   /** `LinkTarget.BLANK` in web/pdf_link_service.js. */
   const LINK_TARGET_BLANK = 2;
 
+  /** Whether the document has changes since it was opened or last saved. */
+  let edited = false;
+
+  /** Whether a save is under way. */
+  let saving = false;
+
+  /** Whether the document changed after a save under way took its bytes. */
+  let editedWhileSaving = false;
+
   /**
-   * Commands main sends from the menu, mapped to pdf.js calls.
+   * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
+   * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
    */
   const COMMANDS = {
@@ -30,7 +40,9 @@
     rotateLeft: (app) => app.rotatePages(-90),
     rotateRight: (app) => app.rotatePages(90),
     presentation: (app) => app.requestPresentationMode(),
-    save: (app) => save(app),
+    // An unchanged document is already saved.
+    save: (app) => !edited || save(app, window.pdflion.save),
+    saveAs: (app) => save(app, window.pdflion.saveAs),
   };
 
   // On macOS the page gets ⌘-key events before the native menu, and the menu
@@ -59,10 +71,11 @@
 
       const app = window.PDFViewerApplication;
       app.initializedPromise.then(() => {
-        window.pdflion.onCommand((command) => {
-          if (Object.hasOwn(COMMANDS, command)) COMMANDS[command](app);
-        });
+        window.pdflion.onCommand((command) =>
+          Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
+        );
         app.eventBus.on("documentloaded", () => trackEdits(app.pdfDocument));
+        hideChangesIndicator(app);
       });
     },
     { once: true },
@@ -97,22 +110,54 @@
   }
 
   /**
-   * Reports unsaved changes to main, which shows them as the window's edited
-   * dot. pdf.js installs its own callbacks before `documentloaded`, so wrap
-   * them rather than replace them.
+   * Follows pdf.js's modified flag, which is set by the first change and
+   * cleared when the changes are undone. pdf.js installs its own callbacks
+   * before `documentloaded`, so wrap them rather than replace them.
+   *
+   * saveDocument() also clears the flag, as soon as it has the bytes and
+   * before main has written them, so during a save save() decides instead.
    *
    * @param {any} pdfDocument
    */
   function trackEdits(pdfDocument) {
     const storage = pdfDocument.annotationStorage;
     const { onSetModified, onResetModified } = storage;
+    edited = false;
     storage.onSetModified = () => {
       onSetModified?.();
-      window.pdflion.setEdited(true);
+      if (saving) editedWhileSaving = true;
+      setEdited(true);
     };
     storage.onResetModified = () => {
       onResetModified?.();
-      window.pdflion.setEdited(false);
+      if (!saving) setEdited(false);
+    };
+  }
+
+  /**
+   * Reports unsaved changes to main, which shows them as the window's edited
+   * dot and asks about them before the window closes.
+   *
+   * @param {boolean} value
+   */
+  function setEdited(value) {
+    edited = value;
+    window.pdflion.setEdited(value);
+  }
+
+  /**
+   * pdf.js prefixes the title with "* " while the document has any form data
+   * or annotations, and keeps it after they're saved. The window's edited dot
+   * shows unsaved changes instead.
+   *
+   * @param {any} app
+   */
+  function hideChangesIndicator(app) {
+    const { setTitle } = app;
+    /** @param {string} [title] */
+    app.setTitle = function (title) {
+      setTitle.call(this, title);
+      document.title = document.title.replace(/^\* /, "");
     };
   }
 
@@ -122,14 +167,48 @@
    * scripts around it.
    *
    * @param {any} app
+   * @param {(bytes: Uint8Array) => Promise<string | null>} write
+   *   window.pdflion.save or saveAs
+   * @returns {Promise<boolean>} whether the document was saved
    */
-  async function save(app) {
-    await app.pdfScriptingManager.dispatchWillSave();
+  async function save(app, write) {
+    if (saving) return false;
+    saving = true;
+    editedWhileSaving = false;
     try {
-      const bytes = await app.pdfDocument.saveDocument();
-      await window.pdflion.save(bytes);
+      await app.pdfScriptingManager.dispatchWillSave();
+      try {
+        const { pdfDocument } = app;
+        // Without form data or annotations there's nothing to add to the
+        // original bytes, which is how pdf.js's own Download decides too.
+        const bytes =
+          pdfDocument.annotationStorage.size > 0
+            ? await pdfDocument.saveDocument()
+            : await pdfDocument.getData();
+        const url = await write(bytes);
+        if (!url) return false; // Still edited, whatever saveDocument() reported.
+        setEdited(editedWhileSaving);
+        if (url !== app.url) showDocumentUrl(app, url);
+        return true;
+      } finally {
+        await app.pdfScriptingManager.dispatchDidSave();
+      }
     } finally {
-      await app.pdfScriptingManager.dispatchDidSave();
+      saving = false;
     }
+  }
+
+  /**
+   * Points pdf.js at the document's URL after Save As, so the title and
+   * Document Properties show the new file name. Titles it like
+   * _initializeMetadata does on load: "PDF title - file name".
+   *
+   * @param {any} app
+   * @param {string} url `/doc/<token>/<name>`
+   */
+  function showDocumentUrl(app, url) {
+    app.setTitleUsingUrl(url, url);
+    const pdfTitle = app._docTitle;
+    if (pdfTitle) app.setTitle(`${pdfTitle} - ${app._title}`);
   }
 })();

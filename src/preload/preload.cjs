@@ -9,12 +9,33 @@
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("pdflion", {
-  /** @param {(command: string) => void} callback called for each menu command */
+  /**
+   * @param {(command: string) => unknown} callback called for each command
+   *   from main. What it returns or resolves to goes back to main.
+   */
   onCommand(callback) {
-    ipcRenderer.on("pdflion:command", (_event, command) => callback(command));
+    ipcRenderer.on("pdflion:command", async (_event, id, command) => {
+      let result = null;
+      try {
+        result = (await callback(command)) ?? null;
+      } catch (error) {
+        console.error(`Command ${command} failed:`, error);
+      }
+      ipcRenderer.send("pdflion:command-done", id, result);
+    });
   },
-  /** @param {Uint8Array} bytes the whole document, to write over the file */
+  /**
+   * @param {Uint8Array} bytes the whole document, to write over its file
+   * @returns {Promise<string | null>} the document's `/doc/` path, or null if
+   *   it wasn't saved
+   */
   save: (bytes) => ipcRenderer.invoke("pdflion:save", bytes),
+  /**
+   * @param {Uint8Array} bytes the whole document, to write where the user picks
+   * @returns {Promise<string | null>} the document's new `/doc/` path, or null
+   *   if it wasn't saved
+   */
+  saveAs: (bytes) => ipcRenderer.invoke("pdflion:save-as", bytes),
   /** @param {boolean} edited whether the document has unsaved changes */
   setEdited: (edited) => ipcRenderer.send("pdflion:set-edited", edited),
 });

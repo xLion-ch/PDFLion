@@ -21,8 +21,20 @@ export const VIEWER_URL = `${ORIGIN}/viewer/web/viewer.html`;
  * @returns {string}
  */
 export function viewerUrl(token, name) {
-  const params = new URLSearchParams({ file: `/doc/${token}/${encodeURIComponent(name)}` });
+  const params = new URLSearchParams({ file: docPath(token, name) });
   return `${VIEWER_URL}?${params}`;
+}
+
+/**
+ * The path of an opened document, as pdf.js's `PDFViewerApplication.url`
+ * holds it after decoding the viewer URL's `file` parameter.
+ *
+ * @param {string} token from the documents registry
+ * @param {string} name file name
+ * @returns {string}
+ */
+export function docPath(token, name) {
+  return `/doc/${token}/${encodeURIComponent(name)}`;
 }
 
 /**

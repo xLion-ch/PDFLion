@@ -7,7 +7,7 @@
  * pdf.js also binds, so keep its isMenuShortcut() in sync with them.
  */
 import { app, BrowserWindow, Menu, shell } from "electron";
-import { sendCommand } from "./ipc.js";
+import { runCommand } from "./ipc.js";
 import { isDocumentWindow, showOpenPanel } from "./windows.js";
 
 const REPOSITORY_URL = "https://github.com/c14ud3/PDFLion";
@@ -117,7 +117,7 @@ function commandItem(label, command, accelerator, id = command) {
     label,
     accelerator,
     click: (_item, win) => {
-      if (win instanceof BrowserWindow && isDocumentWindow(win)) sendCommand(win, command);
+      if (win instanceof BrowserWindow && isDocumentWindow(win)) runCommand(win, command);
     },
   };
 }

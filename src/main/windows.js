@@ -82,7 +82,17 @@ export async function openDocument(file) {
  * @returns {boolean} whether `win` is a window showing a document
  */
 export function isDocumentWindow(win) {
-  return win != null && !win.isDestroyed() && [...windows.values()].includes(win);
+  return win != null && !win.isDestroyed() && documentToken(win) !== undefined;
+}
+
+/**
+ * @param {BrowserWindow} win
+ * @returns {string | undefined} the token of the document `win` shows
+ */
+export function documentToken(win) {
+  for (const [token, other] of windows) {
+    if (other === win) return token;
+  }
 }
 
 /**

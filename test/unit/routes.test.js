@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  docPath,
   docToken,
   isViewerUrl,
   resolveInside,
@@ -44,6 +45,12 @@ describe("viewerUrl", () => {
       assert.equal(docUrl.hash, "");
       assert.equal(docToken(docUrl.href), token);
       assert.equal(decodeURIComponent(docUrl.pathname.split("/").pop() ?? ""), name);
+    });
+
+    it(`gives pdf.js's url for the document: ${name}`, () => {
+      // bridge.js compares the two after saving, to notice a Save As.
+      const file = new URLSearchParams(new URL(viewerUrl(token, name)).search).get("file");
+      assert.equal(docPath(token, name), file);
     });
   }
 });

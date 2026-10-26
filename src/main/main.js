@@ -8,6 +8,7 @@ import { app, BrowserWindow } from "electron";
 import { handleIpc } from "./ipc.js";
 import { installMenu } from "./menu.js";
 import { handleProtocol, registerScheme } from "./protocol.js";
+import { guardUnsavedChanges } from "./unsaved.js";
 import { openDocument, showOpenPanel } from "./windows.js";
 
 registerScheme();
@@ -32,6 +33,7 @@ app.on("window-all-closed", () => {});
 app.whenReady().then(() => {
   handleProtocol();
   handleIpc();
+  guardUnsavedChanges();
   installMenu();
 
   const files = [...openFileQueue, ...commandLineFiles()];
