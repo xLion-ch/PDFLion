@@ -32,6 +32,7 @@ This is the target layout. Directories appear as PLAN.md phases land.
 src/main/        main process: one module per concern
   main.js        app lifecycle, open-file queue
   protocol.js    pdflion:// scheme handler
+  routes.js      pdflion:// URL to file mapping, Electron-free so unit tests can import it
   documents.js   token registry for opened files, save / save as
   windows.js     one BrowserWindow per document
   menu.js        native menu
@@ -73,7 +74,7 @@ npm run dist             # .dmg / .zip in dist/
 - Updating to a new release:
   1. Run `npm run pdfjs:update`.
   2. Read the upstream release notes.
-  3. Check `bridge.js` and `overrides.css` against the new `web/app.js` and `web/viewer.html`.
+  3. Check `bridge.js` and `overrides.css` against the new `web/app.js` and `web/viewer.html`. Also check the CSP header in `protocol.js` against the `<meta>` CSP in `web/viewer.html`. Chromium enforces both, so the header must not be stricter than what pdf.js needs.
   4. Run the unit and e2e tests.
   5. Commit `Update pdf.js to vX.Y.Z`, containing the submodule bump plus any bridge fixes it required.
 
