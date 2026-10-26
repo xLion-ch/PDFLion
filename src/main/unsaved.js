@@ -57,9 +57,7 @@ export function guardUnsavedChanges() {
  * @param {Electron.Event} event
  */
 function reviewBeforeQuitting(event) {
-  const edited = BrowserWindow.getAllWindows().filter(
-    (win) => isEdited(win) && !decided.has(win),
-  );
+  const edited = BrowserWindow.getAllWindows().filter((win) => isEdited(win) && !decided.has(win));
   if (edited.length === 0) return;
   event.preventDefault();
   reviewAndQuit(edited);

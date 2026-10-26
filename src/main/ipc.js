@@ -22,6 +22,13 @@ const MAX_PATH_LENGTH = 32767;
 const MAX_DOCUMENT_BYTES = 2 ** 31;
 
 /**
+ * Commands whose pdf.js call the page may only make in response to the user,
+ * such as requestFullscreen() for Presentation Mode. A shortcut reaches the
+ * page before the menu and counts, but a click on the native menu doesn't.
+ */
+const COMMANDS_NEEDING_ACTIVATION = new Set(["presentation"]);
+
+/**
  * Commands sent with runCommand() and waiting for bridge.js to finish them.
  * @type {Map<number, { webContents: Electron.WebContents, settle: (result: unknown) => void }>}
  */
@@ -67,8 +74,12 @@ export function handleIpc() {
  * @returns {Promise<unknown>} what the command returned, e.g. whether `save`
  *   saved, or null if the window went away first
  */
-export function runCommand(win, command) {
+export async function runCommand(win, command) {
   const { webContents } = win;
+  if (COMMANDS_NEEDING_ACTIVATION.has(command)) {
+    // Runs nothing, but as a user gesture, which gives the page activation.
+    await webContents.executeJavaScript("void 0", true).catch(() => {});
+  }
   const id = ++lastCommandId;
   return new Promise((resolve) => {
     const gone = () => settle(null);

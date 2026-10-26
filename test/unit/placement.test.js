@@ -18,7 +18,10 @@ describe("parsePlacement", () => {
 
   it("treats anything but true as not maximized", () => {
     for (const maximized of [undefined, false, "true", 1]) {
-      assert.equal(parsePlacement({ x: 0, y: 0, width: 1, height: 1, maximized })?.maximized, false);
+      assert.equal(
+        parsePlacement({ x: 0, y: 0, width: 1, height: 1, maximized })?.maximized,
+        false,
+      );
     }
   });
 
@@ -104,7 +107,11 @@ describe("placeWindow", () => {
     const second = placeWindow(remembered, defaultSize, displays, [first]);
     const third = placeWindow(remembered, defaultSize, displays, [second, first]);
     assert.deepEqual(second, { ...remembered, x: 100 + CASCADE_STEP, y: 120 + CASCADE_STEP });
-    assert.deepEqual(third, { ...remembered, x: 100 + 2 * CASCADE_STEP, y: 120 + 2 * CASCADE_STEP });
+    assert.deepEqual(third, {
+      ...remembered,
+      x: 100 + 2 * CASCADE_STEP,
+      y: 120 + 2 * CASCADE_STEP,
+    });
   });
 
   it("ignores windows elsewhere", () => {

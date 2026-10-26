@@ -1,8 +1,8 @@
 # PDFLion
 
-A PDF viewer for macOS (Apple silicon and Intel) and Windows: Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) generic viewer wrapped in Electron. The shell stays thin. pdf.js does the rendering and provides the viewer UI. Electron adds what a browser tab can't: opening files from Finder and Explorer, native menus and shortcuts, saving in place, and packaging as a signed `.app` and Windows installer.
+A PDF viewer for macOS (Apple silicon and Intel) and Windows: Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) generic viewer wrapped in Electron. The shell stays thin. pdf.js does the rendering and provides the viewer UI. Electron adds what a browser tab can't: opening files from Finder and Explorer, native menus and shortcuts, saving in place, and packaging as a Mac app and Windows installer.
 
-Implementation status and next steps are in [PLAN.md](PLAN.md). Tick items off there as they land.
+[README.md](README.md) covers installing, building, and the checks to do by hand before a release.
 
 ## Ground rules
 
@@ -19,19 +19,18 @@ Implementation status and next steps are in [PLAN.md](PLAN.md). Tick items off t
   - Windows: a menu bar in each window, Ctrl shortcuts, and the app quits when its last window closes. A PDF opened while PDFLion runs goes to the running process.
 
   Branch on `process.platform === "darwin"` in the module concerned. Before relying on an Electron API, check its `@platform` in `node_modules/electron/electron.d.ts`. Many window and menu APIs, such as `isDocumentEdited()` and the `recentDocuments` role, are macOS only.
-- Code is written on a Mac. Anything Windows-specific stays unverified until it has run on a Windows PC or in Windows CI, so say so when reporting it.
+- Code is written on a Mac. Anything Windows-specific stays unverified until it has run on a Windows PC, so say so when reporting it.
 
 ## Stack
 
 - Electron (latest stable), main process as ES modules (`"type": "module"`).
 - Plain JavaScript with JSDoc. No TypeScript, no bundler, no UI framework, because the UI is pdf.js's.
 - The preload is CommonJS (`preload.cjs`), because sandboxed preloads can't be ES modules.
-- electron-builder for packaging: a signed and notarized `.dmg` and `.zip` for each Mac architecture (arm64, x64), and a signed NSIS installer for Windows (x64).
+- electron-builder for packaging: a `.dmg` and `.zip` for each Mac architecture (arm64, x64), and an NSIS installer for Windows (x64). Nothing is signed with a certificate or notarized, by choice. Mac builds are signed ad hoc, because Apple silicon runs only signed code.
 - Node 24 LTS (`.nvmrc`). The pdf.js build requires Node `>=22.22.3 || >=24.15.0 || >=26.0`.
 
 ## Layout
 
-This is the target layout. Directories appear as PLAN.md phases land.
 
 ```
 src/main/        main process: one module per concern
@@ -58,8 +57,9 @@ src/viewer/      served at pdflion://app/pdflion/, injected into viewer.html
 resources/       icon, entitlements (electron-builder buildResources); about-icon.png also ships in the app
 scripts/
   update-pdfjs.js  plain Node, so it runs on Windows too
+  build.js         tests, then every app version this machine can build, into dist/
 test/unit/       node --test, files named *.test.js
-test/e2e/        Playwright against the real app
+test/e2e/        Playwright against the dev app, each launch with its own --user-data-dir
 vendor/pdf.js/   submodule, never edit
 electron-builder.yml  packaging: targets, file associations, Electron fuses
 ```
@@ -72,9 +72,10 @@ npm install
 npm run pdfjs:build      # build the pinned pdf.js viewer (once per clone and after each update)
 npm start                # run in dev; npm start -- path/to/file.pdf opens a file
 npm test                 # unit tests
-npm run test:e2e         # Playwright smoke tests
+npm run test:e2e         # end-to-end tests: they open windows and take focus while they run
+npm run build            # tests, then every version this machine can build, in dist/ (no CI: run it on a Mac and on Windows)
 npm run dist             # installers for this platform in dist/: Mac .dmg/.zip (arm64 and x64), or the Windows .exe
-npm run dist -- --dir -c.mac.identity=- -c.mac.notarize=false   # unsigned local Mac apps, ad-hoc signed so they run
+npm run dist -- --dir    # just the apps in dist/, without installers
 ```
 
 ## pdf.js
@@ -111,6 +112,13 @@ A window loads `pdflion://app/viewer/web/viewer.html?file=/doc/<token>/<name>.pd
 - pdf.js makes range requests only for http(s) URLs, so `bridge.js` opens `/doc/` URLs through a `PDFDataRangeTransport`. It streams the file and fetches the parts pdf.js needs sooner as byte ranges, with `If-Match` so that a changed file gets 412.
 - The handler resolves every path against its root and returns 404 for anything that escapes it.
 
+## Menu commands
+
+- Menu items that act on the document come from `commandItem()` in `menu.js`. A click calls `runCommand(win, command)` in `ipc.js`, which sends the command to `bridge.js`, and `COMMANDS` there maps it to pdf.js. A new command needs all three, plus an end-to-end test.
+- The page sees key presses before the native menu, on macOS and Windows alike, and the menu only gets the ones the page leaves unhandled. `isMenuShortcut` in `bridge.js` keeps pdf.js from acting on the shortcuts it shares with the menu. A new shortcut that pdf.js also binds needs adding there.
+- A click on the native menu gives the page no user activation, which some web APIs need, such as `requestFullscreen()` for Presentation Mode. `runCommand()` grants it for the commands in `COMMANDS_NEEDING_ACTIVATION`.
+- Menu labels mark Windows access keys with `&`, as in `&File`. macOS drops the `&`. Write a literal `&` as `&&`.
+
 ## Security rules
 
 - Every window uses `contextIsolation: true`, `sandbox: true` and `nodeIntegration: false`, and `app.enableSandbox()` sandboxes every renderer.
@@ -123,7 +131,7 @@ A window loads `pdflion://app/viewer/web/viewer.html?file=/doc/<token>/<name>.pd
 
 ### Electron security checklist
 
-Reviewed in phase 9 against the [checklist](https://www.electronjs.org/docs/latest/tutorial/security). Items 1–4, 6–10, 13, 14, 16, 18 and 20 are met as the rules above describe. The rest:
+Reviewed in October 2026, for Electron 45, against the [checklist](https://www.electronjs.org/docs/latest/tutorial/security). Items 1–4, 6–10, 13, 14, 16, 18 and 20 are met as the rules above describe. The rest:
 
 - 5 (permission handlers): met, with handlers for requests and checks. PDFLion sets no device or screen-sharing handlers, so WebHID, Web Serial, WebUSB, Bluetooth and `getDisplayMedia` fail.
 - 11, 12 (`<webview>`): not applicable. No window enables `webviewTag`, so no `will-attach-webview` handler.
@@ -132,6 +140,39 @@ Reviewed in phase 9 against the [checklist](https://www.electronjs.org/docs/late
 - 17 (IPC senders): checks the frame's URL rather than its origin, as above.
 - 19 (fuses): all set, see above. `LoadBrowserProcessSpecificV8Snapshot` stays off, because PDFLion has no browser-only snapshot.
 - Downloads keep Electron's default, a save dialog. pdf.js uses them for attachments and for a PDF script's Save As.
+
+## Packaging
+
+- `electron-builder.yml` configures it. `npm run dist` builds this platform's installers, and `npm run build` (`scripts/build.js`) runs the tests first, then builds everything the machine can.
+- Mac builds are signed ad hoc (`identity: "-"`). Apple silicon runs only signed code, and flipping the fuses changes the signed Electron binary, so a build with signing skipped is killed at launch.
+- `fileAssociations` uses `rank: Alternate`, so PDFLion appears in Finder's Open With without becoming the default viewer. On Windows the installer registers PDFLion as a PDF handler, so it appears under Open with. Windows never changes the default app without asking.
+- The NSIS installer is one-click and per user: no admin rights, installed into `%LOCALAPPDATA%\Programs`.
+- The pdf.js build doesn't depend on the platform, so every build ships the same `pdfjs/` folder, license files included.
+- electron-builder's `makensis` for macOS is an Intel binary, so building the Windows installer on Apple silicon needs Rosetta.
+
+## Tests
+
+- `npm test` runs `node --test "test/unit/**/*.test.js"`. The glob is quoted so Node expands it: since Node 21, `node --test` treats a directory argument as a file.
+- Modules that unit tests import stay free of Electron: `routes.js`, `ranges.js`, `documents.js` and `placement.js`.
+- `bridge.test.js` runs `bridge.js` itself in `node:vm`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge starts using something new from the page, add it to the stand-ins. The test also reads `menu.js` for `commandItem("label", "command", …)` calls, to check that the bridge knows every command.
+- `npm run test:e2e` drives the dev app with Playwright. Each launch gets its own `--user-data-dir`. `test/e2e/pdfs.js` writes the test PDFs, so no binary fixtures are committed. The suite is the safety net for pdf.js updates, so it must cover every bridge command. `windows.spec.js` runs only on Windows.
+- In end-to-end tests, `page.evaluate()` counts as a user gesture. Where user activation matters, read the page from main with `webContents.executeJavaScript()`.
+
+## Decisions
+
+These were settled on purpose. Change them only on purpose.
+
+- The bundle ID is `io.github.c14ud3.pdflion`: `appId` in `electron-builder.yml`, repeated as `APP_ID` in `main.js`. Changing it after the first release resets user preferences and file associations. On Windows it is also the AppUserModelID, which groups the app's taskbar buttons with its Start menu shortcut.
+- One build per Mac architecture, each about half the size of a universal build. The alternative is a single `universal` build, so nobody can download the wrong one.
+- Windows x64 only. Windows on Arm runs it emulated. Adding `arm64` would run it natively there.
+- Launching without a file shows the Open panel, like Preview. On Windows the app then quits if the panel is cancelled, because a Windows app without windows has nothing to show. The alternative is an empty viewer window.
+- No code signing, no notarization, no CI and no auto-updates. Releases are built by hand, as the README describes. On macOS, auto-updates would need a Developer ID signature anyway: Electron's updater accepts only an update signed like the running app, and an ad-hoc signature differs with every build.
+- Window placement is kept in `state.json`, not with Electron's `windowStatePersistence`. That remembers each window under a unique name, so it can't give a new document the last window's place.
+
+## Known limitations
+
+- The native menus are in English. The viewer, and the items macOS adds to the menus, follow the system language.
+- Copying the text of a whole document fails if pdf.js needs more than about 5 s to gather it. Chromium then asks for `clipboard-read` instead of `clipboard-sanitized-write`, and `permissions.js` denies it.
 
 ## Conventions
 

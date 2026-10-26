@@ -8,6 +8,7 @@ directories:
 files:
   - src/**
   - package.json
+  - LICENSE
   - resources/about-icon.png # Windows' About box
 extraResources:
   - from: vendor/pdf.js/build/generic
@@ -27,8 +28,12 @@ mac:
       arch: [arm64, x64]
     - target: zip
       arch: [arm64, x64]
+  # No Developer ID and no notarization, by choice, but signed ad hoc: Apple
+  # silicon runs only signed code, and flipping the fuses changes the Electron
+  # binary. electron-builder's default entitlements include the
+  # disable-library-validation that the hardened runtime then needs.
+  identity: "-"
   hardenedRuntime: true
-  notarize: true
 win:
   target:
     - target: nsis
