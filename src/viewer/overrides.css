@@ -1,0 +1,22 @@
+/*
+ * Adjustments to pdf.js's viewer UI, injected after viewer.css. Selectors were
+ * checked against pdf.js v6.4.299's web/viewer.html.
+ */
+
+/* File > Open… and drag and drop replace Open, File > Save and Save As replace Save. */
+#secondaryOpenFile,
+#downloadButton,
+#secondaryDownload {
+  display: none !important;
+}
+
+/*
+ * Without Open, the separator below it would top the menu whenever the Print
+ * and Save group above it is hidden. That group only shows in pdf.js's medium
+ * view, at 750px and below (viewer.css).
+ */
+@media not all and (max-width: 750px) {
+  #secondaryToolbarButtonContainer > .visibleMediumView + .horizontalToolbarSeparator {
+    display: none;
+  }
+}

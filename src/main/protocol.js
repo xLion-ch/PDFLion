@@ -4,6 +4,7 @@
  * opened documents at `/doc/<token>/<name>`. One origin for all of it keeps
  * the viewer's same-origin `file=` check happy.
  */
+import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
@@ -13,6 +14,13 @@ import { SCHEME, docToken, resolveUrl } from "./routes.js";
 
 const mounts = { viewer: viewerRoot, pdflion: pdflionRoot };
 const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
+
+/**
+ * Added before `</head>` of viewer.html. The classic bridge.js runs before the
+ * viewer's deferred module scripts, and overrides.css comes after viewer.css.
+ */
+const VIEWER_INJECTION =
+  '<link rel="stylesheet" href="/pdflion/overrides.css"><script src="/pdflion/bridge.js"></script>';
 
 /**
  * Sent with viewer.html. The `<meta>` CSP in pdf.js's viewer.html stays, and
@@ -74,13 +82,24 @@ async function serve(request) {
 
   const file = resolveUrl(request.url, mounts);
   if (!file) return notFound();
+  if (file === viewerHtml) return serveViewerHtml();
 
-  /** @type {Record<string, string>} */
-  const headers = {};
   const type = CONTENT_TYPES[path.extname(file)];
-  if (type) headers["Content-Type"] = type;
-  if (file === viewerHtml) headers["Content-Security-Policy"] = VIEWER_CSP;
-  return serveFile(file, headers);
+  return serveFile(file, type ? { "Content-Type": type } : {});
+}
+
+/** @returns {Promise<Response>} viewer.html with PDFLion's additions */
+async function serveViewerHtml() {
+  const html = await fs.readFile(viewerHtml, "utf8");
+  if (!html.includes("</head>")) {
+    throw new Error(`No </head> in ${viewerHtml} to inject bridge.js before`);
+  }
+  return new Response(html.replace("</head>", `${VIEWER_INJECTION}</head>`), {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": VIEWER_CSP,
+    },
+  });
 }
 
 /**

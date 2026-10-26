@@ -5,6 +5,7 @@
  */
 import path from "node:path";
 import { app, BrowserWindow } from "electron";
+import { handleIpc } from "./ipc.js";
 import { installMenu } from "./menu.js";
 import { handleProtocol, registerScheme } from "./protocol.js";
 import { openDocument, showOpenPanel } from "./windows.js";
@@ -30,6 +31,7 @@ app.on("window-all-closed", () => {});
 
 app.whenReady().then(() => {
   handleProtocol();
+  handleIpc();
   installMenu();
 
   const files = [...openFileQueue, ...commandLineFiles()];

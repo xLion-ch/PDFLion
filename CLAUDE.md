@@ -34,7 +34,8 @@ src/main/        main process: one module per concern
   protocol.js    pdflion:// scheme handler
   routes.js      pdflion:// URL layout: viewer URLs, /doc/ tokens, mount paths. Electron-free so unit tests can import it
   documents.js   token registry for opened files, save / save as
-  windows.js     one BrowserWindow per document, the Open panel
+  windows.js     one BrowserWindow per document, the Open panel, navigation guards
+  ipc.js         IPC handlers (sender and payload checks), sending commands to bridge.js
   menu.js        native menu
   paths.js       the only place that knows dev vs packaged locations
 src/preload/

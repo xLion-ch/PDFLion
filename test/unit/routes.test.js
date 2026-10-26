@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { docToken, resolveInside, resolveUrl, viewerUrl } from "../../src/main/routes.js";
+import {
+  docToken,
+  isViewerUrl,
+  resolveInside,
+  resolveUrl,
+  viewerUrl,
+} from "../../src/main/routes.js";
 
 const mounts = { viewer: "/app/viewer", pdflion: "/app/src/viewer" };
 const token = "0b6c3a52-5d0e-4c55-9d1e-6f1c2f0e8a41";
@@ -40,6 +46,25 @@ describe("viewerUrl", () => {
       assert.equal(decodeURIComponent(docUrl.pathname.split("/").pop() ?? ""), name);
     });
   }
+});
+
+describe("isViewerUrl", () => {
+  it("accepts the viewer with any query and fragment", () => {
+    assert.ok(isViewerUrl("pdflion://app/viewer/web/viewer.html"));
+    assert.ok(isViewerUrl(viewerUrl(token, "a.pdf")));
+    assert.ok(isViewerUrl("pdflion://app/viewer/web/viewer.html?file=#page=2"));
+  });
+
+  it("rejects other pages, origins and schemes", () => {
+    assert.ok(!isViewerUrl("pdflion://app/viewer/web/viewer.htm"));
+    assert.ok(!isViewerUrl("pdflion://app/viewer/web/debugger.html"));
+    assert.ok(!isViewerUrl("pdflion://app/pdflion/viewer.html"));
+    assert.ok(!isViewerUrl("pdflion://evil/viewer/web/viewer.html"));
+    assert.ok(!isViewerUrl("https://app/viewer/web/viewer.html"));
+    assert.ok(!isViewerUrl("file:///viewer/web/viewer.html"));
+    assert.ok(!isViewerUrl("about:blank"));
+    assert.ok(!isViewerUrl(""));
+  });
 });
 
 describe("docToken", () => {

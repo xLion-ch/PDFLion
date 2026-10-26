@@ -3,12 +3,16 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, shell } from "electron";
 import * as documents from "./documents.js";
-import { viewerUrl } from "./routes.js";
+import { preloadPath } from "./paths.js";
+import { isViewerUrl, viewerUrl } from "./routes.js";
 
 /** @type {Map<string, BrowserWindow>} document token -> window */
 const windows = new Map();
+
+/** Link schemes that open in the default browser or mail app. */
+const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
 /**
  * Phrased like Preview's "couldn't be opened because …" alerts.
@@ -58,6 +62,7 @@ export async function openDocument(file) {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      preload: preloadPath,
     },
   });
   windows.set(token, win);
@@ -65,6 +70,7 @@ export async function openDocument(file) {
     windows.delete(token);
     documents.unregister(token);
   });
+  keepOnViewer(win);
 
   win.setRepresentedFilename(realPath);
   app.addRecentDocument(realPath);
@@ -89,6 +95,22 @@ export async function showOpenPanel() {
   } finally {
     openPanelShown = false;
   }
+}
+
+/**
+ * Keeps a window on the viewer, so `window.pdflion` never reaches another
+ * page. Links open in the default browser or mail app instead.
+ *
+ * @param {BrowserWindow} win
+ */
+function keepOnViewer(win) {
+  win.webContents.on("will-navigate", (event) => {
+    if (!isViewerUrl(event.url)) event.preventDefault();
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (EXTERNAL_PROTOCOLS.has(URL.parse(url)?.protocol ?? "")) shell.openExternal(url);
+    return { action: "deny" };
+  });
 }
 
 /**

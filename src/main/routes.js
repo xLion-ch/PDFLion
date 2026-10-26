@@ -26,6 +26,16 @@ export function viewerUrl(token, name) {
 }
 
 /**
+ * Whether `url` is the viewer page, whatever its query and fragment.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isViewerUrl(url) {
+  return appPathname(url) === new URL(VIEWER_URL).pathname;
+}
+
+/**
  * Returns the token of a `/doc/<token>/<name>` URL, or null for any other URL.
  *
  * @param {string} url
