@@ -379,27 +379,32 @@ describe("bridge.js menu shortcuts", () => {
     }
   });
 
-  it("keeps pdf.js from the Ctrl shortcuts and F4 on Windows", () => {
-    const bridge = loadBridge({ platform: "win32" });
-    for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
-      assert.ok(bridge.keepsFromPdfjs(press(key, "ctrl")), `Ctrl+${key}`);
-    }
-    assert.ok(bridge.keepsFromPdfjs(press("F", "ctrl+shift")), "Ctrl+Shift+F");
-    assert.ok(bridge.keepsFromPdfjs(press("F4")), "F4");
-  });
+  for (const [platform, name] of [
+    ["win32", "Windows"],
+    ["linux", "Linux"],
+  ]) {
+    it(`keeps pdf.js from the Ctrl shortcuts and F4 on ${name}`, () => {
+      const bridge = loadBridge({ platform });
+      for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
+        assert.ok(bridge.keepsFromPdfjs(press(key, "ctrl")), `Ctrl+${key}`);
+      }
+      assert.ok(bridge.keepsFromPdfjs(press("F", "ctrl+shift")), "Ctrl+Shift+F");
+      assert.ok(bridge.keepsFromPdfjs(press("F4")), "F4");
+    });
 
-  it("leaves pdf.js AltGr characters and other keys on Windows", () => {
-    const bridge = loadBridge({ platform: "win32" });
-    for (const [key, modifiers] of [
-      ["s", "ctrl+alt"], // AltGr+S
-      ["s", "meta"],
-      ["F4", "shift"],
-      ["F4", "alt"],
-      ["c", "ctrl"],
-    ]) {
-      assert.ok(!bridge.keepsFromPdfjs(press(key, modifiers)), `${modifiers}+${key}`);
-    }
-  });
+    it(`leaves pdf.js AltGr characters and other keys on ${name}`, () => {
+      const bridge = loadBridge({ platform });
+      for (const [key, modifiers] of [
+        ["s", "ctrl+alt"], // AltGr+S
+        ["s", "meta"],
+        ["F4", "shift"],
+        ["F4", "alt"],
+        ["c", "ctrl"],
+      ]) {
+        assert.ok(!bridge.keepsFromPdfjs(press(key, modifiers)), `${modifiers}+${key}`);
+      }
+    });
+  }
 });
 
 describe("bridge.js range loading", () => {

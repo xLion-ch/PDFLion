@@ -21,7 +21,7 @@ if (
 }
 
 contextBridge.exposeInMainWorld("pdflion", {
-  /** `darwin` or `win32`, for the shortcuts that differ between them. */
+  /** `darwin`, `win32` or `linux`, for the shortcuts that differ between them. */
   platform: process.platform,
   /**
    * @param {(command: string) => unknown} callback called for each command

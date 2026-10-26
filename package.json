@@ -2,8 +2,9 @@
   "name": "pdflion",
   "productName": "PDFLion",
   "version": "0.1.0",
-  "description": "A PDF viewer for macOS and Windows, built on pdf.js",
+  "description": "A PDF viewer for macOS, Windows and Linux, built on pdf.js",
   "author": "c14ud3",
+  "desktopName": "io.github.c14ud3.pdflion.desktop",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -19,7 +20,8 @@
     "build": "node scripts/build.js",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

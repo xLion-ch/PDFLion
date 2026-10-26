@@ -1,6 +1,7 @@
 /**
  * What PDFLion remembers between launches, in `userData/state.json`: where the
- * last document window was and, on Windows, the recently opened documents.
+ * last document window was and, on Windows and Linux, the recently opened
+ * documents.
  * The file is read once. Changes are written a moment later, batched, and
  * before the app quits.
  */

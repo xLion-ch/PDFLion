@@ -13,6 +13,7 @@ import { isViewerUrl, viewerUrl } from "./routes.js";
 import { getState, setState } from "./state.js";
 
 const isMac = process.platform === "darwin";
+const isLinux = process.platform === "linux";
 
 /** The state.json key for where the user last left a document window. */
 const PLACEMENT_KEY = "window";
@@ -105,7 +106,10 @@ export async function openDocument(file, tabbedWith) {
     documents.unregister(token);
   });
   const remember = () => rememberPlacement(win);
-  win.on("resized", remember).on("moved", remember);
+  // Linux has no events for the end of a move or resize, only for each step.
+  // state.js batches the writes.
+  if (isLinux) win.on("resize", remember).on("move", remember);
+  else win.on("resized", remember).on("moved", remember);
   win.on("maximize", remember).on("unmaximize", remember);
   win.on("new-window-for-tab", () => showOpenPanel(win));
   // pdf.js zooms the pages on a pinch. Chromium's own pinch zoom, which
@@ -168,7 +172,7 @@ export function setRepresentedFile(win, file) {
 /**
  * Records whether a window's document has unsaved changes, and shows it: as
  * the dot in the close button on macOS, and as a "*" before the title on
- * Windows, like Notepad.
+ * Windows and Linux, like Notepad and gedit.
  *
  * @param {BrowserWindow} win
  * @param {boolean} edited
@@ -260,7 +264,7 @@ function keepOnViewer(win) {
 /**
  * @param {BrowserWindow} win
  * @param {string} title the page's title
- * @returns {string} the window title Windows shows for it
+ * @returns {string} the window title Windows and Linux show for it
  */
 function windowTitle(win, title) {
   return isEdited(win) ? `*${title}` : title;

@@ -100,6 +100,12 @@ export const CREDITS = [
     components: [
       { name: "electron-builder", license: "MIT", url: "https://www.electron.build" },
       { name: "NSIS", license: "Zlib", url: "https://nsis.sourceforge.io" },
+      {
+        name: "fpm",
+        by: "Jordan Sissel",
+        license: "MIT",
+        url: "https://github.com/jordansissel/fpm",
+      },
       { name: "Playwright", by: "Microsoft", license: "Apache-2.0", url: "https://playwright.dev" },
     ],
   },

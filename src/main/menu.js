@@ -1,16 +1,16 @@
 /**
  * The native application menu: the menu bar on macOS, each window's menu bar
- * on Windows. Standard items use Electron roles. Items that act on the
- * document send a command to the focused window's bridge.js, and are disabled
- * while no document window is focused.
+ * on Windows and Linux. Standard items use Electron roles. Items that act on
+ * the document send a command to the focused window's bridge.js, and are
+ * disabled while no document window is focused.
  *
- * On macOS, shortcuts follow Preview. Windows uses Ctrl where macOS uses ⌘,
- * except where noted. bridge.js keeps pdf.js from acting on the ones pdf.js
- * also binds, so keep its isMenuShortcut() in sync with them.
+ * On macOS, shortcuts follow Preview. Windows and Linux use Ctrl where macOS
+ * uses ⌘, except where noted. bridge.js keeps pdf.js from acting on the ones
+ * pdf.js also binds, so keep its isMenuShortcut() in sync with them.
  *
- * A `&` in a label marks the access key on Windows: `&File` opens with Alt+F.
- * macOS drops it (Electron's menu controller runs every label through
- * FixUpWindowsStyleLabel), so role items get labels that read as their
+ * A `&` in a label marks the access key on Windows and Linux: `&File` opens
+ * with Alt+F. macOS drops it (Electron's menu controller runs every label
+ * through FixUpWindowsStyleLabel), so role items get labels that read as their
  * defaults there. A literal `&` is written `&&`.
  */
 import fs from "node:fs";
@@ -23,6 +23,7 @@ import { clearRecentDocuments, onRecentDocumentsChange, recentDocuments } from "
 import { isDocumentWindow, openDocument, showOpenPanel } from "./windows.js";
 
 const isMac = process.platform === "darwin";
+const isLinux = process.platform === "linux";
 
 const REPOSITORY_URL = "https://github.com/c14ud3/PDFLion";
 
@@ -36,27 +37,30 @@ export function installMenu() {
   app.on("browser-window-blur", updateDocumentItems);
   // Closing the focused window doesn't always emit a blur first.
   app.on("browser-window-created", (_event, win) => win.on("closed", updateDocumentItems));
-  // Windows' File > Open Recent lists them. On macOS the role does.
+  // File > Open Recent lists them on Windows and Linux. On macOS the role does.
   if (!isMac) onRecentDocumentsChange(setMenu);
 }
 
 /**
  * The About panel: PDFLion's version, and the projects it's built on and with
  * (credits.js), with the versions of pdf.js, Electron, Chromium and Node.js.
- * macOS shows it from the app menu, Windows from Help > About PDFLion.
+ * macOS shows it from the app menu, Windows and Linux from Help > About
+ * PDFLion. On Linux it's GTK's About dialog.
  */
 function setAboutPanel() {
   const version = app.getVersion();
+  const credits = creditsText({
+    "pdf.js": pdfjsVersion(),
+    Electron: process.versions.electron,
+    Chromium: process.versions.chrome,
+    "Node.js": process.versions.node,
+  });
   app.setAboutPanelOptions({
     applicationName: app.name,
-    // macOS adds "Version" itself.
-    applicationVersion: isMac ? version : `Version ${version}`,
-    credits: creditsText({
-      "pdf.js": pdfjsVersion(),
-      Electron: process.versions.electron,
-      Chromium: process.versions.chrome,
-      "Node.js": process.versions.node,
-    }),
+    // macOS adds "Version" itself, and GTK shows the version on its own line.
+    applicationVersion: isMac || isLinux ? version : `Version ${version}`,
+    // GTK's dialog has no credits, so they go below the version.
+    ...(isLinux ? { copyright: credits } : { credits }),
     ...(isMac
       ? // Otherwise macOS adds the bundle's build number: Electron's in dev,
         // and the version again once packaged.
@@ -101,8 +105,12 @@ function template() {
         { type: "separator" },
         commandItem("&Print…", "print", "CmdOrCtrl+P"),
         // Exit, which has no shortcut on Windows: Alt+F4 closes the window,
-        // and closing the last one quits.
-        ...onWindows({ type: "separator" }, { role: "quit", label: "E&xit" }),
+        // and closing the last one quits. Linux apps have Quit, with the
+        // role's Ctrl+Q.
+        ...onWindowsAndLinux(
+          { type: "separator" },
+          { role: "quit", label: isLinux ? "&Quit" : "E&xit" },
+        ),
       ],
     },
     {
@@ -119,7 +127,7 @@ function template() {
         { role: "paste", label: "&Paste" },
         ...onMac({ role: "pasteAndMatchStyle" }),
         { role: "delete", label: "De&lete" },
-        ...onWindows({ type: "separator" }),
+        ...onWindowsAndLinux({ type: "separator" }),
         { role: "selectAll", label: "Select &All" },
         { type: "separator" },
         commandItem("&Find…", "find", "CmdOrCtrl+F"),
@@ -150,7 +158,7 @@ function template() {
         commandItem("Rotate &Right", "rotateRight", "CmdOrCtrl+R"),
         { type: "separator" },
         commandItem("&Presentation Mode", "presentation", "Shift+CmdOrCtrl+F"),
-        // ⌃⌘F on macOS, F11 on Windows.
+        // ⌃⌘F on macOS, F11 on Windows and Linux.
         { role: "togglefullscreen", label: "Toggle &Full Screen" },
         ...(app.isPackaged
           ? []
@@ -162,7 +170,8 @@ function template() {
             ]),
       ],
     },
-    // Windows apps have no Window menu: the title bar minimizes and closes.
+    // Windows and Linux apps have no Window menu: the title bar minimizes and
+    // closes.
     ...onMac({ role: "windowMenu" }),
     {
       role: "help",
@@ -170,15 +179,15 @@ function template() {
       submenu: [
         { label: "PDFLion on &GitHub", click: () => shell.openExternal(REPOSITORY_URL) },
         // On macOS, About is in the app menu.
-        ...onWindows({ type: "separator" }, { role: "about", label: `&About ${app.name}` }),
+        ...onWindowsAndLinux({ type: "separator" }, { role: "about", label: `&About ${app.name}` }),
       ],
     },
   ];
 }
 
 /**
- * Windows' File > Open Recent, from the list recent.js keeps. Like Office, it
- * numbers the files, and the numbers are their access keys.
+ * File > Open Recent on Windows and Linux, from the list recent.js keeps. Like
+ * Office, it numbers the files, and the numbers are their access keys.
  *
  * @returns {Electron.MenuItemConstructorOptions}
  */
@@ -227,9 +236,10 @@ function onMac(...items) {
 
 /**
  * @param {Electron.MenuItemConstructorOptions[]} items
- * @returns {Electron.MenuItemConstructorOptions[]} `items` on Windows, else none
+ * @returns {Electron.MenuItemConstructorOptions[]} `items` on Windows and
+ *   Linux, else none
  */
-function onWindows(...items) {
+function onWindowsAndLinux(...items) {
   return isMac ? [] : items;
 }
 

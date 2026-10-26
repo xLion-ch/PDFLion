@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import electronPath from "electron";
 import { ROOT, expect, rendered, tempDir, test, tracemonkey } from "./pdflion.js";
 
-test.skip(process.platform !== "win32", "Windows behaviour");
+test.skip(process.platform === "darwin", "Windows and Linux behaviour");
 
 test("quits when its last window closes", async ({ pdflion }) => {
   const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
@@ -18,8 +18,8 @@ test("hands a file opened while it runs to the running process", async ({ pdflio
   const second = await tracemonkey(dir, "second.pdf");
   const { app, userData } = await pdflion([first]);
 
-  // What Explorer does: start another PDFLion with the file. It shares the
-  // userData folder, and with it the single-instance lock.
+  // What Explorer and Linux file managers do: start another PDFLion with the
+  // file. It shares the userData folder, and with it the single-instance lock.
   const nextWindow = app.waitForEvent("window");
   const other = spawn(/** @type {string} */ (/** @type {unknown} */ (electronPath)), [
     ROOT,

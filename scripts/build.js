@@ -2,8 +2,8 @@
 /**
  * Tests PDFLion and builds every version this machine can build into dist/:
  * on a Mac, the arm64 and x64 .dmg and .zip, plus the Windows installer if
- * Rosetta is installed; on Windows, the installer. Plain Node, like
- * update-pdfjs.js, so it runs the same on macOS and Windows.
+ * Rosetta is installed; on Windows, the installer; on Linux, the .deb. Plain
+ * Node, like update-pdfjs.js, so it runs the same on macOS, Windows and Linux.
  *
  * It empties dist/ first, so dist/ ends up holding exactly this build.
  */
@@ -13,12 +13,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const USAGE = `Usage:
-  node scripts/build.js   run the tests, then build into dist/ (npm run build)`;
+  node scripts/build.js   run the tests, then build into dist/ (npm run build)
+
+It builds what this machine can: the Mac apps on a Mac, plus the Windows
+installer with Rosetta; the Windows installer on Windows; the .deb on Linux.`;
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const DIST = path.join(ROOT, "dist");
 const PDFJS = path.join(ROOT, "vendor", "pdf.js");
-const ARTIFACT_RE = /\.(dmg|zip|exe)$/;
+const ARTIFACT_RE = /\.(dmg|zip|exe|deb)$/;
 
 /**
  * @param {string} message
@@ -73,6 +76,8 @@ function platforms() {
   switch (process.platform) {
     case "win32":
       return ["--win"];
+    case "linux":
+      return ["--linux"];
     case "darwin":
       if (canRunIntelCode()) return ["--mac", "--win"];
       console.log(
@@ -81,7 +86,7 @@ function platforms() {
       );
       return ["--mac"];
     default:
-      return die(`PDFLion builds on macOS and Windows, not on ${process.platform}`);
+      return die(`PDFLion builds on macOS, Windows and Linux, not on ${process.platform}`);
   }
 }
 

@@ -3,8 +3,8 @@
  *
  * In dev, `electron .` makes the app path the repo root. Packaged, the app path
  * is `app.asar` in the resources directory (`Contents/Resources/` on macOS,
- * `resources\` on Windows), and the pdf.js build is copied next to it into
- * `pdfjs`.
+ * `resources\` on Windows, `/opt/PDFLion/resources/` on Linux), and the pdf.js
+ * build is copied next to it into `pdfjs`.
  */
 import path from "node:path";
 import { app } from "electron";
@@ -21,7 +21,10 @@ export const pdfjsVersionPath = app.isPackaged
   ? path.join(process.resourcesPath, "pdfjs", "version.json")
   : path.join(appPath, "vendor", "pdf.js", "build", "version.json");
 
-/** The icon in Windows' About box, 48×48 as Electron recommends for it. */
+/**
+ * The icon in the About box on Windows and Linux, 48×48 as Electron recommends
+ * for Windows. GTK scales it to 64×64.
+ */
 export const aboutIconPath = path.join(appPath, "resources", "about-icon.png");
 
 /** `src/viewer/` (bridge.js, overrides.css), served at `pdflion://app/pdflion/`. */

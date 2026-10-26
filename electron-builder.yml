@@ -1,6 +1,7 @@
 appId: io.github.c14ud3.pdflion # also APP_ID in src/main/main.js
 productName: PDFLion
-# PDFLion-1.0.0-mac-arm64.dmg, PDFLion-1.0.0-mac-x64.dmg, PDFLion-1.0.0-win-x64.exe, …
+# PDFLion-1.0.0-mac-arm64.dmg, PDFLion-1.0.0-mac-x64.dmg, PDFLion-1.0.0-win-x64.exe,
+# PDFLion-1.0.0-linux-x64.deb, …
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 directories:
   buildResources: resources
@@ -38,6 +39,37 @@ win:
   target:
     - target: nsis
       arch: [x64]
+# A .deb for Ubuntu and Linux Mint, installed into /opt/PDFLion. No AppImage:
+# it can't carry Chromium's setuid sandbox helper, and Ubuntu 24.04 restricts
+# the user namespaces the sandbox needs otherwise, so it would only run with
+# --no-sandbox. The .deb's post-install script sets up whichever of the two
+# the system needs, with an AppArmor profile on Ubuntu 24.04 and later.
+linux:
+  target:
+    - target: deb
+      arch: [x64]
+  category: Office
+  # Installed into hicolor/scalable/apps. The 1024 px icon.png would go into
+  # hicolor/1024x1024, a size the hicolor theme doesn't list.
+  icon: icon.svg
+  executableName: pdflion
+  # Without a field code, electron-builder adds %U, and file managers pass
+  # URIs. %F makes them pass paths.
+  executableArgs: ["%F"]
+  # Names the .desktop file after desktopName in package.json, which Electron
+  # uses as the Wayland app ID and X11 WM_CLASS, so the dock groups windows
+  # with their launcher.
+  syncDesktopName: true
+  # Lists PDFLion under Open With for PDFs, without making it the default.
+  # Not as a mimeType in fileAssociations: electron-builder would then also
+  # install a MIME definition for application/pdf, whose icon replaces the
+  # PDF icon in file managers.
+  mimeTypes: [application/pdf]
+  # The package's summary in apt and software centres. The description follows
+  # it there, and is the launcher's tooltip.
+  synopsis: PDF viewer built on Mozilla's pdf.js
+  description: View PDFs, fill in forms and add annotations
+  maintainer: "c14ud3 <42405397+c14ud3@users.noreply.github.com>"
 # Electron's compile-time switches, flipped in the packaged binary.
 electronFuses:
   # Ignore ELECTRON_RUN_AS_NODE, NODE_OPTIONS and --inspect, which would let

@@ -1,8 +1,8 @@
 /**
  * Runs the real app from this checkout for the end-to-end tests. Each launch
  * gets its own userData folder, so tests never touch the user's window
- * placement or recent documents, and on Windows never hand their files to a
- * PDFLion that's already running.
+ * placement or recent documents, and on Windows and Linux never hand their
+ * files to a PDFLion that's already running.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -118,7 +118,8 @@ export async function clickMenu(app, page, id) {
  * @param {ElectronApplication} app
  * @param {Page} page
  * @returns {Promise<boolean>} whether the window shows unsaved changes: the
- *   dot in the close button on macOS, a "*" before the title on Windows
+ *   dot in the close button on macOS, a "*" before the title on Windows and
+ *   Linux
  */
 export async function isEdited(app, page) {
   const win = await app.browserWindow(page);

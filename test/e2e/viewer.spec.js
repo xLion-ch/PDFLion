@@ -22,7 +22,8 @@ test("opening a file again focuses its window, and another file gets its own", a
     await tracemonkey(dir, "second.pdf"),
   ];
   const { app } = await pdflion([first]);
-  // How a file arrives while PDFLion runs: from Finder, or from a second process on Windows.
+  // How a file arrives while PDFLion runs: from Finder, or from a second process on Windows
+  // and Linux.
   const open = (/** @type {string} */ file) =>
     app.evaluate(({ app }, file) => {
       if (process.platform === "darwin") app.emit("open-file", { preventDefault() {} }, file);

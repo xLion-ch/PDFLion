@@ -1,8 +1,13 @@
+> [!NOTE]
+> This project contains AI-generated code.
+
+![PDFLion Logo](resources/icon.svg)
+
 # PDFLion
 
-A PDF viewer for macOS and Windows. It's Mozilla's [pdf.js](https://github.com/mozilla/pdf.js), the viewer built into Firefox, in a desktop app: PDFs open from Finder and Explorer, each in its own window, with native menus and shortcuts, and forms and annotations save back into the file.
+A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://github.com/mozilla/pdf.js), the viewer built into Firefox, in a desktop app: PDFs open from Finder, Explorer and Linux file managers, each in its own window, with native menus and shortcuts, and forms and annotations save back into the file.
 
-- Opens PDFs from Finder, Explorer, the Open dialog, or by dropping them on a window. On macOS, windows can be merged into tabs.
+- Opens PDFs from Finder, Explorer, Files and Nemo, the Open dialog, or by dropping them on a window. On macOS, windows can be merged into tabs.
 - Saves form data and annotations into the file in place, or to a new file with Save As. It asks before closing or quitting with unsaved changes.
 - Shows the first page of a large PDF before the rest has loaded.
 - Zoom, rotation, search, sidebar, Presentation Mode and printing, all from the menu and the platform's usual shortcuts.
@@ -13,39 +18,43 @@ PDFLion makes no network requests of its own. Links in a document open in your b
 
 ## Installing
 
-PDFLion runs on macOS 13 Ventura or later, on Apple silicon and Intel Macs, and on 64-bit Windows 10 and 11. Pick the build for your computer:
+PDFLion runs on macOS 13 Ventura or later, on Apple silicon and Intel Macs, on 64-bit Windows 10 and 11, and on 64-bit Ubuntu 22.04 and Linux Mint 21 or later. Pick the build for your computer:
 
 | Build | For |
 |---|---|
 | `PDFLion-<version>-mac-arm64.dmg` (or `.zip`) | Macs with Apple silicon (M1 and later) |
 | `PDFLion-<version>-mac-x64.dmg` (or `.zip`) | Intel Macs |
 | `PDFLion-<version>-win-x64.exe` | Windows; Windows on Arm runs it emulated |
+| `PDFLion-<version>-linux-amd64.deb` | Ubuntu and Linux Mint on Intel and AMD processors |
 
-PDFLion isn't signed with an Apple or Microsoft certificate, so each system warns the first time.
+PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Windows warn the first time.
 
 **macOS:** open the DMG and drag PDFLion to Applications. The first launch is blocked with a message that Apple couldn't check the app. Open System Settings > Privacy & Security, scroll down to the message about PDFLion and click Open Anyway. To open PDFs with PDFLion by default, select a PDF in Finder, choose File > Get Info, pick PDFLion under Open With, and click Change All.
 
 **Windows:** run the installer. SmartScreen shows "Windows protected your PC"; click More info, then Run anyway. PDFLion installs for your user only, without administrator rights. It appears under Open with for PDFs; to make it the default, use Settings > Apps > Default apps. Uninstall it from Settings > Apps.
 
+**Linux:** in a terminal, in the folder with the package, run `sudo apt install ./PDFLion-<version>-linux-amd64.deb`. PDFLion appears among your apps, and under Open With for PDFs in Files and Nemo. To make it the default, right-click a PDF, choose Open With, and set PDFLion as the default there. Uninstall it with `sudo apt remove pdflion`.
+
 ## Shortcuts
 
-| | macOS | Windows |
-|---|---|---|
-| Open… | ⌘O | Ctrl+O |
-| Save / Save As… | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S |
-| Print… | ⌘P | Ctrl+P |
-| Close | ⌘W | Ctrl+W |
-| Find… | ⌘F | Ctrl+F |
-| Toggle Sidebar | ⌥⌘S | F4 |
-| Zoom In / Zoom Out | ⌘+ / ⌘− | Ctrl++ / Ctrl+− |
-| Actual Size | ⌘0 | Ctrl+0 |
-| Rotate Left / Right | ⌘L / ⌘R | Ctrl+L / Ctrl+R |
-| Presentation Mode | ⇧⌘F | Ctrl+Shift+F |
-| Full Screen | ⌃⌘F | F11 |
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Open… | ⌘O | Ctrl+O | Ctrl+O |
+| Save / Save As… | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S | Ctrl+S / Ctrl+Shift+S |
+| Print… | ⌘P | Ctrl+P | Ctrl+P |
+| Close | ⌘W | Ctrl+W | Ctrl+W |
+| Find… | ⌘F | Ctrl+F | Ctrl+F |
+| Toggle Sidebar | ⌥⌘S | F4 | F4 |
+| Zoom In / Zoom Out | ⌘+ / ⌘− | Ctrl++ / Ctrl+− | Ctrl++ / Ctrl+− |
+| Actual Size | ⌘0 | Ctrl+0 | Ctrl+0 |
+| Rotate Left / Right | ⌘L / ⌘R | Ctrl+L / Ctrl+R | Ctrl+L / Ctrl+R |
+| Presentation Mode | ⇧⌘F | Ctrl+Shift+F | Ctrl+Shift+F |
+| Full Screen | ⌃⌘F | F11 | F11 |
+| Quit | ⌘Q | (closing the last window) | Ctrl+Q |
 
 ## Building from source
 
-You need [Node.js](https://nodejs.org) 24 (see `.nvmrc`), Git, and a Mac or a Windows PC.
+You need [Node.js](https://nodejs.org) 24 (see `.nvmrc`), Git, and a Mac, a Windows PC or a Linux PC.
 
 ```sh
 git clone --recurse-submodules https://github.com/c14ud3/PDFLion.git
@@ -67,6 +76,7 @@ It runs all the tests, then builds every version the machine can build into `dis
 
 - **On a Mac:** both Mac builds. With Rosetta installed (`softwareupdate --install-rosetta`), the Windows installer as well. electron-builder's tool for Windows installers is an Intel program.
 - **On Windows:** the Windows installer.
+- **On Linux:** the `.deb` package. Packaging it needs `ar`, which `sudo apt install binutils` installs.
 
 ## Development
 
@@ -90,9 +100,9 @@ There's no CI and no auto-update. A release is built by hand:
 
 1. Check for a newer pdf.js with `npm run pdfjs:check`, and update as [CLAUDE.md](CLAUDE.md) describes.
 2. Raise `version` in `package.json`.
-3. Run `npm run build` on a Mac and on a Windows PC. Between them, they build both Mac versions and the Windows installer.
-4. Go through the checks below, which the automated tests can't do. The Windows checks haven't been done for any release yet.
-5. Publish the `.dmg`, `.zip` and `.exe` files from `dist/`.
+3. Run `npm run build` on a Mac, on a Windows PC and on a Linux PC. Between them, they build both Mac versions, the Windows installer and the Linux package.
+4. Go through the checks below, which the automated tests can't do. The Windows and Linux checks haven't been done for any release yet.
+5. Publish the `.dmg`, `.zip`, `.exe` and `.deb` files from `dist/`.
 
 ### Checks by hand
 
@@ -113,7 +123,7 @@ On an Intel Mac, or under Rosetta, which shows only that it starts:
 
 On a Windows PC:
 
-- `npm run build` passes in PowerShell, including the two Windows-only end-to-end tests.
+- `npm run build` passes in PowerShell, including the two end-to-end tests for Windows and Linux.
 - The installer runs without administrator rights after SmartScreen's More info > Run anyway, and the app starts.
 - PDFLion is listed under Open with for PDFs. Once it's the default, double-clicking a PDF opens it. Uninstalling removes the app and its file association.
 - Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4 and F11 each do one thing, and pdf.js doesn't also act on them. AltGr characters can still be typed into form fields, and Alt+F opens the File menu.
@@ -126,6 +136,20 @@ On a Windows PC:
 - Shutting down or signing out with unsaved changes is held off while PDFLion asks about them.
 - The taskbar button groups with the pinned or Start menu shortcut, and the jump list shows recent files.
 - The viewer switches with Settings > Personalization > Colors, and a touchpad or touchscreen pinch zooms the pages.
+
+On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, which uses X11:
+
+- `npm run build` passes, including the two end-to-end tests for Windows and Linux.
+- `sudo apt install ./dist/PDFLion-<version>-linux-amd64.deb` installs it, and PDFLion starts from the app menu with Chromium's sandbox on. Chromium won't start without its sandbox unless it's given `--no-sandbox`, and with the sandbox, `grep Seccomp /proc/$(pgrep -f -- --type=renderer | head -1)/status` shows `Seccomp: 2`.
+- The app menu and the dock show PDFLion's icon, and the dock groups its windows with the launcher.
+- PDFLion is listed under Open With for PDFs in Files (Ubuntu) and Nemo (Mint), and PDFs keep their own icon. Once PDFLion is the default, double-clicking a PDF opens it. `sudo apt remove pdflion` removes the app and its Open With entry.
+- A PDF opened from the file manager while PDFLion runs opens in the running app. A file that's already open gets its window focused.
+- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11 and Ctrl+Q each do one thing, and pdf.js doesn't also act on them. Alt+F opens the File menu.
+- Editing a form puts `*` before the title. Closing the window, File > Quit, and closing the last window each ask about the changes, with Save as the rightmost button.
+- Shutting down with unsaved changes shows the save prompt for as long as systemd waits.
+- Cancelling the Open dialog at launch quits the app.
+- File > Open Recent lists opened files, and Help > About PDFLion shows the version, the icon and the credits.
+- The viewer follows the system's light or dark style, Print shows the print dialog with every page, and a touchpad pinch zooms the pages, on Wayland and on X11.
 
 ## License
 
@@ -161,6 +185,7 @@ PDFLion is built and tested with:
 
 - [electron-builder](https://www.electron.build) (MIT)
 - [NSIS](https://nsis.sourceforge.io), which electron-builder uses for the Windows installer (Zlib)
+- [fpm](https://github.com/jordansissel/fpm) by Jordan Sissel, which electron-builder uses for the Linux package (MIT)
 - [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
 
 The license texts ship with the app: pdf.js's and its components' in `pdfjs/`, Electron's in `LICENSE.electron.txt`, and Chromium's in `LICENSES.chromium.html`. The About panel lists the same projects, with the versions of pdf.js, Electron, Chromium and Node.js.

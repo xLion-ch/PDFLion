@@ -1,14 +1,17 @@
 /**
- * Asks before unsaved changes are lost, when a document window closes or the
- * app quits, the way document apps do on macOS and Windows. "Unsaved" is the
- * window's edited state, which bridge.js reports and windows.js shows.
+ * Asks before unsaved changes are lost, when a document window closes, the
+ * app quits, or the system shuts down, the way document apps do on macOS,
+ * Windows and Linux. "Unsaved" is the window's edited state, which bridge.js
+ * reports and windows.js shows.
  */
 import path from "node:path";
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, powerMonitor } from "electron";
 import { runCommand } from "./ipc.js";
 import { documentFile, isEdited } from "./windows.js";
 
 const isMac = process.platform === "darwin";
+const isWindows = process.platform === "win32";
+const isLinux = process.platform === "linux";
 
 const SAVE = "Save";
 const CANCEL = "Cancel";
@@ -16,9 +19,13 @@ const DONT_SAVE = "Don’t Save";
 
 /**
  * The save prompt's buttons, in each platform's order. macOS shows the first
- * one rightmost, Windows leftmost.
+ * one rightmost, Windows and GTK leftmost. GNOME puts Save last, rightmost.
  */
-const BUTTONS = isMac ? [SAVE, CANCEL, DONT_SAVE] : [SAVE, DONT_SAVE, CANCEL];
+const BUTTONS = isMac
+  ? [SAVE, CANCEL, DONT_SAVE]
+  : isWindows
+    ? [SAVE, DONT_SAVE, CANCEL]
+    : [DONT_SAVE, CANCEL, SAVE];
 
 /** Windows the user has decided about, which may now close. */
 const decided = new WeakSet();
@@ -44,15 +51,30 @@ export function guardUnsavedChanges() {
     // Windows asks each window before it shuts down, restarts or signs out.
     // Holding it off shows "PDFLion is preventing shutdown" while the prompts
     // are up, and the session can end once PDFLion has quit.
-    if (!isMac) win.on("query-session-end", reviewBeforeQuitting);
+    if (isWindows) win.on("query-session-end", reviewBeforeQuitting);
   });
 
   app.on("before-quit", reviewBeforeQuitting);
+
+  // On Linux, systemd tells apps that it's about to shut down or restart.
+  // Holding it off delays the shutdown while the prompts are up, but only for
+  // a few seconds (InhibitDelayMaxSec, 5 by default).
+  if (isLinux) {
+    // Electron 45 sets up powerMonitor when it gets its first listener, and
+    // then listens for shutdown only if a "shutdown" listener is already there
+    // (lib/browser/api/power-monitor.ts). Node announces a listener before
+    // adding it, so a first "shutdown" listener doesn't count, and shutdown
+    // would never fire. Another listener has to come first.
+    const start = () => {};
+    powerMonitor.on("resume", start).off("resume", start);
+    powerMonitor.on("shutdown", reviewBeforeQuitting);
+  }
 }
 
 /**
- * Stops a quit, or the end of a Windows session, while there are edited
- * windows the user hasn't decided about, and asks about them instead.
+ * Stops a quit, the end of a Windows session, or a Linux shutdown, while there
+ * are edited windows the user hasn't decided about, and asks about them
+ * instead.
  *
  * @param {Electron.Event} event
  */
