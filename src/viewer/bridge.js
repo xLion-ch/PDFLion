@@ -21,7 +21,10 @@
     print: (app) => app.triggerPrinting(),
     zoomIn: (app) => app.zoomIn(),
     zoomOut: (app) => app.zoomOut(),
-    zoomReset: (app) => app.zoomReset(),
+    // pdf.js's own "Actual Size" zoom. Its zoomReset() goes to Automatic Zoom.
+    actualSize: (app) => {
+      app.pdfViewer.currentScaleValue = "page-actual";
+    },
     find: (app) => app.findBar?.open(),
     toggleSidebar: (app) => app.viewsManager?.toggle(),
     rotateLeft: (app) => app.rotatePages(-90),
@@ -29,6 +32,17 @@
     presentation: (app) => app.requestPresentationMode(),
     save: (app) => save(app),
   };
+
+  // On macOS the page gets ⌘-key events before the native menu, and the menu
+  // only gets the ones the page leaves unhandled. Capturing on window runs
+  // before pdf.js's listeners, so these keys skip pdf.js and reach the menu.
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (isMenuShortcut(event)) event.stopImmediatePropagation();
+    },
+    true,
+  );
 
   // Dispatched once the viewer's scripts have loaded, before it initialises.
   document.addEventListener(
@@ -53,6 +67,34 @@
     },
     { once: true },
   );
+
+  /**
+   * Whether a key is a shortcut of the native menu (src/main/menu.js) that
+   * pdf.js also acts on: ⌘O, ⌘S, ⌘P, ⌘F, ⇧⌘F, ⌘+, ⌘=, ⌘− and ⌘0, in
+   * web/app.js onKeyDown and web/pdf_print_service.js. pdf.js would open its
+   * own file picker, download instead of saving, open Find on ⇧⌘F, and reset
+   * the zoom after ⌘0.
+   *
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   */
+  function isMenuShortcut({ key, metaKey, ctrlKey, altKey, shiftKey }) {
+    if (!metaKey || ctrlKey || altKey) return false;
+    switch (key.toLowerCase()) {
+      case "o":
+      case "s":
+      case "p":
+        return !shiftKey;
+      case "f": // Find, or Presentation Mode with Shift
+      case "+":
+      case "=":
+      case "-":
+      case "0":
+        return true;
+      default:
+        return false;
+    }
+  }
 
   /**
    * Reports unsaved changes to main, which shows them as the window's edited

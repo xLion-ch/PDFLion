@@ -78,6 +78,14 @@ export async function openDocument(file) {
 }
 
 /**
+ * @param {BrowserWindow | null | undefined} win
+ * @returns {boolean} whether `win` is a window showing a document
+ */
+export function isDocumentWindow(win) {
+  return win != null && !win.isDestroyed() && [...windows.values()].includes(win);
+}
+
+/**
  * Shows the Open panel and opens each chosen PDF. Does nothing while the
  * panel is already up, e.g. when the Dock icon is clicked again.
  *
