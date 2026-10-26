@@ -72,7 +72,7 @@ electron-builder.yml  packaging: targets, file associations, Electron fuses
 ## Commands
 
 ```sh
-git clone --recurse-submodules https://github.com/c14ud3/PDFLion.git
+git clone --recurse-submodules https://github.com/xLion-ch/PDFLion.git
 npm install
 npm run pdfjs:build      # build the pinned pdf.js viewer (once per clone and after each update)
 npm start                # run in dev; npm start -- path/to/file.pdf opens a file
@@ -173,7 +173,7 @@ Reviewed in October 2026, for Electron 45, against the [checklist](https://www.e
 
 These were settled on purpose. Change them only on purpose.
 
-- The bundle ID is `io.github.c14ud3.pdflion`: `appId` in `electron-builder.yml`, repeated as `APP_ID` in `main.js`. Changing it after the first release resets user preferences and file associations. On Windows it is also the AppUserModelID, which groups the app's taskbar buttons with its Start menu shortcut.
+- The bundle ID is `io.github.xlion-ch.pdflion`: `appId` in `electron-builder.yml`, repeated as `APP_ID` in `main.js`. Changing it after the first release resets user preferences and file associations. On Windows it is also the AppUserModelID, which groups the app's taskbar buttons with its Start menu shortcut.
 - One build per Mac architecture, each about half the size of a universal build. The alternative is a single `universal` build, so nobody can download the wrong one.
 - Windows x64 only. Windows on Arm runs it emulated. Adding `arm64` would run it natively there.
 - Linux gets a `.deb` for x64, for Ubuntu 22.04 and Linux Mint 21 and later, and nothing else. AppImage would lose the sandbox on Ubuntu 24.04, and Flatpak and Snap bring their own confinement, which Electron's sandbox would have to fit into, and their own stores.

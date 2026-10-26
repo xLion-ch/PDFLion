@@ -23,7 +23,7 @@ const isWindows = process.platform === "win32";
  * files in its jump list, if the process has the same ID. Electron's default
  * is `electron.app.PDFLion`.
  */
-const APP_ID = "io.github.c14ud3.pdflion";
+const APP_ID = "io.github.xlion-ch.pdflion";
 
 /**
  * Files macOS asked to open before the app was ready, or null once it is.

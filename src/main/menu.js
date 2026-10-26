@@ -25,7 +25,7 @@ import { isDocumentWindow, openDocument, showOpenPanel } from "./windows.js";
 const isMac = process.platform === "darwin";
 const isLinux = process.platform === "linux";
 
-const REPOSITORY_URL = "https://github.com/c14ud3/PDFLion";
+const REPOSITORY_URL = "https://github.com/xLion-ch/PDFLion";
 
 /** Ids of the items made by commandItem(), enabled only for documents. */
 const documentItems = new Set();

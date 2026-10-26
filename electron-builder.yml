@@ -1,4 +1,4 @@
-appId: io.github.c14ud3.pdflion # also APP_ID in src/main/main.js
+appId: io.github.xlion-ch.pdflion # also APP_ID in src/main/main.js
 productName: PDFLion
 # PDFLion-1.0.0-mac-arm64.dmg, PDFLion-1.0.0-mac-x64.dmg, PDFLion-1.0.0-win-x64.exe,
 # PDFLion-1.0.0-linux-x64.deb, …
@@ -69,7 +69,7 @@ linux:
   # it there, and is the launcher's tooltip.
   synopsis: PDF viewer built on Mozilla's pdf.js
   description: View PDFs, fill in forms and add annotations
-  maintainer: "c14ud3 <42405397+c14ud3@users.noreply.github.com>"
+  maintainer: "xLion-ch <181110832+xLion-ch@users.noreply.github.com>"
 # Electron's compile-time switches, flipped in the packaged binary.
 electronFuses:
   # Ignore ELECTRON_RUN_AS_NODE, NODE_OPTIONS and --inspect, which would let

@@ -57,7 +57,7 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 You need [Node.js](https://nodejs.org) 24 (see `.nvmrc`), Git, and a Mac, a Windows PC or a Linux PC.
 
 ```sh
-git clone --recurse-submodules https://github.com/c14ud3/PDFLion.git
+git clone --recurse-submodules https://github.com/xLion-ch/PDFLion.git
 cd PDFLion
 npm install
 npm start                      # runs PDFLion from the source
