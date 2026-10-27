@@ -1,8 +1,9 @@
 /**
  * The native application menu: the menu bar on macOS, each window's menu bar
  * on Windows and Linux. Standard items use Electron roles. Items that act on
- * the document send a command to the focused window's bridge.js, and are
- * disabled while no document window is focused.
+ * the document send a command to the bridge.js of the focused window's active
+ * tab, and are disabled while no document window is focused. Items that act
+ * on tabs are disabled where they can't act.
  *
  * On macOS, shortcuts follow Preview. Windows and Linux use Ctrl where macOS
  * uses ⌘, except where noted. bridge.js keeps pdf.js from acting on the ones
@@ -20,7 +21,16 @@ import { creditsText } from "./credits.js";
 import { runCommand } from "./ipc.js";
 import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
 import { clearRecentDocuments, onRecentDocumentsChange, recentDocuments } from "./recent.js";
-import { isDocumentWindow, openDocument, showOpenPanel } from "./windows.js";
+import * as tabs from "./tabs.js";
+import { closeTab } from "./unsaved.js";
+import {
+  documentWindows,
+  isDocumentWindow,
+  mergeAllWindows,
+  moveTabToNewWindow,
+  openDocument,
+  showOpenPanel,
+} from "./windows.js";
 
 const isMac = process.platform === "darwin";
 const isLinux = process.platform === "linux";
@@ -30,13 +40,23 @@ const REPOSITORY_URL = "https://github.com/xLion-ch/PDFLion";
 /** Ids of the items made by commandItem(), enabled only for documents. */
 const documentItems = new Set();
 
+/**
+ * Ids of the items made by tabItem(), each enabled when its function says so.
+ * @type {Map<string, (win: BrowserWindow | null) => boolean>}
+ */
+const tabItems = new Map();
+
+/** @param {BrowserWindow | null} win */
+const hasSeveralTabs = (win) => win !== null && tabs.tabsOf(win).length > 1;
+
 export function installMenu() {
   setAboutPanel();
   setMenu();
-  app.on("browser-window-focus", updateDocumentItems);
-  app.on("browser-window-blur", updateDocumentItems);
+  app.on("browser-window-focus", updateItems);
+  app.on("browser-window-blur", updateItems);
   // Closing the focused window doesn't always emit a blur first.
-  app.on("browser-window-created", (_event, win) => win.on("closed", updateDocumentItems));
+  app.on("browser-window-created", (_event, win) => win.on("closed", updateItems));
+  tabs.onTabsChange(updateItems);
   // File > Open Recent lists them on Windows and Linux. On macOS the role does.
   if (!isMac) onRecentDocumentsChange(setMenu);
 }
@@ -82,7 +102,7 @@ function pdfjsVersion() {
 
 function setMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template()));
-  updateDocumentItems();
+  updateItems();
 }
 
 /** @returns {Electron.MenuItemConstructorOptions[]} */
@@ -98,8 +118,22 @@ function template() {
           ? { role: "recentDocuments", submenu: [{ role: "clearRecentDocuments" }] }
           : recentDocumentsItem(),
         { type: "separator" },
-        // Not the role's "Close Window" on macOS: Preview says Close.
-        { role: "close", label: "&Close" },
+        {
+          id: "closeTab",
+          label: "&Close Tab",
+          accelerator: "CmdOrCtrl+W",
+          click: (_item, win) => {
+            const tab = win instanceof BrowserWindow ? tabs.activeTab(win) : undefined;
+            if (tab) closeTab(tab);
+            else closeWindow(win);
+          },
+        },
+        {
+          id: "closeWindow",
+          label: "Close &Window",
+          accelerator: "Shift+CmdOrCtrl+W",
+          click: (_item, win) => closeWindow(win),
+        },
         commandItem("&Save", "save", "CmdOrCtrl+S"),
         commandItem("Save &As…", "saveAs", "Shift+CmdOrCtrl+S"),
         { type: "separator" },
@@ -160,6 +194,8 @@ function template() {
         commandItem("&Presentation Mode", "presentation", "Shift+CmdOrCtrl+F"),
         // ⌃⌘F on macOS, F11 on Windows and Linux.
         { role: "togglefullscreen", label: "Toggle &Full Screen" },
+        // Windows and Linux apps have no Window menu.
+        ...onWindowsAndLinux({ type: "separator" }, ...tabMenuItems()),
         ...(app.isPackaged
           ? []
           : [
@@ -171,8 +207,19 @@ function template() {
       ],
     },
     // Windows and Linux apps have no Window menu: the title bar minimizes and
-    // closes.
-    ...onMac({ role: "windowMenu" }),
+    // closes. On macOS it's the windowMenu role's, with the tab items.
+    ...onMac({
+      role: "window",
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        { type: "separator" },
+        ...tabMenuItems(),
+        { type: "separator" },
+        { role: "front" },
+      ],
+    }),
     {
       role: "help",
       label: "&Help",
@@ -183,6 +230,97 @@ function template() {
       ],
     },
   ];
+}
+
+/**
+ * The items that switch and move tabs, like Safari's: in the Window menu on
+ * macOS, at the end of View on Windows and Linux. The extra shortcuts are
+ * hidden items: ⇧⌘] and ⇧⌘[ on macOS, Ctrl+Page Down and Ctrl+Page Up on
+ * Windows and Linux. pdf.js binds none of them (onKeyDown in web/app.js).
+ *
+ * @returns {Electron.MenuItemConstructorOptions[]}
+ */
+function tabMenuItems() {
+  /** @param {BrowserWindow} win */
+  const showNext = (win) => {
+    const tab = tabs.nextTab(win);
+    if (tab) tabs.selectTab(tab);
+  };
+  /** @param {BrowserWindow} win */
+  const showPrevious = (win) => {
+    const tab = tabs.previousTab(win);
+    if (tab) tabs.selectTab(tab);
+  };
+  return [
+    tabItem("Show Pre&vious Tab", "previousTab", "Ctrl+Shift+Tab", hasSeveralTabs, showPrevious),
+    tabItem("Show &Next Tab", "nextTab", "Ctrl+Tab", hasSeveralTabs, showNext),
+    {
+      ...tabItem(
+        "Show Previous Tab",
+        "previousTabAlternate",
+        isMac ? "Shift+Cmd+[" : "Ctrl+PageUp",
+        hasSeveralTabs,
+        showPrevious,
+      ),
+      visible: false,
+    },
+    {
+      ...tabItem(
+        "Show Next Tab",
+        "nextTabAlternate",
+        isMac ? "Shift+Cmd+]" : "Ctrl+PageDown",
+        hasSeveralTabs,
+        showNext,
+      ),
+      visible: false,
+    },
+    tabItem("&Move Tab to New Window", "moveTabToNewWindow", undefined, hasSeveralTabs, (win) => {
+      const tab = tabs.activeTab(win);
+      if (tab) moveTabToNewWindow(tab);
+    }),
+    tabItem(
+      "Mer&ge All Windows",
+      "mergeAllWindows",
+      undefined,
+      () => documentWindows().length > 1,
+      () => mergeAllWindows(),
+    ),
+  ];
+}
+
+/**
+ * An item that acts on the tabs of the focused window.
+ *
+ * @param {string} label
+ * @param {string} id unique
+ * @param {string | undefined} accelerator
+ * @param {(win: BrowserWindow | null) => boolean} isEnabled for the focused window
+ * @param {(win: BrowserWindow) => void} run with the focused document window
+ * @returns {Electron.MenuItemConstructorOptions}
+ */
+function tabItem(label, id, accelerator, isEnabled, run) {
+  tabItems.set(id, isEnabled);
+  return {
+    id,
+    label,
+    accelerator,
+    click: (_item, win) => {
+      const focused = win instanceof BrowserWindow ? win : null;
+      if (isEnabled(focused) && focused) run(focused);
+    },
+  };
+}
+
+/**
+ * Closes the focused window, which asks about each edited tab. On macOS,
+ * without a document window in front, it closes whatever window is, such as
+ * the About panel.
+ *
+ * @param {Electron.BaseWindow | undefined} win
+ */
+function closeWindow(win) {
+  if (win) win.close();
+  else if (isMac) Menu.sendActionToFirstResponder("performClose:");
 }
 
 /**
@@ -244,7 +382,8 @@ function onWindowsAndLinux(...items) {
 }
 
 /**
- * An item that sends `command` to the focused window's bridge.js.
+ * An item that sends `command` to the bridge.js of the focused window's
+ * active tab.
  *
  * @param {string} label
  * @param {string} command a key of COMMANDS in bridge.js
@@ -259,16 +398,22 @@ function commandItem(label, command, accelerator, id = command) {
     label,
     accelerator,
     click: (_item, win) => {
-      if (win instanceof BrowserWindow && isDocumentWindow(win)) runCommand(win, command);
+      const tab = win instanceof BrowserWindow ? tabs.activeTab(win) : undefined;
+      if (tab) runCommand(tab, command);
     },
   };
 }
 
-function updateDocumentItems() {
+function updateItems() {
   const menu = Menu.getApplicationMenu();
-  const enabled = isDocumentWindow(BrowserWindow.getFocusedWindow());
+  const focused = BrowserWindow.getFocusedWindow();
+  const enabled = isDocumentWindow(focused);
   for (const id of documentItems) {
     const item = menu?.getMenuItemById(id);
     if (item) item.enabled = enabled;
+  }
+  for (const [id, isEnabled] of tabItems) {
+    const item = menu?.getMenuItemById(id);
+    if (item) item.enabled = isEnabled(focused);
   }
 }

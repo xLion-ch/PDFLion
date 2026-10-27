@@ -1,14 +1,14 @@
 /**
- * Preload for viewer windows. It runs sandboxed in an isolated world, exposes
- * the small `window.pdflion` API that bridge.js uses, and sends dropped PDFs to
- * main.
+ * Preload for the viewer in each tab. It runs sandboxed in an isolated world,
+ * exposes the small `window.pdflion` API that bridge.js uses, and sends
+ * dropped PDFs and tabs to main.
  *
- * The channel names match src/main/ipc.js. A sandboxed preload can only
- * require a few built-in modules, so it can't import them from there.
+ * The channel names match src/main/ipc.js and strip.js. A sandboxed preload
+ * can only require a few built-in modules, so it can't import them from there.
  */
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
-// The preload runs in every page a window shows, not only in the viewer. The
+// The preload runs in every page a tab shows, not only in the viewer. The
 // page can navigate to about:blank or about:srcdoc without will-navigate, and
 // those must not get window.pdflion. Main ignores their messages as well.
 // Electron runs a sandboxed preload as a function, so it can return early.
@@ -54,6 +54,9 @@ contextBridge.exposeInMainWorld("pdflion", {
   setEdited: (edited) => ipcRenderer.send("pdflion:set-edited", edited),
 });
 
+/** The drag data type of a tab dragged from a strip, as src/tabs/tabs.js sets it. */
+const TAB_TYPE = "application/x-pdflion-tab";
+
 /**
  * The test pdf.js itself uses for a PDF drag (web/app.js). Other drags, such as
  * images for a stamp annotation, are left to pdf.js.
@@ -66,16 +69,24 @@ function isPdfDrag(event) {
   );
 }
 
-// Dropped PDFs open in their own window through main, which needs their paths
-// for Save. Left alone, pdf.js would open them in this window as pathless
-// blobs. Capturing on window runs before pdf.js's own listeners.
+/** @param {DragEvent} event */
+function isTabDrag(event) {
+  return event.dataTransfer?.types.includes(TAB_TYPE) ?? false;
+}
+
+// Dropped PDFs open as tabs through main, which needs their paths for Save.
+// Left alone, pdf.js would open them in this tab as pathless blobs. A tab
+// dragged from another window's strip joins this window, which shows no strip
+// to drop it on while it has one tab. Capturing on window runs before pdf.js's
+// own listeners, so pdf.js never sees either drag.
 window.addEventListener(
   "dragover",
   (event) => {
-    if (!isPdfDrag(event)) return;
+    const pdf = isPdfDrag(event);
+    if (!pdf && !isTabDrag(event)) return;
     event.preventDefault();
     event.stopPropagation();
-    /** @type {DataTransfer} */ (event.dataTransfer).dropEffect = "copy";
+    /** @type {DataTransfer} */ (event.dataTransfer).dropEffect = pdf ? "copy" : "move";
   },
   true,
 );
@@ -83,10 +94,17 @@ window.addEventListener(
 window.addEventListener(
   "drop",
   (event) => {
+    const dataTransfer = /** @type {DataTransfer} */ (event.dataTransfer);
+    if (isTabDrag(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      ipcRenderer.send("pdflion:drop-tab", dataTransfer.getData(TAB_TYPE));
+      return;
+    }
     if (!isPdfDrag(event)) return;
     event.preventDefault();
     event.stopPropagation();
-    const paths = [.../** @type {DataTransfer} */ (event.dataTransfer).files]
+    const paths = [...dataTransfer.files]
       .filter((file) => file.type === "application/pdf")
       .map((file) => webUtils.getPathForFile(file))
       .filter(Boolean);

@@ -1,18 +1,19 @@
 /**
- * Messages between main and the viewer's preload. Viewer windows display
- * untrusted PDFs, so every incoming message is checked for its sender and its
- * payload before main acts on it.
+ * Messages between main and the viewer's preload. Tabs display untrusted
+ * PDFs, so every incoming message is checked for its sender and its payload
+ * before main acts on it. strip.js handles the tab strip's messages.
  *
  * The channel names are repeated in src/preload/preload.cjs, which can't
  * import this module.
  */
 import path from "node:path";
-import { BrowserWindow, ipcMain } from "electron";
+import { ipcMain } from "electron";
 import { isViewerUrl } from "./routes.js";
 import { saveDocument, saveDocumentAs } from "./saving.js";
-import { openDocument, setEdited } from "./windows.js";
+import * as tabs from "./tabs.js";
+import { openDocuments } from "./windows.js";
 
-/** More than anyone drops at once, and few enough to open as windows. */
+/** More than anyone drops at once, and few enough to open as tabs. */
 const MAX_DROPPED_FILES = 100;
 
 /** Windows' longest path. macOS's PATH_MAX is 1024. */
@@ -37,27 +38,29 @@ let lastCommandId = 0;
 
 /** Must run once the app is ready, before any window loads. */
 export function handleIpc() {
+  // PDFs dropped on a document open as tabs of its window.
   ipcMain.on("pdflion:open-files", (event, paths) => {
-    if (!fromViewer(event) || !isPathList(paths)) return;
-    for (const file of paths) openDocument(file);
+    const tab = tabs.fromWebContents(event.sender);
+    if (!tab || !fromViewer(event) || !isPathList(paths)) return;
+    openDocuments(paths, tabs.windowOf(tab) ?? undefined);
   });
 
   ipcMain.on("pdflion:set-edited", (event, edited) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || !fromViewer(event) || typeof edited !== "boolean") return;
-    setEdited(win, edited);
+    const tab = tabs.fromWebContents(event.sender);
+    if (!tab || !fromViewer(event) || typeof edited !== "boolean") return;
+    tabs.setEdited(tab, edited);
   });
 
   ipcMain.handle("pdflion:save", (event, bytes) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || !fromViewer(event) || !isDocumentBytes(bytes)) return null;
-    return saveDocument(win, bytes);
+    const tab = tabs.fromWebContents(event.sender);
+    if (!tab || !fromViewer(event) || !isDocumentBytes(bytes)) return null;
+    return saveDocument(tab, bytes);
   });
 
   ipcMain.handle("pdflion:save-as", (event, bytes) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || !fromViewer(event) || !isDocumentBytes(bytes)) return null;
-    return saveDocumentAs(win, bytes);
+    const tab = tabs.fromWebContents(event.sender);
+    if (!tab || !fromViewer(event) || !isDocumentBytes(bytes)) return null;
+    return saveDocumentAs(tab, bytes);
   });
 
   ipcMain.on("pdflion:command-done", (event, id, result) => {
@@ -67,15 +70,16 @@ export function handleIpc() {
 }
 
 /**
- * Runs a menu command, such as `zoomIn`, in a window's bridge.js.
+ * Runs a menu command, such as `zoomIn`, in a tab's bridge.js.
  *
- * @param {BrowserWindow} win
+ * @param {tabs.Tab} tab
  * @param {string} command
  * @returns {Promise<unknown>} what the command returned, e.g. whether `save`
- *   saved, or null if the window went away first
+ *   saved, or null if the tab went away first
  */
-export async function runCommand(win, command) {
-  const { webContents } = win;
+export async function runCommand(tab, command) {
+  const { webContents } = tab;
+  if (webContents.isDestroyed()) return null;
   if (COMMANDS_NEEDING_ACTIVATION.has(command)) {
     // Runs nothing, but as a user gesture, which gives the page activation.
     await webContents.executeJavaScript("void 0", true).catch(() => {});
@@ -101,19 +105,19 @@ export async function runCommand(win, command) {
  * @param {Electron.IpcMainEvent | Electron.IpcMainInvokeEvent} event
  * @returns {boolean}
  */
-function fromViewer(event) {
+export function fromViewer(event) {
   const frame = event.senderFrame;
   return frame !== null && frame.parent === null && isViewerUrl(frame.url);
 }
 
 /**
- * Only `.pdf` files: the preload sends only files Chromium types as
+ * Only `.pdf` files: the preloads send only files Chromium types as
  * `application/pdf`, which it does by their extension.
  *
  * @param {unknown} paths
  * @returns {paths is string[]}
  */
-function isPathList(paths) {
+export function isPathList(paths) {
   return (
     Array.isArray(paths) &&
     paths.length > 0 &&

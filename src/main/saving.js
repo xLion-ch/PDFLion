@@ -7,7 +7,7 @@ import path from "node:path";
 import { dialog } from "electron";
 import * as documents from "./documents.js";
 import { docPath } from "./routes.js";
-import { documentToken, setRepresentedFile } from "./windows.js";
+import * as tabs from "./tabs.js";
 
 /**
  * Phrased like macOS's "could not be saved" alerts.
@@ -23,17 +23,18 @@ const SAVE_ERRORS = {
 };
 
 /**
- * Writes a document over its file.
+ * Writes a tab's document over its file.
  *
- * @param {Electron.BrowserWindow} win
+ * @param {tabs.Tab} tab
  * @param {Uint8Array} bytes
  * @returns {Promise<string | null>} the document's `/doc/` path, or null if it
  *   wasn't saved
  */
-export async function saveDocument(win, bytes) {
-  const token = documentToken(win);
-  const file = token && documents.resolve(token);
-  if (!token || !file) return null;
+export async function saveDocument(tab, bytes) {
+  const win = tabs.windowOf(tab);
+  const token = tabs.documentToken(tab);
+  const file = documents.resolve(token);
+  if (!win || !file) return null;
 
   try {
     await documents.writeFileAtomic(file, bytes);
@@ -45,18 +46,19 @@ export async function saveDocument(win, bytes) {
 }
 
 /**
- * Asks where to save a document, writes it there, and makes the window show
- * the new file.
+ * Asks where to save a tab's document, writes it there, and makes the tab
+ * show the new file. The dialogs attach to the tab's window.
  *
- * @param {Electron.BrowserWindow} win
+ * @param {tabs.Tab} tab
  * @param {Uint8Array} bytes
  * @returns {Promise<string | null>} the document's new `/doc/` path, or null
  *   if it wasn't saved
  */
-export async function saveDocumentAs(win, bytes) {
-  const token = documentToken(win);
-  const current = token && documents.resolve(token);
-  if (!token || !current) return null;
+export async function saveDocumentAs(tab, bytes) {
+  const win = tabs.windowOf(tab);
+  const token = tabs.documentToken(tab);
+  const current = documents.resolve(token);
+  if (!win || !current) return null;
 
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     defaultPath: current,
@@ -75,7 +77,7 @@ export async function saveDocumentAs(win, bytes) {
   }
 
   documents.update(token, file);
-  setRepresentedFile(win, file);
+  tabs.setRepresentedFile(tab, file);
   return docPath(token, path.basename(file));
 }
 

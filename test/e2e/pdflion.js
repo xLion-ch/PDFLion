@@ -3,6 +3,10 @@
  * gets its own userData folder, so tests never touch the user's window
  * placement or recent documents, and on Windows and Linux never hand their
  * files to a PDFLion that's already running.
+ *
+ * Playwright lists each tab's viewer and each window's tab strip as pages.
+ * app.browserWindow() gives the window either is in. The helpers below find a
+ * document's page by its URL, which names its file.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -69,7 +73,7 @@ export async function tracemonkey(dir, name = "tracemonkey.pdf") {
 
 /**
  * Starts PDFLion with `files` on its command line and waits until the first
- * window shows the first page.
+ * of them shows its first page.
  *
  * @param {string[]} files
  * @param {{ userData?: string }} [options] userData: reuse a folder
@@ -81,9 +85,141 @@ export async function launch(files, { userData } = {}) {
     args: [ROOT, `--user-data-dir=${userData}`, ...files],
     cwd: ROOT,
   });
-  const page = await app.firstWindow();
+  const page = await documentPage(app, path.basename(files[0]));
   await rendered(page);
   return { app, page, userData };
+}
+
+/**
+ * @param {string} url
+ * @returns {boolean} whether `url` is a tab's viewer
+ */
+export function isViewer(url) {
+  return url.startsWith("pdflion://app/viewer/web/viewer.html");
+}
+
+/**
+ * @param {string} url
+ * @returns {boolean} whether `url` is a window's tab strip
+ */
+export function isStrip(url) {
+  return url.startsWith("pdflion://app/tabs/tabs.html");
+}
+
+/**
+ * The viewer page of the tab that opened the file named `name`, once there
+ * is one. Save As doesn't change the page's URL.
+ *
+ * @param {ElectronApplication} app
+ * @param {string} name e.g. "tracemonkey.pdf"
+ * @returns {Promise<Page>}
+ */
+export async function documentPage(app, name) {
+  /** @param {Page} page */
+  const matches = (page) => {
+    if (!isViewer(page.url())) return false;
+    const file = new URL(page.url()).searchParams.get("file") ?? "";
+    return decodeURIComponent(file.split("/").pop() ?? "") === name;
+  };
+  return app.windows().find(matches) ?? app.waitForEvent("window", { predicate: matches });
+}
+
+/**
+ * @param {ElectronApplication} app
+ * @returns {Page[]} the open tabs' viewer pages
+ */
+export function documentPages(app) {
+  return app.windows().filter((page) => isViewer(page.url()));
+}
+
+/**
+ * @param {ElectronApplication} app
+ * @returns {Promise<number>} how many windows are open
+ */
+export function windowCount(app) {
+  return app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+}
+
+/**
+ * @param {ElectronApplication} app
+ * @param {Page} page a tab's viewer
+ * @returns {Promise<Page>} the tab strip of the window the tab is in, once
+ *   Playwright knows it: a new window's strip may still be loading
+ */
+export async function stripOf(app, page) {
+  const id = await (await app.browserWindow(page)).evaluate((win) => win.id);
+  const deadline = Date.now() + 10_000;
+  do {
+    for (const other of app.windows()) {
+      if (!isStrip(other.url())) continue;
+      if ((await (await app.browserWindow(other)).evaluate((win) => win.id)) === id) return other;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } while (Date.now() < deadline);
+  throw new Error(`No tab strip for ${page.url()}`);
+}
+
+/**
+ * @param {Page} strip
+ * @returns {Promise<{ id: string, name: string, active: boolean, edited: boolean, label: string }[]>}
+ *   the tabs the strip shows, left to right
+ */
+export function stripTabs(strip) {
+  return strip.evaluate(() =>
+    [...document.querySelectorAll(".tab")].map((tab) => ({
+      id: /** @type {HTMLElement} */ (tab).dataset.id ?? "",
+      name: tab.querySelector(".name")?.textContent ?? "",
+      active: tab.getAttribute("aria-selected") === "true",
+      edited: tab.classList.contains("edited"),
+      label: tab.getAttribute("aria-label") ?? "",
+    })),
+  );
+}
+
+/**
+ * Runs `code` in a tab's page from main. page.evaluate() would count as a user
+ * gesture, which hides what needs user activation.
+ *
+ * @param {ElectronApplication} app
+ * @param {Page} page a tab's viewer
+ * @param {string} code
+ * @returns {Promise<unknown>}
+ */
+export function readFromMain(app, page, code) {
+  return app.evaluate(
+    ({ webContents }, { url, code }) => {
+      const withoutHash = (/** @type {string} */ href) => href.split("#")[0];
+      const contents = webContents
+        .getAllWebContents()
+        .find((other) => withoutHash(other.getURL()) === withoutHash(url));
+      if (!contents) throw new Error(`No page at ${url}`);
+      return contents.executeJavaScript(code);
+    },
+    { url: page.url(), code },
+  );
+}
+
+/**
+ * @param {ElectronApplication} app
+ * @param {Page} page
+ * @returns {Promise<string>} the title of the window `page` is in
+ */
+export async function windowTitle(app, page) {
+  return (await app.browserWindow(page)).evaluate((win) => win.getTitle());
+}
+
+/**
+ * Opens a file while PDFLion runs, as Finder does on macOS, and a second
+ * process on Windows and Linux.
+ *
+ * @param {ElectronApplication} app
+ * @param {string} file
+ */
+export async function openFile(app, file) {
+  await app.evaluate(({ app }, file) => {
+    if (process.platform === "darwin") app.emit("open-file", { preventDefault() {} }, file);
+    else app.emit("second-instance", {}, [], "", { files: [file] });
+  }, file);
 }
 
 /** @param {Page} page */

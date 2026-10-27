@@ -1,5 +1,19 @@
 import path from "node:path";
-import { expect, tempDir, test, tracemonkey } from "./pdflion.js";
+import {
+  clickMenu,
+  documentPage,
+  documentPages,
+  expect,
+  isStrip,
+  openFile,
+  rendered,
+  stripOf,
+  stripTabs,
+  tempDir,
+  test,
+  tracemonkey,
+  windowCount,
+} from "./pdflion.js";
 import { writeLinks } from "./pdfs.js";
 
 test("opens web links in the browser, and nothing else anywhere", async ({ pdflion }) => {
@@ -34,7 +48,8 @@ test("opens web links in the browser, and nothing else anywhere", async ({ pdfli
   });
   await page.waitForTimeout(500);
   expect(await opened()).toEqual(["https://example.com/"]);
-  expect(app.windows()).toHaveLength(1);
+  expect(documentPages(app)).toHaveLength(1);
+  expect(await windowCount(app)).toBe(1);
   expect(page.url()).toBe(viewerUrl);
 });
 
@@ -77,4 +92,77 @@ test("keeps window.pdflion off pages other than the viewer", async ({ pdflion })
     }),
   ]);
   expect(await page.evaluate(() => typeof window.pdflion)).toBe("undefined");
+});
+
+test("keeps window.pdflionTabs to the tab strip, and window.pdflion to the viewer", async ({
+  pdflion,
+}) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  const strip = await stripOf(app, page);
+  expect(await strip.evaluate(() => [typeof window.pdflion, typeof window.pdflionTabs])).toEqual([
+    "undefined",
+    "object",
+  ]);
+  expect(await page.evaluate(() => typeof window.pdflionTabs)).toBe("undefined");
+});
+
+test("takes tab messages only from the strip, and only for its own tabs", async ({ pdflion }) => {
+  const dir = await tempDir();
+  const { app, page: first } = await pdflion([await tracemonkey(dir, "first.pdf")]);
+  await openFile(app, await tracemonkey(dir, "second.pdf"));
+  const second = await documentPage(app, "second.pdf");
+  await rendered(second);
+  const strip = await stripOf(app, first);
+  const [firstId, secondId] = (await stripTabs(strip)).map(({ id }) => id);
+  /**
+   * Hands main a message as if `from`'s page had sent it. Every strip has the
+   * same URL, so a strip is found by its window.
+   *
+   * @param {import("./pdflion.js").Page} from
+   * @param {string} channel
+   * @param {unknown[]} args
+   */
+  const send = async (from, channel, ...args) => {
+    const windowId = isStrip(from.url())
+      ? await (await app.browserWindow(from)).evaluate((win) => win.id)
+      : null;
+    await app.evaluate(
+      ({ BrowserWindow, ipcMain, webContents }, { url, windowId, channel, args }) => {
+        const sender =
+          windowId === null
+            ? webContents
+                .getAllWebContents()
+                .find((other) => other.getURL().split("#")[0] === url.split("#")[0])
+            : BrowserWindow.fromId(windowId)?.webContents;
+        if (!sender) throw new Error(`No page at ${url}`);
+        ipcMain.emit(channel, { sender, senderFrame: sender.mainFrame }, ...args);
+      },
+      { url: from.url(), windowId, channel, args },
+    );
+  };
+
+  // From a viewer, which could be showing a hostile PDF.
+  await send(second, "pdflion-tabs:select", firstId, true);
+  await send(second, "pdflion-tabs:close", firstId);
+  await send(second, "pdflion-tabs:drag-started", firstId);
+  await send(second, "pdflion-tabs:drop", firstId, 0);
+  await first.waitForTimeout(500);
+  expect(await stripTabs(strip)).toMatchObject([
+    { name: "first.pdf", active: false },
+    { name: "second.pdf", active: true },
+  ]);
+
+  // From another window's strip.
+  await clickMenu(app, second, "moveTabToNewWindow");
+  await expect.poll(() => windowCount(app)).toBe(2);
+  const otherStrip = await stripOf(app, second);
+  await send(otherStrip, "pdflion-tabs:close", firstId);
+  await first.waitForTimeout(500);
+  expect(documentPages(app)).toHaveLength(2);
+
+  // From the tab's own strip, which works.
+  const closed = first.waitForEvent("close");
+  await send(strip, "pdflion-tabs:close", firstId);
+  await closed;
+  expect(await stripTabs(otherStrip)).toMatchObject([{ id: secondId }]);
 });

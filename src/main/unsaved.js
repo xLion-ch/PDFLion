@@ -1,13 +1,16 @@
 /**
- * Asks before unsaved changes are lost, when a document window closes, the
- * app quits, or the system shuts down, the way document apps do on macOS,
- * Windows and Linux. "Unsaved" is the window's edited state, which bridge.js
- * reports and windows.js shows.
+ * Asks before unsaved changes are lost, when a tab or a window closes, the app
+ * quits, or the system shuts down, the way document apps do on macOS, Windows
+ * and Linux. "Unsaved" is a tab's edited state, which bridge.js reports and
+ * tabs.js shows.
+ *
+ * A window, the app or the system asks about each edited tab in turn, and
+ * selects it first. Each tab closes once the user has decided about it. Cancel
+ * stops there, and leaves the remaining tabs open.
  */
-import path from "node:path";
 import { app, BrowserWindow, dialog, powerMonitor } from "electron";
 import { runCommand } from "./ipc.js";
-import { documentFile, isEdited } from "./windows.js";
+import * as tabs from "./tabs.js";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -27,11 +30,11 @@ const BUTTONS = isMac
     ? [SAVE, DONT_SAVE, CANCEL]
     : [DONT_SAVE, CANCEL, SAVE];
 
-/** Windows the user has decided about, which may now close. */
-const decided = new WeakSet();
-
-/** Windows showing the save prompt. */
+/** Tabs showing the save prompt. */
 const prompting = new WeakSet();
+
+/** Windows asking about their tabs before they close. */
+const closingWindows = new WeakSet();
 
 let reviewingQuit = false;
 
@@ -39,14 +42,10 @@ let reviewingQuit = false;
 export function guardUnsavedChanges() {
   app.on("browser-window-created", (_event, win) => {
     win.on("close", (event) => {
-      if (decided.has(win) || !isEdited(win)) return;
+      if (editedTabs([win]).length === 0) return;
       event.preventDefault();
-      reviewAndClose(win);
+      reviewAndCloseWindow(win);
     });
-
-    // pdf.js's beforeunload handler blocks unloading whenever a document has
-    // form data or annotations, even saved ones. The prompts here replace it.
-    win.webContents.on("will-prevent-unload", (event) => event.preventDefault());
 
     // Windows asks each window before it shuts down, restarts or signs out.
     // Holding it off shows "PDFLion is preventing shutdown" while the prompts
@@ -72,56 +71,80 @@ export function guardUnsavedChanges() {
 }
 
 /**
- * Stops a quit, the end of a Windows session, or a Linux shutdown, while there
- * are edited windows the user hasn't decided about, and asks about them
- * instead.
+ * Closes a tab, asking first whether to save its changes.
+ *
+ * @param {tabs.Tab} tab
+ * @returns {Promise<boolean>} whether it closed
+ */
+export async function closeTab(tab) {
+  if (!tab.edited) {
+    tabs.closeTab(tab);
+    return true;
+  }
+  return reviewAndCloseTab(tab);
+}
+
+/**
+ * Closes every tab of a window but `keep`, asking about each edited one.
+ * Cancel stops there.
+ *
+ * @param {tabs.Tab} keep
+ */
+export async function closeOtherTabs(keep) {
+  const win = tabs.windowOf(keep);
+  if (!win) return;
+  for (const tab of tabs.tabsOf(win)) {
+    if (tab === keep || !tabs.isOpen(tab)) continue;
+    if (!(await closeTab(tab))) return;
+  }
+  if (tabs.isOpen(keep)) tabs.selectTab(keep);
+}
+
+/**
+ * Stops a quit, the end of a Windows session, or a Linux shutdown, while
+ * there are edited tabs, and asks about them instead.
  *
  * @param {Electron.Event} event
  */
 function reviewBeforeQuitting(event) {
-  const edited = BrowserWindow.getAllWindows().filter((win) => isEdited(win) && !decided.has(win));
+  const edited = editedTabs(BrowserWindow.getAllWindows());
   if (edited.length === 0) return;
   event.preventDefault();
   reviewAndQuit(edited);
 }
 
 /**
- * Asks whether to save a window's changes, then closes it, unless the user
+ * Asks about each edited tab of a window, then closes it, unless the user
  * cancels or saving fails.
  *
  * @param {BrowserWindow} win
- * @returns {Promise<boolean>} whether the window is closing
  */
-async function reviewAndClose(win) {
-  if (prompting.has(win)) return false;
-  prompting.add(win);
+async function reviewAndCloseWindow(win) {
+  if (closingWindows.has(win)) return;
+  closingWindows.add(win);
   try {
-    const choice = await askToSave(win);
-    if (choice === CANCEL) return false;
-    if (choice === SAVE && (await runCommand(win, "save")) !== true) return false;
+    for (const tab of editedTabs([win])) {
+      if (!(await reviewAndCloseTab(tab))) return;
+    }
   } finally {
-    prompting.delete(win);
+    closingWindows.delete(win);
   }
-  decided.add(win);
-  win.close();
-  return true;
+  if (!win.isDestroyed()) win.close();
 }
 
 /**
- * Reviews edited windows one at a time, then quits. Cancel stops the review
- * and the quit, and leaves the remaining windows open.
+ * Reviews edited tabs one at a time, then quits. Cancel stops the review and
+ * the quit.
  *
- * @param {BrowserWindow[]} windows
+ * @param {tabs.Tab[]} edited
  */
-async function reviewAndQuit(windows) {
+async function reviewAndQuit(edited) {
   if (reviewingQuit) return;
   reviewingQuit = true;
   try {
-    for (const win of windows) {
-      if (win.isDestroyed()) continue;
-      if (win.isMinimized()) win.restore();
-      win.focus();
-      if (!(await reviewAndClose(win))) return;
+    for (const tab of edited) {
+      if (!tabs.isOpen(tab)) continue;
+      if (!(await reviewAndCloseTab(tab))) return;
     }
   } finally {
     reviewingQuit = false;
@@ -130,14 +153,47 @@ async function reviewAndQuit(windows) {
 }
 
 /**
+ * Selects a tab and asks whether to save its changes, then closes it, unless
+ * the user cancels or saving fails.
+ *
+ * @param {tabs.Tab} tab
+ * @returns {Promise<boolean>} whether the tab closed
+ */
+async function reviewAndCloseTab(tab) {
+  const win = tabs.windowOf(tab);
+  if (!win || prompting.has(tab)) return false;
+  prompting.add(tab);
+  try {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    tabs.selectTab(tab);
+    const choice = await askToSave(win, tab);
+    if (choice === CANCEL) return false;
+    if (choice === SAVE && (await runCommand(tab, "save")) !== true) return false;
+  } finally {
+    prompting.delete(tab);
+  }
+  if (tabs.isOpen(tab)) tabs.closeTab(tab);
+  return true;
+}
+
+/**
+ * @param {BrowserWindow[]} windows
+ * @returns {tabs.Tab[]} their tabs with unsaved changes, window by window
+ */
+function editedTabs(windows) {
+  return windows.flatMap((win) => tabs.tabsOf(win).filter((tab) => tab.edited));
+}
+
+/**
  * @param {BrowserWindow} win
+ * @param {tabs.Tab} tab
  * @returns {Promise<string>} SAVE, CANCEL or DONT_SAVE
  */
-async function askToSave(win) {
-  const name = path.basename(documentFile(win) ?? "");
+async function askToSave(win, tab) {
   const { response } = await dialog.showMessageBox(win, {
     type: "warning",
-    message: `Do you want to save the changes made to the document “${name}”?`,
+    message: `Do you want to save the changes made to the document “${tabs.documentName(tab)}”?`,
     detail: "Your changes will be lost if you don’t save them.",
     buttons: BUTTONS,
     defaultId: BUTTONS.indexOf(SAVE),

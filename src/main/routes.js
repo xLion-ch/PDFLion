@@ -1,6 +1,7 @@
 /**
  * The URL layout of `pdflion://app/`: mounts at `/<mount>/<path>` map to files
  * below each mount's root, and `/doc/<token>/<name>` names an opened document.
+ * Each window shows the tab strip, and each of its tabs the viewer.
  * Kept free of Electron imports so the unit tests can run it under plain Node.
  */
 import path from "node:path";
@@ -8,8 +9,11 @@ import path from "node:path";
 export const SCHEME = "pdflion";
 export const ORIGIN = `${SCHEME}://app`;
 
-/** The page every window loads, followed by `?file=…`. */
+/** The page every tab loads, followed by `?file=…`. */
 export const VIEWER_URL = `${ORIGIN}/viewer/web/viewer.html`;
+
+/** The page every window loads: its tab strip. */
+export const TABS_URL = `${ORIGIN}/tabs/tabs.html`;
 
 /**
  * The viewer URL for an opened document. `name` sits in the path so pdf.js
@@ -45,6 +49,16 @@ export function docPath(token, name) {
  */
 export function isViewerUrl(url) {
   return appPathname(url) === new URL(VIEWER_URL).pathname;
+}
+
+/**
+ * Whether `url` is the tab strip, whatever its query and fragment.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isTabsUrl(url) {
+  return appPathname(url) === new URL(TABS_URL).pathname;
 }
 
 /**

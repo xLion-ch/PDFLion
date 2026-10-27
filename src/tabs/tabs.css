@@ -1,0 +1,180 @@
+/*
+ * The tab strip, in the viewer's Material Design 3 style (src/viewer/
+ * overrides.css): the active tab has the toolbar's colour and merges into the
+ * toolbar below it. Its height is STRIP_HEIGHT in src/main/tabs.js. Colours
+ * apply only outside forced-colors mode, which uses the system's.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --strip-height: 36px;
+  --tab-max-width: 240px;
+  --tab-min-width: 72px;
+  --md-shape-small: 8px;
+  --md-shape-full: 9999px;
+  --md-hover: 8%;
+  --md-pressed: 10%;
+}
+
+@media not (forced-colors: active) {
+  :root {
+    /* The viewer's surface-dim, surface-container-low and on-surface roles. */
+    --strip-bg-color: light-dark(#dadada, #131313);
+    --tab-active-bg-color: light-dark(#f3f3f3, #1b1b1b);
+    --tab-color: light-dark(#474747, #c6c6c6);
+    --tab-active-color: light-dark(#1b1b1b, #e2e2e2);
+    --tab-separator-color: light-dark(#c6c6c6, #474747);
+    --focus-ring-color: light-dark(#5e5e5e, #c6c6c6);
+  }
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--strip-bg-color, Canvas);
+  font: message-box;
+  font-size: 13px;
+  user-select: none;
+  cursor: default;
+}
+
+#tabs {
+  display: flex;
+  height: var(--strip-height);
+  padding: 4px 4px 0;
+  box-sizing: border-box;
+  gap: 1px;
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 4px;
+  min-width: var(--tab-min-width);
+  max-width: var(--tab-max-width);
+  padding: 0 4px 0 12px;
+  border-radius: var(--md-shape-small) var(--md-shape-small) 0 0;
+  color: var(--tab-color, CanvasText);
+  outline: none;
+
+  /* A separator between inactive tabs. */
+  &:not(.active, :first-child, .active + *)::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: -1px;
+    top: 8px;
+    bottom: 8px;
+    border-inline-start: 1px solid var(--tab-separator-color, GrayText);
+  }
+
+  &:hover:not(.active) {
+    background-color: color-mix(in srgb, var(--tab-active-color, CanvasText) var(--md-hover), transparent);
+  }
+
+  &.active {
+    background-color: var(--tab-active-bg-color, Canvas);
+    color: var(--tab-active-color, CanvasText);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring-color, Highlight);
+    outline-offset: -2px;
+  }
+
+  &.dragging {
+    opacity: 0.5;
+  }
+}
+
+.name {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The close button, or the edited dot in its place until the pointer is over the tab. */
+.close,
+.dot {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--md-shape-full);
+}
+
+.close {
+  padding: 0;
+  border: none;
+  background-color: transparent;
+  color: inherit;
+
+  &::before {
+    content: "";
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin: 2px;
+    background-color: currentColor;
+    mask: url(/pdflion/icons/close.svg) center / contain no-repeat;
+  }
+
+  &:hover {
+    background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
+  }
+
+  &:active {
+    background-color: color-mix(in srgb, currentColor var(--md-pressed), transparent);
+  }
+}
+
+.dot {
+  display: none;
+
+  &::before {
+    content: "";
+    display: block;
+    width: 8px;
+    height: 8px;
+    margin: 6px;
+    border-radius: var(--md-shape-full);
+    background-color: currentColor;
+  }
+}
+
+.tab.edited:not(:hover) {
+  .close {
+    display: none;
+  }
+
+  .dot {
+    display: block;
+  }
+}
+
+/* Where a dragged tab would go. */
+.tab.drop-before::after,
+.tab.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background-color: var(--tab-active-color, Highlight);
+}
+
+.tab.drop-before::after {
+  inset-inline-start: -2px;
+}
+
+.tab.drop-after::after {
+  inset-inline-end: -2px;
+}

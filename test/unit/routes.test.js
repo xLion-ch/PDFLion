@@ -4,15 +4,21 @@ import { describe, it } from "node:test";
 import {
   docPath,
   docToken,
+  isTabsUrl,
   isViewerUrl,
   resolveInside,
   resolveUrl,
+  TABS_URL,
   viewerUrl,
 } from "../../src/main/routes.js";
 
 // Absolute on each platform: `/app` on macOS, `C:\app` (the current drive) on Windows.
 const app = path.resolve("/app");
-const mounts = { viewer: path.join(app, "viewer"), pdflion: path.join(app, "src", "viewer") };
+const mounts = {
+  viewer: path.join(app, "viewer"),
+  pdflion: path.join(app, "src", "viewer"),
+  tabs: path.join(app, "src", "tabs"),
+};
 const isWindows = process.platform === "win32";
 const token = "0b6c3a52-5d0e-4c55-9d1e-6f1c2f0e8a41";
 
@@ -78,6 +84,28 @@ describe("isViewerUrl", () => {
   });
 });
 
+describe("isTabsUrl", () => {
+  it("accepts the tab strip with any query and fragment", () => {
+    assert.ok(isTabsUrl(TABS_URL));
+    assert.ok(isTabsUrl(`${TABS_URL}?x=1#y`));
+  });
+
+  it("rejects the viewer, other pages, origins and schemes", () => {
+    assert.ok(!isTabsUrl(viewerUrl(token, "a.pdf")));
+    assert.ok(!isTabsUrl("pdflion://app/tabs/tabs.js"));
+    assert.ok(!isTabsUrl("pdflion://app/tabs/"));
+    assert.ok(!isTabsUrl("pdflion://app/pdflion/tabs.html"));
+    assert.ok(!isTabsUrl("pdflion://evil/tabs/tabs.html"));
+    assert.ok(!isTabsUrl("https://app/tabs/tabs.html"));
+    assert.ok(!isTabsUrl("about:blank"));
+    assert.ok(!isTabsUrl(""));
+  });
+
+  it("is not the viewer", () => {
+    assert.ok(!isViewerUrl(TABS_URL));
+  });
+});
+
 describe("docToken", () => {
   it("extracts the token", () => {
     assert.equal(docToken(`pdflion://app/doc/${token}/x.pdf`), token);
@@ -105,6 +133,7 @@ describe("resolveUrl", () => {
       resolveUrl("pdflion://app/pdflion/bridge.js", mounts),
       path.join(mounts.pdflion, "bridge.js"),
     );
+    assert.equal(resolveUrl(TABS_URL, mounts), path.join(mounts.tabs, "tabs.html"));
   });
 
   it("ignores the query and fragment", () => {
@@ -148,6 +177,7 @@ describe("resolveUrl", () => {
     "pdflion://app/viewer//etc/passwd",
     "pdflion://app/viewer/..%2fviewer-sibling%2fsecret",
     "pdflion://app/pdflion/..%2f..%2fmain%2fmain.js",
+    "pdflion://app/tabs/..%2fmain%2fmain.js",
   ]) {
     it(`rejects traversal: ${url}`, () => {
       assert.equal(resolveUrl(url, mounts), null);

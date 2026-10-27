@@ -1,6 +1,18 @@
-import { clickMenu, expect, rendered, tempDir, test, tracemonkey } from "./pdflion.js";
+import {
+  clickMenu,
+  documentPage,
+  documentPages,
+  expect,
+  openFile,
+  readFromMain,
+  rendered,
+  tempDir,
+  test,
+  tracemonkey,
+  windowCount,
+} from "./pdflion.js";
 
-test("opens a PDF in its own window, titled with its name", async ({ pdflion }) => {
+test("opens a PDF in a window, titled with its name", async ({ pdflion }) => {
   const file = await tracemonkey(await tempDir());
   const { app, page } = await pdflion([file]);
 
@@ -13,7 +25,7 @@ test("opens a PDF in its own window, titled with its name", async ({ pdflion }) 
   }
 });
 
-test("opening a file again focuses its window, and another file gets its own", async ({
+test("opening a file again keeps its tab, and another file opens as a tab", async ({
   pdflion,
 }) => {
   const dir = await tempDir();
@@ -22,23 +34,16 @@ test("opening a file again focuses its window, and another file gets its own", a
     await tracemonkey(dir, "second.pdf"),
   ];
   const { app } = await pdflion([first]);
-  // How a file arrives while PDFLion runs: from Finder, or from a second process on Windows
-  // and Linux.
-  const open = (/** @type {string} */ file) =>
-    app.evaluate(({ app }, file) => {
-      if (process.platform === "darwin") app.emit("open-file", { preventDefault() {} }, file);
-      else app.emit("second-instance", {}, [], "", { files: [file] });
-    }, file);
 
-  await open(first);
-  await expect.poll(() => app.windows().length).toBe(1);
+  await openFile(app, first);
+  await expect.poll(() => documentPages(app).length).toBe(1);
 
-  const nextWindow = app.waitForEvent("window");
-  await open(second);
-  const page = await nextWindow;
+  await openFile(app, second);
+  const page = await documentPage(app, "second.pdf");
   await rendered(page);
   await expect(page).toHaveTitle("second.pdf");
-  expect(app.windows()).toHaveLength(2);
+  expect(documentPages(app)).toHaveLength(2);
+  expect(await windowCount(app)).toBe(1);
 });
 
 test("menu commands reach pdf.js", async ({ pdflion }) => {
@@ -90,7 +95,7 @@ test("Presentation Mode fills the screen, also when chosen with the mouse", asyn
   const win = await app.browserWindow(page);
   // Read from main: page.evaluate() would count as a user gesture.
   /** @param {string} code */
-  const read = (code) => win.evaluate((win, code) => win.webContents.executeJavaScript(code), code);
+  const read = (code) => readFromMain(app, page, code);
   const presenting = () => read("PDFViewerApplication.pdfViewer.isInPresentationMode");
 
   // A click on the native menu gives the page no user activation, which

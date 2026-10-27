@@ -1,8 +1,9 @@
 /**
  * App lifecycle and the ways documents come in. On every platform each
- * document gets its own window. On macOS the app keeps running after its last
- * window closes, until the user quits with Cmd+Q. On Windows and Linux it quits
- * with its last window, and a single process shows every document.
+ * document gets its own tab, in the frontmost window. On macOS the app keeps
+ * running after its last window closes, until the user quits with Cmd+Q. On
+ * Windows and Linux it quits with its last window, and a single process shows
+ * every document.
  */
 import { app, BrowserWindow } from "electron";
 import { commandLineFiles, secondInstanceFiles } from "./arguments.js";
@@ -10,8 +11,9 @@ import { handleIpc } from "./ipc.js";
 import { installMenu } from "./menu.js";
 import { handlePermissions } from "./permissions.js";
 import { handleProtocol, registerScheme } from "./protocol.js";
+import { handleStrip } from "./strip.js";
 import { guardUnsavedChanges } from "./unsaved.js";
-import { openDocument, showOpenPanel } from "./windows.js";
+import { openDocument, openDocuments, showOpenPanel } from "./windows.js";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -67,7 +69,7 @@ function start() {
   app.on("second-instance", (_event, _argv, _workingDirectory, data) => {
     const files = secondInstanceFiles(data);
     if (files.length === 0) showOpenPanel();
-    for (const file of files) openDocument(file);
+    else openDocuments(files);
   });
 
   // Without a listener, Electron quits when the last window closes. Mac apps
@@ -80,14 +82,14 @@ function start() {
     handlePermissions();
     handleProtocol();
     handleIpc();
+    handleStrip();
     guardUnsavedChanges();
     installMenu();
 
     const files = [...openFileQueue, ...launchFiles];
     openFileQueue = null;
     // Like Preview, a launch without a document shows the Open panel.
-    const opening =
-      files.length === 0 ? showOpenPanel() : Promise.all(files.map((file) => openDocument(file)));
+    const opening = files.length === 0 ? showOpenPanel() : openDocuments(files);
     // Windows and Linux apps have no Dock to wait in. If the launch opened no
     // window, because the panel was cancelled or no file could be read, quit.
     if (!isMac) {

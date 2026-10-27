@@ -5,10 +5,11 @@
 
 # PDFLion
 
-A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://github.com/mozilla/pdf.js), the viewer built into Firefox, in a desktop app: PDFs open from Finder, Explorer and Linux file managers, each in its own window, with native menus and shortcuts, and forms and annotations save back into the file.
+A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://github.com/mozilla/pdf.js), the viewer built into Firefox, in a desktop app: PDFs open from Finder, Explorer and Linux file managers, as tabs, with native menus and shortcuts, and forms and annotations save back into the file.
 
-- Opens PDFs from Finder, Explorer, Files and Nemo, the Open dialog, or by dropping them on a window. On macOS, windows can be merged into tabs.
-- Saves form data and annotations into the file in place, or to a new file with Save As. It asks before closing or quitting with unsaved changes.
+- Opens PDFs from Finder, Explorer, Files and Nemo, the Open dialog, or by dropping them on a window, as tabs of the front window.
+- Tabs can be dragged into another order, onto another window, or out of every window into a window of their own. The tab bar shows once a window has two tabs.
+- Saves form data and annotations into the file in place, or to a new file with Save As. Unsaved changes show in the title, or on the tab when a window has several, and PDFLion asks about them before closing or quitting.
 - Shows the first page of a large PDF before the rest has loaded.
 - Zoom, rotation, search, sidebar, Presentation Mode and printing, all from the menu and the platform's usual shortcuts.
 - Follows the system's light or dark appearance. The viewer also follows the system language; the menus are in English.
@@ -42,7 +43,10 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 | Open… | ⌘O | Ctrl+O | Ctrl+O |
 | Save / Save As… | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S | Ctrl+S / Ctrl+Shift+S |
 | Print… | ⌘P | Ctrl+P | Ctrl+P |
-| Close | ⌘W | Ctrl+W | Ctrl+W |
+| Close Tab | ⌘W | Ctrl+W | Ctrl+W |
+| Close Window | ⇧⌘W | Ctrl+Shift+W | Ctrl+Shift+W |
+| Show Next Tab | ⌃Tab or ⇧⌘] | Ctrl+Tab or Ctrl+Page Down | Ctrl+Tab or Ctrl+Page Down |
+| Show Previous Tab | ⌃⇧Tab or ⇧⌘[ | Ctrl+Shift+Tab or Ctrl+Page Up | Ctrl+Shift+Tab or Ctrl+Page Up |
 | Find… | ⌘F | Ctrl+F | Ctrl+F |
 | Toggle Sidebar | ⌥⌘S | F4 | F4 |
 | Zoom In / Zoom Out | ⌘+ / ⌘− | Ctrl++ / Ctrl+− | Ctrl++ / Ctrl+− |
@@ -111,8 +115,8 @@ On a Mac with Apple silicon:
 - The DMG installs on a Mac that has never run PDFLion, and the app starts once allowed under Privacy & Security.
 - PDFLion is listed in Finder's Open With for PDFs. Once it's the default, double-clicking a PDF opens it.
 - The shortcuts work from the keyboard, and pdf.js doesn't also act on them: ⌘S saves without a download, and ⇧⌘F starts Presentation Mode rather than Find.
-- The title bar's proxy icon works, and opened files appear in the Dock menu's recent documents.
-- Window > Merge All Windows gathers the windows into tabs, and the tab bar's + button opens a file as a new tab.
+- The title bar's proxy icon works and follows the selected tab, and opened files appear in the Dock menu's recent documents.
+- With "Prefer tabs when opening documents" set to Always in System Settings > Desktop & Dock, windows still don't become macOS's own tabs.
 - The viewer switches when the appearance changes in System Settings.
 - Print shows the native dialog, with every page.
 - A trackpad pinch zooms the pages, not the whole window.
@@ -126,11 +130,11 @@ On a Windows PC:
 - `npm run build` passes in PowerShell, including the two end-to-end tests for Windows and Linux.
 - The installer runs without administrator rights after SmartScreen's More info > Run anyway, and the app starts.
 - PDFLion is listed under Open with for PDFs. Once it's the default, double-clicking a PDF opens it. Uninstalling removes the app and its file association.
-- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4 and F11 each do one thing, and pdf.js doesn't also act on them. AltGr characters can still be typed into form fields, and Alt+F opens the File menu.
+- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down and Ctrl+Page Up each do one thing, and pdf.js doesn't also act on them. AltGr characters can still be typed into form fields, and Alt+F opens the File menu.
 - Editing a form puts `*` before the title. Closing the window, Exit, and closing the last window each ask about the changes.
-- A PDF opened from Explorer while PDFLion runs opens in the running app, in front of other windows. A file that's already open gets its window focused.
+- A PDF opened from Explorer while PDFLion runs opens as a tab of the running app's front window, in front of other windows. A file that's already open gets its tab selected.
 - Cancelling the Open dialog at launch quits the app, and so does a launch with a file that can't be read.
-- Dropping a PDF from Explorer onto a window opens it in a new window.
+- Dropping a PDF from Explorer onto a window opens it as a tab of that window.
 - Saving a file another app has open, and saving to a network share, either works or shows an error and keeps the changes. If antivirus scanning makes saving fail with `EPERM` or `EBUSY`, saving needs a short retry, as graceful-fs does.
 - A large PDF on a network share shows its first page before the rest has loaded.
 - Shutting down or signing out with unsaved changes is held off while PDFLion asks about them.
@@ -143,13 +147,23 @@ On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, w
 - `sudo apt install ./dist/PDFLion-<version>-linux-amd64.deb` installs it, and PDFLion starts from the app menu with Chromium's sandbox on. Chromium won't start without its sandbox unless it's given `--no-sandbox`, and with the sandbox, `grep Seccomp /proc/$(pgrep -f -- --type=renderer | head -1)/status` shows `Seccomp: 2`.
 - The app menu and the dock show PDFLion's icon, and the dock groups its windows with the launcher.
 - PDFLion is listed under Open With for PDFs in Files (Ubuntu) and Nemo (Mint), and PDFs keep their own icon. Once PDFLion is the default, double-clicking a PDF opens it. `sudo apt remove pdflion` removes the app and its Open With entry.
-- A PDF opened from the file manager while PDFLion runs opens in the running app. A file that's already open gets its window focused.
-- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11 and Ctrl+Q each do one thing, and pdf.js doesn't also act on them. Alt+F opens the File menu.
+- A PDF opened from the file manager while PDFLion runs opens as a tab of the running app's front window. A file that's already open gets its tab selected.
+- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+Q, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down and Ctrl+Page Up each do one thing, and pdf.js doesn't also act on them. Alt+F opens the File menu.
 - Editing a form puts `*` before the title. Closing the window, File > Quit, and closing the last window each ask about the changes, with Save as the rightmost button.
 - Shutting down with unsaved changes shows the save prompt for as long as systemd waits.
 - Cancelling the Open dialog at launch quits the app.
 - File > Open Recent lists opened files, and Help > About PDFLion shows the version, the icon and the credits.
 - The viewer follows the system's light or dark style, Print shows the print dialog with every page, and a touchpad pinch zooms the pages, on Wayland and on X11.
+
+On every platform, and on Linux both on Wayland and on X11:
+
+- Dragging a tab within the tab bar moves it there. Dragged onto another window's tab bar it joins that window where it's dropped, and onto another window's document it becomes that window's last tab. Dropped outside every window, it opens in a window of its own, under the pointer where the platform allows (not on Wayland). A window whose last tab leaves closes. The document keeps its scroll position and unsaved changes throughout.
+- A drag cancelled with Esc leaves the tab where it was. On Wayland it tears the tab off instead (see Known limitations in [CLAUDE.md](CLAUDE.md)).
+- Clicking a tab, Show Next Tab and Show Previous Tab send the keys to that tab's document: the arrow keys scroll it right away.
+- With one tab, editing a form shows in the title: `name.pdf — Edited` and the close button's dot on macOS, `*name.pdf` on Windows and Linux. With several, the edited tab shows a dot in place of its close button until the pointer is over it, and the title names the document alone. On macOS the close button's dot shows while any tab has changes.
+- Closing a window with several edited tabs asks about each in turn, showing each first, and Cancel keeps the window open.
+- Presentation Mode in a window with several tabs fills the screen, without the tab bar, and leaving full screen ends it.
+- The tab bar follows the system's light or dark appearance, and the system's high contrast mode where there is one.
 
 ## License
 

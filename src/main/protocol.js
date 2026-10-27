@@ -1,8 +1,9 @@
 /**
  * The `pdflion://` scheme. Windows load everything from `pdflion://app/`: the
- * pdf.js generic viewer at `/viewer/`, `src/viewer/` at `/pdflion/`, and
- * opened documents at `/doc/<token>/<name>`, whole or in byte ranges. One
- * origin for all of it keeps the viewer's same-origin `file=` check happy.
+ * pdf.js generic viewer at `/viewer/`, `src/viewer/` at `/pdflion/`, the tab
+ * strip at `/tabs/`, and opened documents at `/doc/<token>/<name>`, whole or
+ * in byte ranges. One origin for all of it keeps the viewer's same-origin
+ * `file=` check happy.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -10,15 +11,16 @@ import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
 import * as documents from "./documents.js";
-import { pdflionRoot, viewerRoot } from "./paths.js";
+import { pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
 import { answerRange } from "./ranges.js";
 import { SCHEME, docToken, resolveUrl } from "./routes.js";
 
 /** Read size for documents. Larger than Node's 64 KiB, for fewer, bigger chunks to the viewer. */
 const DOCUMENT_CHUNK_SIZE = 1024 * 1024;
 
-const mounts = { viewer: viewerRoot, pdflion: pdflionRoot };
+const mounts = { viewer: viewerRoot, pdflion: pdflionRoot, tabs: tabsRoot };
 const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
+const tabsHtml = path.join(tabsRoot, "tabs.html");
 
 /**
  * Added before `</head>` of viewer.html. The classic bridge.js runs before the
@@ -45,6 +47,12 @@ const VIEWER_CSP = [
   "base-uri 'none'",
   "form-action 'none'",
 ].join("; ");
+
+/**
+ * Sent with tabs.html. The strip needs nothing but its own script, styles and
+ * the icons it shares with the viewer.
+ */
+const TABS_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'";
 
 /**
  * Extensions Chromium has no mapping for. It sniffs their content instead, so
@@ -87,6 +95,7 @@ async function serve(request) {
   const file = resolveUrl(request.url, mounts);
   if (!file) return notFound();
   if (file === viewerHtml) return serveViewerHtml();
+  if (file === tabsHtml) return serveFile(file, { "Content-Security-Policy": TABS_CSP });
 
   const type = CONTENT_TYPES[path.extname(file)];
   return serveFile(file, type ? { "Content-Type": type } : {});

@@ -30,5 +30,11 @@ export const aboutIconPath = path.join(appPath, "resources", "about-icon.png");
 /** `src/viewer/` (bridge.js, overrides.css), served at `pdflion://app/pdflion/`. */
 export const pdflionRoot = path.join(appPath, "src", "viewer");
 
-/** The sandboxed preload script that exposes `window.pdflion`. */
+/** `src/tabs/`, the tab strip, served at `pdflion://app/tabs/`. */
+export const tabsRoot = path.join(appPath, "src", "tabs");
+
+/** The sandboxed preload script that exposes `window.pdflion` to the viewer. */
 export const preloadPath = path.join(appPath, "src", "preload", "preload.cjs");
+
+/** The sandboxed preload script that exposes `window.pdflionTabs` to the tab strip. */
+export const tabsPreloadPath = path.join(appPath, "src", "preload", "tabs.cjs");

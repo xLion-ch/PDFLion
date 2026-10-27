@@ -1,18 +1,19 @@
 /**
- * One BrowserWindow per document, where it opens, its edited state, and the
- * Open panel that leads to them.
+ * Document windows: where they open, which one is in front, and the Open
+ * panel that leads to them. Each window's own page is the tab strip, and its
+ * documents are tabs (tabs.js). Opening a document adds a tab to the
+ * frontmost window, and a new window opens only when there's none.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { BrowserWindow, dialog, screen, shell } from "electron";
+import { BrowserWindow, dialog, screen } from "electron";
 import * as documents from "./documents.js";
-import { preloadPath } from "./paths.js";
+import { tabsPreloadPath } from "./paths.js";
 import { parsePlacement, placeWindow } from "./placement.js";
-import { addRecentDocument } from "./recent.js";
-import { isViewerUrl, viewerUrl } from "./routes.js";
+import { TABS_URL } from "./routes.js";
 import { getState, setState } from "./state.js";
+import * as tabs from "./tabs.js";
 
-const isMac = process.platform === "darwin";
 const isLinux = process.platform === "linux";
 
 /** The state.json key for where the user last left a document window. */
@@ -22,23 +23,10 @@ const PLACEMENT_KEY = "window";
 const DEFAULT_SIZE = { width: 1000, height: 800 };
 
 /**
- * Document windows share one macOS tab group, so Window > Merge All Windows
- * gathers them, and the tab bar's + button opens a document as a new tab.
+ * Document windows, the most recently focused first.
+ * @type {BrowserWindow[]}
  */
-const TABBING_IDENTIFIER = "pdflion";
-
-/** @type {Map<string, BrowserWindow>} document token -> window */
-const windows = new Map();
-
-/**
- * Windows whose document has unsaved changes. Electron's isDocumentEdited()
- * works only on macOS.
- * @type {WeakSet<BrowserWindow>}
- */
-const editedWindows = new WeakSet();
-
-/** Link schemes that open in the default browser or mail app. */
-const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+const windows = [];
 
 /**
  * Phrased like Preview's "couldn't be opened because …" alerts.
@@ -54,154 +42,108 @@ const OPEN_ERRORS = {
 let openPanelShown = false;
 
 /**
- * Opens a PDF in a new window, or focuses the window that already shows it.
- * If the file can't be read, shows an error instead and opens no window.
+ * Opens PDFs as tabs, in the order given, and selects the last one. A file
+ * that's already open gets its tab selected instead. Files that can't be read
+ * show an error and open nothing.
  *
- * @param {string} file absolute path
- * @param {BrowserWindow} [tabbedWith] macOS: a window to add the new window
- *   to as a tab
+ * @param {string[]} files absolute paths
+ * @param {BrowserWindow} [target] the window to add the tabs to; defaults to
+ *   the frontmost window, or a new one
  * @returns {Promise<void>}
  */
-export async function openDocument(file, tabbedWith) {
-  let realPath;
-  try {
-    // Resolves symlinks and letter case, so each file has exactly one path.
-    realPath = await fs.realpath(file);
-    await checkReadable(realPath);
-  } catch (error) {
-    await showOpenError(file, /** @type {NodeJS.ErrnoException} */ (error));
-    return;
-  }
+export async function openDocuments(files, target) {
+  const realPaths = await Promise.all(
+    files.map(async (file) => {
+      try {
+        // Resolves symlinks and letter case, so each file has exactly one path.
+        const realPath = await fs.realpath(file);
+        await checkReadable(realPath);
+        return realPath;
+      } catch (error) {
+        await showOpenError(file, /** @type {NodeJS.ErrnoException} */ (error));
+        return null;
+      }
+    }),
+  );
 
-  const existing = findWindow(realPath);
-  if (existing) {
-    if (existing.isMinimized()) existing.restore();
-    existing.focus();
-    return;
+  for (const realPath of realPaths) {
+    if (realPath === null) continue;
+    const existing = tabs.findTab(realPath);
+    if (existing) {
+      tabs.selectTab(existing);
+      showWindow(/** @type {BrowserWindow} */ (tabs.windowOf(existing)));
+      continue;
+    }
+    const win = target && !target.isDestroyed() ? target : (frontmostWindow() ?? createWindow());
+    const tab = tabs.openTab(win, documents.register(realPath));
+    tabs.setRepresentedFile(tab, realPath);
+    showWindow(win);
   }
+}
 
-  const token = documents.register(realPath);
-  const name = path.basename(realPath);
-  const { bounds, maximized } = newWindowPlacement();
-  const win = new BrowserWindow({
-    title: name,
-    ...bounds,
-    show: !maximized,
-    tabbingIdentifier: TABBING_IDENTIFIER,
-    webPreferences: {
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      preload: preloadPath,
-    },
-  });
-  if (maximized) {
-    win.maximize();
-    win.show();
-  }
-  if (tabbedWith && !tabbedWith.isDestroyed()) tabbedWith.addTabbedWindow(win);
-  windows.set(token, win);
-  win.on("closed", () => {
-    windows.delete(token);
-    documents.unregister(token);
-  });
-  const remember = () => rememberPlacement(win);
-  // Linux has no events for the end of a move or resize, only for each step.
-  // state.js batches the writes.
-  if (isLinux) win.on("resize", remember).on("move", remember);
-  else win.on("resized", remember).on("moved", remember);
-  win.on("maximize", remember).on("unmaximize", remember);
-  win.on("new-window-for-tab", () => showOpenPanel(win));
-  // pdf.js zooms the pages on a pinch. Chromium's own pinch zoom, which
-  // Electron leaves off by default, would scale the whole viewer. Setting the
-  // limits fails until there's a page to apply them to.
-  win.webContents.on("did-finish-load", () => win.webContents.setVisualZoomLevelLimits(1, 1));
-  keepOnViewer(win);
-  if (!isMac) {
-    // The window shows the page's title, marked while edited.
-    win.on("page-title-updated", (event, title) => {
-      event.preventDefault();
-      win.setTitle(windowTitle(win, title));
-    });
-  }
-
-  setRepresentedFile(win, realPath);
-  win.loadURL(viewerUrl(token, name));
+/**
+ * @param {string} file absolute path
+ * @returns {Promise<void>}
+ */
+export function openDocument(file) {
+  return openDocuments([file]);
 }
 
 /**
  * @param {BrowserWindow | null | undefined} win
- * @returns {boolean} whether `win` is a window showing a document
+ * @returns {boolean} whether `win` is a window showing documents
  */
 export function isDocumentWindow(win) {
-  return win != null && !win.isDestroyed() && documentToken(win) !== undefined;
+  return win != null && !win.isDestroyed() && tabs.activeTab(win) !== undefined;
 }
 
 /**
- * @param {BrowserWindow} win
- * @returns {string | undefined} the token of the document `win` shows
+ * @returns {BrowserWindow[]} the document windows, the frontmost first
  */
-export function documentToken(win) {
-  for (const [token, other] of windows) {
-    if (other === win) return token;
+export function documentWindows() {
+  return windows.filter(isDocumentWindow);
+}
+
+/**
+ * @returns {BrowserWindow | undefined} the focused document window, else the
+ *   one focused last
+ */
+function frontmostWindow() {
+  return documentWindows()[0];
+}
+
+/**
+ * Moves a tab into a new window of its own, which opens where new windows
+ * open, or with `bounds` if given.
+ *
+ * @param {tabs.Tab} tab
+ * @param {Electron.Rectangle} [bounds] screen coordinates, kept on screen
+ */
+export function moveTabToNewWindow(tab, bounds) {
+  const win = createWindow(bounds && onScreen(bounds));
+  tabs.moveTab(tab, win, 0);
+  showWindow(win);
+}
+
+/** Moves every tab into the frontmost window, which the others then leave. */
+export function mergeAllWindows() {
+  const [target, ...others] = documentWindows();
+  if (!target) return;
+  const active = tabs.activeTab(target);
+  for (const win of others) {
+    for (const tab of tabs.tabsOf(win)) tabs.moveTab(tab, target);
   }
-}
-
-/**
- * @param {BrowserWindow} win
- * @returns {string | undefined} the path of the file `win` shows
- */
-export function documentFile(win) {
-  const token = documentToken(win);
-  return token && documents.resolve(token);
-}
-
-/**
- * Makes a window stand for `file`: in its title bar's proxy icon on macOS,
- * and in recent documents (File > Open Recent, plus the Dock menu on macOS and
- * the taskbar's jump list on Windows).
- *
- * @param {BrowserWindow} win
- * @param {string} file real path
- */
-export function setRepresentedFile(win, file) {
-  if (isMac) win.setRepresentedFilename(file);
-  addRecentDocument(file);
-}
-
-/**
- * Records whether a window's document has unsaved changes, and shows it: as
- * the dot in the close button on macOS, and as a "*" before the title on
- * Windows and Linux, like Notepad and gedit.
- *
- * @param {BrowserWindow} win
- * @param {boolean} edited
- */
-export function setEdited(win, edited) {
-  if (edited) editedWindows.add(win);
-  else editedWindows.delete(win);
-  if (isMac) win.setDocumentEdited(edited);
-  else win.setTitle(windowTitle(win, win.webContents.getTitle()));
-}
-
-/**
- * @param {BrowserWindow} win
- * @returns {boolean} whether the document in `win` has unsaved changes
- */
-export function isEdited(win) {
-  return editedWindows.has(win);
+  if (active) tabs.selectTab(active);
 }
 
 /**
  * Shows the Open panel and opens each chosen PDF. Does nothing while the
  * panel is already up, e.g. when the Dock icon is clicked again.
  *
- * @param {BrowserWindow} [tabbedWith] macOS: a window whose tab bar's + button
- *   was clicked, to add the new windows to as tabs
  * @returns {Promise<void>} settles once the chosen files have opened, or
  *   failed to
  */
-export async function showOpenPanel(tabbedWith) {
+export async function showOpenPanel() {
   if (openPanelShown) return;
   openPanelShown = true;
   let filePaths;
@@ -213,7 +155,60 @@ export async function showOpenPanel(tabbedWith) {
   } finally {
     openPanelShown = false;
   }
-  await Promise.all(filePaths.map((file) => openDocument(file, tabbedWith)));
+  await openDocuments(filePaths);
+}
+
+/**
+ * Opens a window showing the tab strip, still without tabs.
+ *
+ * @param {Electron.Rectangle} [bounds] defaults to where new windows open
+ * @returns {BrowserWindow}
+ */
+function createWindow(bounds) {
+  const placement = bounds ? { bounds, maximized: false } : newWindowPlacement();
+  const win = new BrowserWindow({
+    ...placement.bounds,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      preload: tabsPreloadPath,
+    },
+  });
+  if (placement.maximized) win.maximize();
+  // A new window opens in front of the others.
+  windows.unshift(win);
+  win.on("focus", () => {
+    windows.splice(windows.indexOf(win), 1);
+    windows.unshift(win);
+  });
+  win.on("closed", () => {
+    const index = windows.indexOf(win);
+    if (index !== -1) windows.splice(index, 1);
+  });
+  const remember = () => rememberPlacement(win);
+  // Linux has no events for the end of a move or resize, only for each step.
+  // state.js batches the writes.
+  if (isLinux) win.on("resize", remember).on("move", remember);
+  else win.on("resized", remember).on("moved", remember);
+  win.on("maximize", remember).on("unmaximize", remember);
+  // tabs.js titles the window after its active tab, not after the strip.
+  win.on("page-title-updated", (event) => event.preventDefault());
+  keepOnStrip(win);
+  win.loadURL(TABS_URL);
+  return win;
+}
+
+/**
+ * Brings a window to the front, and shows it the first time.
+ *
+ * @param {BrowserWindow} win
+ */
+function showWindow(win) {
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 /**
@@ -223,15 +218,31 @@ export async function showOpenPanel(tabbedWith) {
  */
 function newWindowPlacement() {
   const remembered = parsePlacement(getState(PLACEMENT_KEY));
-  const primary = screen.getPrimaryDisplay();
-  const workAreas = [primary, ...screen.getAllDisplays().filter(({ id }) => id !== primary.id)].map(
-    (display) => display.workArea,
-  );
-  const occupied = [...windows.values()].map((win) => win.getNormalBounds());
   return {
-    bounds: placeWindow(remembered?.bounds ?? null, DEFAULT_SIZE, workAreas, occupied),
+    bounds: placeWindow(
+      remembered?.bounds ?? null,
+      DEFAULT_SIZE,
+      workAreas(),
+      windows.map((win) => win.getNormalBounds()),
+    ),
     maximized: remembered?.maximized ?? false,
   };
+}
+
+/**
+ * @param {Electron.Rectangle} bounds
+ * @returns {Electron.Rectangle} `bounds`, moved and shrunk onto a display
+ */
+function onScreen(bounds) {
+  return placeWindow(bounds, DEFAULT_SIZE, workAreas(), []);
+}
+
+/** @returns {Electron.Rectangle[]} the displays' work areas, primary first */
+function workAreas() {
+  const primary = screen.getPrimaryDisplay();
+  return [primary, ...screen.getAllDisplays().filter(({ id }) => id !== primary.id)].map(
+    (display) => display.workArea,
+  );
 }
 
 /**
@@ -246,38 +257,13 @@ function rememberPlacement(win) {
 }
 
 /**
- * Keeps a window on the viewer, so `window.pdflion` never reaches another
- * page. Links open in the default browser or mail app instead.
+ * Keeps a window's own page on the tab strip, which opens nothing.
  *
  * @param {BrowserWindow} win
  */
-function keepOnViewer(win) {
-  win.webContents.on("will-navigate", (event) => {
-    if (!isViewerUrl(event.url)) event.preventDefault();
-  });
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (EXTERNAL_PROTOCOLS.has(URL.parse(url)?.protocol ?? "")) shell.openExternal(url);
-    return { action: "deny" };
-  });
-}
-
-/**
- * @param {BrowserWindow} win
- * @param {string} title the page's title
- * @returns {string} the window title Windows and Linux show for it
- */
-function windowTitle(win, title) {
-  return isEdited(win) ? `*${title}` : title;
-}
-
-/**
- * @param {string} file real path
- * @returns {BrowserWindow | undefined}
- */
-function findWindow(file) {
-  for (const [token, win] of windows) {
-    if (documents.resolve(token) === file) return win;
-  }
+function keepOnStrip(win) {
+  win.webContents.on("will-navigate", (event) => event.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
 /**
