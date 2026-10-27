@@ -160,6 +160,12 @@
   --closing-button-icon: url(/pdflion/icons/close.svg);
 }
 
+/* PDFLion's own toolbar buttons, which bridge.js adds. viewer.css draws the
+   icon of every .toolbarButton as a mask, like pdf.js's own. */
+#pdflionInsertBlankPage::before {
+  mask-image: url(/pdflion/icons/note_add.svg);
+}
+
 /* viewer.css sets this on a selector three classes deep, hence !important. */
 .editToolbar {
   --editor-toolbar-delete-image: url(/pdflion/icons/delete.svg) !important;

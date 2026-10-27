@@ -52,6 +52,15 @@ contextBridge.exposeInMainWorld("pdflion", {
   saveAs: (bytes) => ipcRenderer.invoke("pdflion:save-as", bytes),
   /** @param {boolean} edited whether the document has unsaved changes */
   setEdited: (edited) => ipcRenderer.send("pdflion:set-edited", edited),
+  /**
+   * Shows an alert or a prompt about changing the document's pages.
+   *
+   * @param {string} reason `locked-encrypted`, `locked-xfa`, `failed`,
+   *   `signed` or `rewrite`
+   * @param {string[]} [items] for `rewrite`, what saving would drop
+   * @returns {Promise<boolean>} whether the user went ahead, for a prompt
+   */
+  pageDialog: (reason, items) => ipcRenderer.invoke("pdflion:page-dialog", reason, items),
 });
 
 /** The drag data type of a tab dragged from a strip, as src/tabs/tabs.js sets it. */

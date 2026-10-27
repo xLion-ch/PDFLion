@@ -30,6 +30,13 @@ export const aboutIconPath = path.join(appPath, "resources", "about-icon.png");
 /** `src/viewer/` (bridge.js, overrides.css), served at `pdflion://app/pdflion/`. */
 export const pdflionRoot = path.join(appPath, "src", "viewer");
 
+/**
+ * The browser build of @cantoo/pdf-lib, served at `pdflion://app/lib/`. It
+ * runs only in the viewer, which changes pages with it. electron-builder packs
+ * production dependencies into `app.asar`.
+ */
+export const pdfLibRoot = path.join(appPath, "node_modules", "@cantoo", "pdf-lib", "dist");
+
 /** `src/tabs/`, the tab strip, served at `pdflion://app/tabs/`. */
 export const tabsRoot = path.join(appPath, "src", "tabs");
 

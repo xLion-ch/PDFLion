@@ -174,6 +174,9 @@ function template() {
         { role: "selectAll", label: "Select &All" },
         { type: "separator" },
         commandItem("&Find…", "find", "CmdOrCtrl+F"),
+        { type: "separator" },
+        // No shortcut yet: it gets one together with the page overview and the eraser.
+        commandItem("Insert &Blank Page", "insertBlankPage"),
         ...onMac(
           { type: "separator" },
           {
@@ -396,7 +399,7 @@ function onWindowsAndLinux(...items) {
  *
  * @param {string} label
  * @param {string} command a key of COMMANDS in bridge.js
- * @param {string} accelerator
+ * @param {string} [accelerator]
  * @param {string} [id] defaults to `command`; ids must be unique
  * @returns {Electron.MenuItemConstructorOptions}
  */

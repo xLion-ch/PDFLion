@@ -18,6 +18,7 @@ const mounts = {
   viewer: path.join(app, "viewer"),
   pdflion: path.join(app, "src", "viewer"),
   tabs: path.join(app, "src", "tabs"),
+  lib: path.join(app, "node_modules", "@cantoo", "pdf-lib", "dist"),
 };
 const isWindows = process.platform === "win32";
 const token = "0b6c3a52-5d0e-4c55-9d1e-6f1c2f0e8a41";
@@ -134,6 +135,10 @@ describe("resolveUrl", () => {
       path.join(mounts.pdflion, "bridge.js"),
     );
     assert.equal(resolveUrl(TABS_URL, mounts), path.join(mounts.tabs, "tabs.html"));
+    assert.equal(
+      resolveUrl("pdflion://app/lib/pdf-lib.min.js", mounts),
+      path.join(mounts.lib, "pdf-lib.min.js"),
+    );
   });
 
   it("ignores the query and fragment", () => {
@@ -178,6 +183,9 @@ describe("resolveUrl", () => {
     "pdflion://app/viewer/..%2fviewer-sibling%2fsecret",
     "pdflion://app/pdflion/..%2f..%2fmain%2fmain.js",
     "pdflion://app/tabs/..%2fmain%2fmain.js",
+    "pdflion://app/lib/..%2fpackage.json",
+    "pdflion://app/lib/..%2f..%2f..%2f..%2fpackage.json",
+    "pdflion://app/lib/%2e%2e/%2e%2e/%2e%2e/%2e%2e/src/main/main.js",
   ]) {
     it(`rejects traversal: ${url}`, () => {
       assert.equal(resolveUrl(url, mounts), null);

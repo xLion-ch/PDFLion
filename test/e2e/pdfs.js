@@ -78,3 +78,36 @@ export async function writeLinks(file) {
     ]),
   );
 }
+
+/**
+ * Writes a page in a document that says it's signed: its form's `SigFlags`
+ * has SignaturesExist set, for a signature field that's still empty.
+ *
+ * @param {string} file
+ */
+export async function writeSigned(file) {
+  await fs.writeFile(
+    file,
+    pdf([
+      "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /SigFlags 3 >> >>",
+      "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] >>",
+      "<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature) /Rect [0 0 0 0] /F 132 /P 3 0 R >>",
+    ]),
+  );
+}
+
+/**
+ * Writes writeForm()'s document with every cross-reference offset wrong, which
+ * pdf.js repairs on load and @cantoo/pdf-lib can't.
+ *
+ * @param {string} file
+ */
+export async function writeBrokenForm(file) {
+  await writeForm(file);
+  const text = (await fs.readFile(file)).toString("latin1");
+  const broken = text
+    .replace(/(\d{10}) 00000 n/g, (_, offset) => `${String(Number(offset) + 7).padStart(10, "0")} 00000 n`)
+    .replace(/startxref\n\d+/, "startxref\n12");
+  await fs.writeFile(file, Buffer.from(broken, "latin1"));
+}

@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  answerMessages,
   clickMenu,
   documentPage,
   documentPages,
@@ -165,4 +166,30 @@ test("takes tab messages only from the strip, and only for its own tabs", async 
   await send(strip, "pdflion-tabs:close", firstId);
   await closed;
   expect(await stripTabs(otherStrip)).toMatchObject([{ id: secondId }]);
+});
+
+test("shows only the page dialogs main words, whatever the viewer asks", async ({ pdflion }) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  await answerMessages(app, "OK");
+  const ask = (/** @type {unknown[]} */ ...args) =>
+    page.evaluate((args) => window.pdflion.pageDialog(...args), args);
+
+  for (const args of [
+    ["Your files are encrypted. Pay now."],
+    ["toString"],
+    ["failed", ["xmp"]],
+    ["rewrite"],
+    ["rewrite", []],
+    ["rewrite", ["xmp", "xmp"]],
+    ["rewrite", ["<b>bold</b>"]],
+    ["rewrite", "xmp"],
+  ]) {
+    expect(await ask(...args), JSON.stringify(args)).toBe(false);
+  }
+  expect(await app.evaluate(() => /** @type {any} */ (globalThis).messages)).toEqual([]);
+
+  expect(await ask("failed")).toBe(false);
+  expect(await app.evaluate(() => /** @type {any} */ (globalThis).messages)).toEqual([
+    "The pages of the document “tracemonkey.pdf” couldn’t be changed.",
+  ]);
 });

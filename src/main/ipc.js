@@ -8,6 +8,7 @@
  */
 import path from "node:path";
 import { ipcMain } from "electron";
+import { isPageDialog, showPageDialog } from "./pages.js";
 import { isViewerUrl } from "./routes.js";
 import { saveDocument, saveDocumentAs } from "./saving.js";
 import * as tabs from "./tabs.js";
@@ -61,6 +62,13 @@ export function handleIpc() {
     const tab = tabs.fromWebContents(event.sender);
     if (!tab || !fromViewer(event) || !isDocumentBytes(bytes)) return null;
     return saveDocumentAs(tab, bytes);
+  });
+
+  // Alerts and prompts about changing pages, chosen from fixed lists.
+  ipcMain.handle("pdflion:page-dialog", (event, reason, items) => {
+    const tab = tabs.fromWebContents(event.sender);
+    if (!tab || !fromViewer(event) || !isPageDialog(reason, items)) return false;
+    return showPageDialog(tab, reason, items);
   });
 
   ipcMain.on("pdflion:command-done", (event, id, result) => {

@@ -26,6 +26,12 @@ export const CREDITS = [
       },
       { name: "Electron", license: "MIT", url: "https://www.electronjs.org" },
       {
+        name: "@cantoo/pdf-lib",
+        by: "Cantoo",
+        license: "MIT",
+        url: "https://github.com/cantoo-scribe/pdf-lib",
+      },
+      {
         name: "Material Symbols",
         by: "Google",
         license: "Apache-2.0",
@@ -92,6 +98,73 @@ export const CREDITS = [
         name: "Compact ICC Profiles",
         license: "CC0-1.0",
         url: "https://github.com/saucecontrol/Compact-ICC-Profiles",
+      },
+    ],
+  },
+  {
+    // Bundled in its browser build, dist/pdf-lib.min.js, as its package.json
+    // and the notices in dist/pdf-lib.js name them. It also has code from
+    // pdf.js, credited above.
+    heading: "@cantoo/pdf-lib includes",
+    components: [
+      {
+        name: "pdf-lib",
+        by: "Andrew Dillon",
+        license: "MIT",
+        url: "https://github.com/Hopding/pdf-lib",
+      },
+      {
+        name: "standard-fonts",
+        by: "Andrew Dillon",
+        license: "MIT",
+        url: "https://github.com/Hopding/standard-fonts",
+      },
+      {
+        name: "fflate",
+        by: "Arjun Barrett",
+        license: "MIT",
+        url: "https://github.com/101arrowz/fflate",
+      },
+      {
+        name: "culori",
+        by: "Dan Burzo",
+        license: "MIT",
+        url: "https://github.com/Evercoder/culori",
+      },
+      {
+        name: "node-html-better-parser",
+        license: "MIT",
+        url: "https://github.com/Sharcoux/node-html-parser",
+      },
+      {
+        name: "html-entities",
+        by: "Marat Dulin",
+        license: "MIT",
+        url: "https://github.com/mdevils/html-entities",
+      },
+      {
+        name: "tslib",
+        by: "Microsoft",
+        license: "0BSD",
+        url: "https://github.com/microsoft/tslib",
+      },
+      {
+        name: "UPNG.js and UZIP.js",
+        by: "Photopea",
+        license: "MIT",
+        url: "https://github.com/photopea/UPNG.js",
+      },
+      {
+        name: "base64-arraybuffer",
+        by: "Niklas von Hertzen",
+        license: "MIT",
+        url: "https://github.com/niklasvh/base64-arraybuffer",
+      },
+      {
+        name: "PDFKit's path drawing",
+        by: "Devon Govett",
+        license: "MIT",
+        url: "https://github.com/foliojs/pdfkit",
       },
     ],
   },

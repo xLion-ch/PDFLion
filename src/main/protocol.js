@@ -1,8 +1,9 @@
 /**
  * The `pdflion://` scheme. Windows load everything from `pdflion://app/`: the
  * pdf.js generic viewer at `/viewer/`, `src/viewer/` at `/pdflion/`, the tab
- * strip at `/tabs/`, and opened documents at `/doc/<token>/<name>`, whole or
- * in byte ranges, from their files or, for untitled documents, from memory.
+ * strip at `/tabs/`, @cantoo/pdf-lib's browser build at `/lib/`, and opened
+ * documents at `/doc/<token>/<name>`, whole or in byte ranges, from their
+ * files or, for untitled documents, from memory.
  * One origin for all of it keeps the viewer's same-origin `file=` check happy.
  */
 import fs from "node:fs/promises";
@@ -11,7 +12,7 @@ import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
 import * as documents from "./documents.js";
-import { pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
+import { pdfLibRoot, pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
 import { answerRange } from "./ranges.js";
 import { SCHEME, docToken, resolveUrl } from "./routes.js";
 
@@ -21,7 +22,7 @@ const DOCUMENT_CHUNK_SIZE = 1024 * 1024;
 /** An untitled document's bytes never change until it's saved, as a file. */
 const UNTITLED_ETAG = '"untitled"';
 
-const mounts = { viewer: viewerRoot, pdflion: pdflionRoot, tabs: tabsRoot };
+const mounts = { viewer: viewerRoot, pdflion: pdflionRoot, tabs: tabsRoot, lib: pdfLibRoot };
 const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
 const tabsHtml = path.join(tabsRoot, "tabs.html");
 

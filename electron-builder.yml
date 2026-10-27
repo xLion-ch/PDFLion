@@ -11,6 +11,11 @@ files:
   - package.json
   - LICENSE
   - resources/about-icon.png # Windows' About box
+  # Of @cantoo/pdf-lib, only the browser build the viewer loads from /lib/, which
+  # bundles its dependencies, and its licence. The rest is 30 MB of other builds.
+  - "!node_modules/@cantoo/pdf-lib/{cjs,es,src,ts3.4}/**"
+  - "!node_modules/@cantoo/pdf-lib/dist/!(pdf-lib.min.js)"
+  - "!node_modules/{culori,fflate,tslib,node-html-better-parser,html-entities}/**"
 extraResources:
   - from: vendor/pdf.js/build/generic
     to: pdfjs

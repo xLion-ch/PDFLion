@@ -9,6 +9,7 @@ A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://githu
 
 - Opens PDFs from Finder, Explorer, Files and Nemo, the Open dialog, or by dropping them on a window, as tabs of the front window.
 - Tabs can be dragged into another order, onto another window, or out of every window into a window of their own. The tab bar shows once a window has two tabs.
+- Edit > Insert Blank Page, or its toolbar button, adds an empty page after the current one, the size of the current page. It's saved as an addition to the end of the file, so everything else in the file stays as it was. Documents with a password can't have pages added, and signed documents ask first.
 - File > New opens an untitled document with one blank page, US Letter or A4, whichever your region uses. The first save asks where to put it.
 - Saves form data and annotations into the file in place, or to a new file with Save As. Unsaved changes show in the title, or on the tab when a window has several, and PDFLion asks about them before closing or quitting.
 - Shows the first page of a large PDF before the rest has loaded.
@@ -166,6 +167,7 @@ On every platform, and on Linux both on Wayland and on X11:
 - Closing a window with several edited tabs asks about each in turn, showing each first, and Cancel keeps the window open.
 - Presentation Mode in a window with several tabs fills the screen, without the tab bar, and leaving full screen ends it.
 - The tab bar follows the system's light or dark appearance, and the system's high contrast mode where there is one.
+- Insert Blank Page's toolbar button shows its icon in light and dark mode and in high contrast, and is disabled for a document with a password. On a document signed with a real signing tool, it asks first, and afterwards the signature still validates for the signed revision in Acrobat, which reports the change after signing.
 - File > New gives a US Letter page with the system's region set to the United States or Canada, and an A4 page with it set to Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Editing the new document's page, for example with a drawing, and closing it asks about saving, and Save there asks where to save it.
 
 ## License
@@ -178,6 +180,7 @@ PDFLion is built on:
 
 - [pdf.js](https://github.com/mozilla/pdf.js) by Mozilla (Apache-2.0)
 - [Electron](https://www.electronjs.org) (MIT)
+- [@cantoo/pdf-lib](https://github.com/cantoo-scribe/pdf-lib) by Cantoo, which inserts pages (MIT)
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, the viewer's icons (Apache-2.0)
 - [Material Design 3](https://m3.material.io) by Google, the design guidelines the viewer follows
 - [Unicode CLDR](https://cldr.unicode.org) by Unicode, whose paper size data decides between US Letter and A4 for new documents (Unicode-3.0)
@@ -193,6 +196,18 @@ pdf.js includes:
 - [Liberation Sans](https://github.com/liberationfonts/liberation-fonts) by Red Hat, for fonts a PDF uses without embedding them (GPL-2.0 with the font exception)
 - [Adobe's CMaps](https://github.com/adobe-type-tools/cmap-resources), for Chinese, Japanese and Korean text (BSD-3-Clause)
 - a CMYK colour profile from [Compact ICC Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles) (CC0-1.0)
+
+@cantoo/pdf-lib includes, in the build PDFLion ships:
+
+- [pdf-lib](https://github.com/Hopding/pdf-lib) by Andrew Dillon, of which it's a fork (MIT)
+- [standard-fonts](https://github.com/Hopding/standard-fonts) by Andrew Dillon, with Adobe's metrics of the 14 standard PDF fonts (MIT)
+- [fflate](https://github.com/101arrowz/fflate) by Arjun Barrett, for compression (MIT)
+- [culori](https://github.com/Evercoder/culori) by Dan Burzo, for colours (MIT)
+- [node-html-better-parser](https://github.com/Sharcoux/node-html-parser) and [html-entities](https://github.com/mdevils/html-entities) by Marat Dulin, for SVG (MIT)
+- [tslib](https://github.com/microsoft/tslib) by Microsoft (0BSD)
+- [UPNG.js and UZIP.js](https://github.com/photopea/UPNG.js) by Photopea, for PNG images (MIT)
+- [base64-arraybuffer](https://github.com/niklasvh/base64-arraybuffer) by Niklas von Hertzen (MIT)
+- path drawing from [PDFKit](https://github.com/foliojs/pdfkit) by Devon Govett (MIT), and stream decoding from pdf.js
 
 Electron includes:
 
