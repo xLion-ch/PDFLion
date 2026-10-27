@@ -18,6 +18,66 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
  */
 const named = (calls, name) => calls.filter(([other]) => other === name);
 
+// What bridge.js looks for in pdf.js's page tools.
+const THUMBNAILS = "#thumbnailsView";
+const THUMBNAIL_IMAGE = "#thumbnailsView > .thumbnail > .thumbnailImageContainer";
+const CHECKED_THUMBNAIL = "#thumbnailsView > .thumbnail > input:checked";
+const TAKING_FILES = "#thumbnailsView.isDraggingFile";
+const PAGE_CHANGE_ITEMS =
+  "#viewsManagerStatusActionCopy, #viewsManagerStatusActionCut, #viewsManagerStatusActionDelete";
+const ADD_FILE_PICKER = "#viewsManagerAddFilePicker";
+
+/**
+ * What pdf.js answers about a document that holds nothing a new file of its
+ * pages would drop, as getMetadata()'s `metadata` and the other calls.
+ */
+const NOTHING_HELD = {
+  metadata: /** @type {object | null} */ (null),
+  /** The ids of its optional content groups. */
+  layers: /** @type {string[]} */ ([]),
+  jsActions: /** @type {object | null} */ (null),
+  viewerPreferences: /** @type {object | null} */ (null),
+  openAction: /** @type {object | null} */ (null),
+  pageMode: "UseNone",
+  pageLayout: "",
+  markInfo: /** @type {Map<string, boolean> | null} */ (null),
+  pageLabels: /** @type {string[] | null} */ (null),
+};
+
+/** A stand-in for a DOM event the page makes, with what it was made with. */
+class SyntheticEvent {
+  /** @param {string} type @param {object} [init] */
+  constructor(type, init = {}) {
+    Object.assign(this, { type, ...init });
+  }
+}
+
+/**
+ * A stand-in element that is, or is in, what `selectors` select.
+ *
+ * @param {...string} selectors
+ */
+function element(...selectors) {
+  return {
+    /** @type {any[]} */
+    dispatched: [],
+    clicks: 0,
+    value: "picked.pdf",
+    /** @param {string} selector */
+    closest(selector) {
+      return selectors.includes(selector) ? this : null;
+    },
+    /** @param {any} event */
+    dispatchEvent(event) {
+      this.dispatched.push(event);
+      return true;
+    },
+    click() {
+      this.clicks++;
+    },
+  };
+}
+
 /**
  * A stand-in for the PDFDataRangeTransport in pdf.js's src/display/api.js,
  * which records what the bridge hands it.
@@ -94,7 +154,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     /** What a prompt answers: whether the user goes ahead. */
     dialogAnswer: true,
     async pageDialog(reason, items) {
-      pdflion.dialogs.push([reason, items]);
+      // A copy, since the bridge's arrays come from another realm.
+      pdflion.dialogs.push([reason, items && [...items]]);
       return pdflion.dialogAnswer;
     },
   };
@@ -135,6 +196,18 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       this.clicks++;
     },
   });
+  /** The viewer's outermost element, whose classes overrides.css styles by. */
+  const outerContainer = {
+    id: "outerContainer",
+    classes: new Set(),
+    classList: {
+      /** @param {string} name @param {boolean} force */
+      toggle(name, force) {
+        if (force) outerContainer.classes.add(name);
+        else outerContainer.classes.delete(name);
+      },
+    },
+  };
   const document = {
     title: "",
     listeners: /** @type {Record<string, Function>} */ ({}),
@@ -146,7 +219,14 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     /** @param {string} id */
     getElementById(id) {
       if (id === stopWaiting.id) return stopWaiting;
+      if (id === outerContainer.id) return outerContainer;
       return toolbar ? (this.toolbar.find((element) => element.id === id) ?? null) : null;
+    },
+    /** Whether a thumbnail's checkbox is checked. */
+    checked: false,
+    /** @param {string} selector */
+    querySelector(selector) {
+      return selector === CHECKED_THUMBNAIL && this.checked ? {} : null;
     },
     /** @param {string} tagName */
     createElement: (tagName) => new Element(tagName),
@@ -209,6 +289,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
    * @property {boolean} [isPureXfa]
    * @property {number[]} [data] the document's bytes
    * @property {number} [numPages]
+   * @property {Partial<typeof NOTHING_HELD>} [holds] what pdf.js answers about
+   *   what the document holds, for what NOTHING_HELD doesn't
    */
 
   /**
@@ -221,8 +303,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     isPureXfa = false,
     data = [9],
     numPages = 1,
+    holds = {},
   }) => {
     const entries = formData ? [["4R", { value: "Ada" }]] : [];
+    const held = { ...NOTHING_HELD, ...holds };
     return {
       numPages,
       /** The order of the pages pdf.js's page tools show, once they changed it. */
@@ -245,7 +329,18 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       },
       saveDocument: async () => new Uint8Array([1, 2, 3]),
       getData: async () => new Uint8Array(data),
-      getMetadata: async () => ({ info: { EncryptFilterName: null, ...info } }),
+      getMetadata: async () => ({
+        info: { EncryptFilterName: null, ...info },
+        metadata: held.metadata,
+      }),
+      getOptionalContentConfig: async () => new Map(held.layers.map((id) => [id, {}])),
+      getJSActions: async () => held.jsActions,
+      getViewerPreferences: async () => held.viewerPreferences,
+      getOpenAction: async () => held.openAction,
+      getPageMode: async () => held.pageMode,
+      getPageLayout: async () => held.pageLayout,
+      getMarkInfo: async () => held.markInfo,
+      getPageLabels: async () => held.pageLabels,
       getPage: async () => ({}),
       isPureXfa,
       extractPages: async (pageInfos, copyLevels) => {
@@ -369,11 +464,22 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     pdfjsLib: { PDFDataRangeTransport: FakeRangeTransport },
     /** @type {any} */
     options: null,
-    listeners: /** @type {Record<string, Function>} */ ({}),
-    addEventListener(type, listener) {
-      page.listeners[type] = listener;
+    /** @type {Record<string, { listener: Function, signal?: AbortSignal }[]>} */
+    listeners: {},
+    addEventListener(type, listener, options) {
+      (page.listeners[type] ??= []).push({ listener, signal: options?.signal });
     },
     document,
+    DataTransfer: class {
+      constructor() {
+        /** @type {unknown[]} */
+        this.files = [];
+        this.items = { add: (/** @type {unknown} */ file) => this.files.push(file) };
+      }
+    },
+    DragEvent: SyntheticEvent,
+    KeyboardEvent: SyntheticEvent,
+    Event: SyntheticEvent,
     // Node gives custom schemes an opaque origin, where Chromium treats the
     // registered pdflion: scheme as standard. An https origin stands in.
     location: {
@@ -437,19 +543,50 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     },
     /** @param {Partial<KeyboardEvent>} key */
     keepsFromPdfjs(key) {
-      let stopped = false;
-      page.listeners.keydown({
+      const event = this.fire("keydown", {
         metaKey: false,
         ctrlKey: false,
         altKey: false,
         shiftKey: false,
         ...key,
-        stopImmediatePropagation: () => {
-          stopped = true;
-        },
       });
-      return stopped;
+      return event.stopped;
     },
+    /**
+     * Dispatches an event to the page's listeners on window, as capturing ones
+     * get it first.
+     *
+     * @param {string} type
+     * @param {object} [init] the event's properties
+     * @returns {any} the event, which records whether it was stopped or prevented
+     */
+    fire(type, init = {}) {
+      const event = {
+        type,
+        target: null,
+        button: 0,
+        pointerId: 1,
+        clientX: 0,
+        clientY: 0,
+        stopped: false,
+        prevented: false,
+        stopPropagation() {
+          this.stopped = true;
+        },
+        stopImmediatePropagation() {
+          this.stopped = true;
+        },
+        preventDefault() {
+          this.prevented = true;
+        },
+        ...init,
+      };
+      for (const { listener, signal } of page.listeners[type] ?? []) {
+        if (!signal?.aborted) listener(event);
+      }
+      return event;
+    },
+    outerContainer,
   };
 }
 
@@ -1288,4 +1425,357 @@ describe("bridge.js Add file", () => {
     assert.equal(bridge.stopWaiting.clicks, 1);
     assert.deepEqual(named(bridge.calls, "extractPages"), []);
   });
+});
+
+describe("bridge.js page tools of a locked document", () => {
+  /** @param {object} [options] for openDocument() */
+  async function withLocked(options = { info: { EncryptFilterName: "Standard" }, numPages: 2 }) {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument(options);
+    await settle();
+    return bridge;
+  }
+
+  for (const [description, options] of [
+    ["with a password", { info: { EncryptFilterName: "Standard" } }],
+    ["that are pure XFA forms", { isPureXfa: true }],
+  ]) {
+    it(`are hidden for documents ${description}`, async () => {
+      const bridge = await withLocked(options);
+      assert.ok(bridge.outerContainer.classes.has("pdflionPagesLocked"));
+    });
+  }
+
+  it("show for other documents", async () => {
+    const bridge = await withLocked({});
+    assert.ok(!bridge.outerContainer.classes.has("pdflionPagesLocked"));
+  });
+
+  it("keep thumbnails from being dragged, but not from being clicked", async () => {
+    const bridge = await withLocked();
+    const image = element(THUMBNAIL_IMAGE);
+    assert.ok(bridge.fire("pointerdown", { target: image }).stopped);
+    assert.ok(!bridge.fire("pointerdown", { target: image, button: 2 }).stopped);
+    assert.ok(!bridge.fire("click", { target: image }).stopped);
+    bridge.fire("pointermove", { target: image, clientX: 50 });
+    await settle();
+    assert.deepEqual(bridge.pdflion.dialogs, []);
+  });
+
+  it("keep files from being dropped on the thumbnails", async () => {
+    const bridge = await withLocked();
+    assert.ok(bridge.fire("dragenter", { target: element(THUMBNAILS) }).stopped);
+    assert.ok(!bridge.fire("dragenter", { target: element("#viewerContainer") }).stopped);
+  });
+
+  it("say why Copy, Cut and Delete can't change pages", async () => {
+    const bridge = await withLocked();
+    const item = element(PAGE_CHANGE_ITEMS);
+    const click = bridge.fire("click", { target: item });
+    assert.ok(click.stopped && click.prevented);
+    await settle();
+    assert.deepEqual(bridge.pdflion.dialogs, [["locked-encrypted", undefined]]);
+    assert.equal(item.clicks, 0);
+  });
+
+  it("leave the pages of other documents to pdf.js", async () => {
+    const bridge = await withLocked({ numPages: 2 });
+    bridge.page.document.checked = true;
+    assert.ok(!bridge.fire("pointerdown", { target: element(THUMBNAIL_IMAGE) }).stopped);
+    assert.ok(!bridge.fire("dragenter", { target: element(THUMBNAILS) }).stopped);
+    assert.ok(!bridge.fire("click", { target: element(PAGE_CHANGE_ITEMS) }).stopped);
+    assert.ok(!bridge.fire("keydown", { target: element(THUMBNAILS), key: "Delete" }).stopped);
+    assert.ok(!bridge.fire("change", { target: element(ADD_FILE_PICKER) }).stopped);
+    assert.ok(!bridge.fire("drop", { target: element(TAKING_FILES) }).stopped);
+  });
+});
+
+describe("bridge.js page tools of a signed document", () => {
+  /** @param {boolean} answer what the user answers to the prompt */
+  async function withSigned(answer = true) {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ info: { IsSignaturesPresent: true }, numPages: 2 });
+    await settle();
+    bridge.pdflion.dialogAnswer = answer;
+    return bridge;
+  }
+
+  /** @param {any} bridge */
+  const asked = (bridge) => bridge.pdflion.dialogs.map(([reason]) => reason);
+
+  it("ask once a press on a thumbnail turns into a drag, which they drop", async () => {
+    const bridge = await withSigned();
+    const image = element(THUMBNAIL_IMAGE);
+    // A click goes to its page.
+    assert.ok(bridge.fire("pointerdown", { target: image, clientX: 10, clientY: 10 }).stopped);
+    bridge.fire("pointermove", { clientX: 13, clientY: 15 });
+    bridge.fire("pointerup", {});
+    bridge.fire("pointermove", { clientX: 40, clientY: 40 });
+    await settle();
+    assert.deepEqual(asked(bridge), []);
+
+    bridge.fire("pointerdown", { target: image, clientX: 10, clientY: 10 });
+    bridge.fire("pointermove", { pointerId: 2, clientX: 40, clientY: 40 });
+    await settle();
+    assert.deepEqual(asked(bridge), []);
+    bridge.fire("pointermove", { clientX: 10, clientY: 16 });
+    bridge.fire("pointermove", { clientX: 10, clientY: 30 });
+    await settle();
+    assert.deepEqual(asked(bridge), ["signed"]);
+
+    // The next drag moves pages.
+    assert.ok(!bridge.fire("pointerdown", { target: image }).stopped);
+  });
+
+  it("keep dropping drags while the user says no", async () => {
+    const bridge = await withSigned(false);
+    const image = element(THUMBNAIL_IMAGE);
+    bridge.fire("pointerdown", { target: image });
+    bridge.fire("pointermove", { clientX: 30 });
+    await settle();
+    assert.ok(bridge.fire("pointerdown", { target: image }).stopped);
+  });
+
+  it("hold back Copy, Cut and Delete until the user agrees, then go ahead", async () => {
+    const bridge = await withSigned();
+    const item = element(PAGE_CHANGE_ITEMS);
+    const click = bridge.fire("click", { target: item });
+    assert.ok(click.stopped && click.prevented);
+    await settle();
+    assert.deepEqual(asked(bridge), ["signed"]);
+    assert.equal(item.clicks, 1);
+    // Only the first change asks.
+    assert.ok(!bridge.fire("click", { target: item }).stopped);
+  });
+
+  it("drop Copy, Cut and Delete when the user says no", async () => {
+    const bridge = await withSigned(false);
+    const item = element(PAGE_CHANGE_ITEMS);
+    bridge.fire("click", { target: item });
+    await settle();
+    assert.equal(item.clicks, 0);
+    assert.ok(bridge.fire("click", { target: item }).stopped);
+  });
+
+  it("hold back the keys that change checked pages in the thumbnails", async () => {
+    const bridge = await withSigned();
+    const thumbnails = element(THUMBNAILS);
+    for (const [key, modifiers] of [
+      ["Delete", {}],
+      ["c", {}],
+      ["x", { altKey: true }],
+    ]) {
+      assert.ok(!bridge.fire("keydown", { target: thumbnails, key, ...modifiers }).stopped, key);
+    }
+    // Nothing checked, nothing to change.
+    assert.ok(!bridge.fire("keydown", { target: thumbnails, key: "Delete" }).stopped);
+
+    bridge.page.document.checked = true;
+    assert.ok(!bridge.fire("keydown", { target: element(), key: "Delete" }).stopped);
+    const keydown = bridge.fire("keydown", { target: thumbnails, key: "x", metaKey: true });
+    assert.ok(keydown.stopped && keydown.prevented);
+    await settle();
+    assert.deepEqual(asked(bridge), ["signed"]);
+    const [repeated] = thumbnails.dispatched;
+    assert.equal(repeated.type, "keydown");
+    assert.equal(repeated.key, "x");
+    assert.equal(repeated.metaKey, true);
+    assert.equal(repeated.bubbles, true);
+  });
+
+  it("hold back files chosen with Add file", async () => {
+    const bridge = await withSigned();
+    const picker = element(ADD_FILE_PICKER);
+    assert.ok(bridge.fire("change", { target: picker }).stopped);
+    await settle();
+    assert.deepEqual(
+      picker.dispatched.map(({ type }) => type),
+      ["change"],
+    );
+  });
+
+  it("forget files chosen with Add file when the user says no", async () => {
+    const bridge = await withSigned(false);
+    const picker = element(ADD_FILE_PICKER);
+    bridge.fire("change", { target: picker });
+    await settle();
+    assert.deepEqual(picker.dispatched, []);
+    assert.equal(picker.value, "");
+  });
+
+  for (const [answer, outcome] of [
+    [true, "drop them where they were dropped"],
+    [false, "end pdf.js's drag"],
+  ]) {
+    it(`hold back files dropped on the thumbnails, then ${outcome}`, async () => {
+      const bridge = await withSigned(answer);
+      const thumbnails = element(TAKING_FILES);
+      const file = { name: "more.pdf" };
+      const drop = bridge.fire("drop", {
+        target: thumbnails,
+        clientX: 20,
+        clientY: 30,
+        dataTransfer: { files: [file] },
+      });
+      assert.ok(drop.stopped && drop.prevented);
+      await settle();
+      const [event] = thumbnails.dispatched;
+      if (answer) {
+        assert.equal(event.type, "drop");
+        assert.deepEqual([event.clientX, event.clientY], [20, 30]);
+        assert.equal(event.dataTransfer.files[0], file);
+      } else {
+        assert.equal(event.type, "dragleave");
+        assert.deepEqual([event.clientX, event.clientY], [-1, -1]);
+      }
+    });
+  }
+
+  it("ask once at a time", async () => {
+    const bridge = await withSigned();
+    bridge.fire("click", { target: element(PAGE_CHANGE_ITEMS) });
+    bridge.fire("change", { target: element(ADD_FILE_PICKER) });
+    await settle();
+    assert.deepEqual(asked(bridge), ["signed"]);
+  });
+});
+
+describe("bridge.js saving a new file", () => {
+  /** @param {object} [options] for openDocument() */
+  async function withDocument(options = {}) {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 2, ...options });
+    return bridge;
+  }
+
+  /** @param {any} bridge @param {object} [data] what Add file hands onSaveAndLoad() */
+  async function addFile(bridge) {
+    bridge.app.openedPages = bridge.app.pdfViewer.pagesCount + 1;
+    const pageInfos = [{ document: null }, { document: new Uint8Array([5]), insertAfter: 0 }];
+    assert.equal(await bridge.app.onSaveAndLoad({ data: { pageInfos, copyLevels: null } }), true);
+  }
+
+  const RICH = {
+    info: { Title: "Report", Language: "de-CH" },
+    holds: { metadata: {}, layers: ["7R"], pageMode: "UseOutlines", pageLabels: ["i", "ii"] },
+  };
+
+  it("asks first what the file would lose, as a single file", async () => {
+    const bridge = await withDocument(RICH);
+    bridge.changePages([2, 1]);
+    assert.equal(await bridge.run("save"), true);
+    assert.deepEqual(bridge.pdflion.dialogs, [
+      ["rewrite", ["xmp", "layers", "viewer-settings", "language"]],
+    ]);
+    assert.equal(bridge.pdflion.writes.length, 1);
+  });
+
+  it("also names the Info dictionary and page labels after Add file", async () => {
+    const bridge = await withDocument(RICH);
+    await addFile(bridge);
+    await bridge.run("save");
+    assert.deepEqual(bridge.pdflion.dialogs, [
+      ["rewrite", ["xmp", "layers", "viewer-settings", "language", "info", "page-labels"]],
+    ]);
+  });
+
+  it("also names them for copied pages with typed form values", async () => {
+    const bridge = await withDocument({ ...RICH, formData: true });
+    bridge.changePages(
+      [1, 2, 1],
+      [
+        { document: null, includePages: [0, 1] },
+        { document: null, includePages: [0] },
+      ],
+    );
+    await bridge.run("save");
+    assert.deepEqual(bridge.pdflion.dialogs[0][1].slice(-2), ["info", "page-labels"]);
+  });
+
+  it("saves nothing when the user cancels, and asks again next time", async () => {
+    const bridge = await withDocument(RICH);
+    bridge.changePages([2, 1]);
+    bridge.pdflion.dialogAnswer = false;
+    assert.equal(await bridge.run("save"), false);
+    assert.deepEqual(bridge.pdflion.writes, []);
+    assert.equal(bridge.pdflion.edited.at(-1), true);
+    bridge.pdflion.dialogAnswer = true;
+    assert.equal(await bridge.run("save"), true);
+    assert.equal(bridge.pdflion.dialogs.length, 2);
+  });
+
+  it("asks about each item once", async () => {
+    const bridge = await withDocument(RICH);
+    bridge.changePages([2, 1]);
+    // Save As, cancelled after the prompt.
+    bridge.pdflion.answer = null;
+    assert.equal(await bridge.run("saveAs"), false);
+    bridge.pdflion.answer = "/doc/t/a.pdf";
+    assert.equal(await bridge.run("save"), true);
+    assert.equal(bridge.pdflion.dialogs.length, 1);
+  });
+
+  it("asks nothing when the file holds none of it", async () => {
+    const bridge = await withDocument();
+    bridge.changePages([2, 1]);
+    await bridge.run("save");
+    await addFile(bridge);
+    await bridge.run("save");
+    assert.deepEqual(bridge.pdflion.dialogs, []);
+  });
+
+  it("asks nothing for an inserted page, which goes after the file", async () => {
+    const bridge = await withDocument(RICH);
+    await bridge.run("insertBlankPage");
+    assert.equal(await bridge.run("save"), true);
+    assert.deepEqual(bridge.pdflion.dialogs, []);
+  });
+
+  it("asks nothing once the file is saved without it", async () => {
+    const bridge = await withDocument({ holds: { metadata: {} } });
+    bridge.changePages([2, 1]);
+    await bridge.run("save");
+    // The saved file, reopened, has no XMP metadata. Nor would this one.
+    bridge.app.pdfDocument.numPages = 2;
+    bridge.changePages([2, 1]);
+    await bridge.run("save");
+    assert.equal(bridge.pdflion.dialogs.length, 1);
+  });
+
+  for (const [item, options] of [
+    ["xmp", { holds: { metadata: {} } }],
+    ["layers", { holds: { layers: ["7R"] } }],
+    ["scripts", { holds: { jsActions: {} } }],
+    ["viewer-settings", { holds: { viewerPreferences: {} } }],
+    ["viewer-settings", { holds: { openAction: { dest: [] } } }],
+    ["viewer-settings", { holds: { pageMode: "FullScreen" } }],
+    ["viewer-settings", { holds: { pageLayout: "TwoColumnLeft" } }],
+    ["tagging", { holds: { markInfo: new Map([["Marked", true]]) } }],
+    ["language", { info: { Language: "en-US" } }],
+    ["info", { info: { Author: "Ada" } }],
+    ["info", { info: { Keywords: "lion" } }],
+    ["page-labels", { holds: { pageLabels: ["A-1"] } }],
+  ]) {
+    it(`finds ${item} in ${JSON.stringify(options)}`, async () => {
+      const bridge = await withDocument(options);
+      await addFile(bridge);
+      await bridge.run("save");
+      assert.deepEqual(bridge.pdflion.dialogs, [["rewrite", [item]]]);
+    });
+  }
+
+  for (const [what, options] of [
+    ["tags that aren't marked", { holds: { markInfo: new Map([["Marked", false]]) } }],
+    ["Info entries other than the title, author, subject and keywords", { info: { Producer: "TeX" } }],
+  ]) {
+    it(`doesn't count ${what}`, async () => {
+      const bridge = await withDocument(options);
+      await addFile(bridge);
+      await bridge.run("save");
+      assert.deepEqual(bridge.pdflion.dialogs, []);
+    });
+  }
 });

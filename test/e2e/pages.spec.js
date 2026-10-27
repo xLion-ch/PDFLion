@@ -14,7 +14,7 @@ import {
   test,
   tracemonkey,
 } from "./pdflion.js";
-import { writeBrokenForm, writeForm, writeLabelled, writeSigned } from "./pdfs.js";
+import { writeBrokenForm, writeForm, writeLabelled, writeProtected, writeSigned } from "./pdfs.js";
 
 /** @typedef {import("./pdflion.js").ElectronApplication} ElectronApplication */
 /** @typedef {import("./pdflion.js").Page} Page */
@@ -357,4 +357,96 @@ test("a typed form value survives moving pages and saving", async ({ pdflion }) 
     PDFViewerApplication.page = 2;
   });
   await expect(page.locator(".annotationLayer input")).toHaveValue("Ada Lovelace");
+});
+
+test("a document with a password shows its pages, but no page tools", async ({ pdflion }) => {
+  const dir = await tempDir();
+  const file = path.join(dir, "protected.pdf");
+  await writeProtected(file, 3);
+  const more = path.join(dir, "more.pdf");
+  await writeLabelled(more, 1, "More");
+  const { app, page } = await pdflion([file]);
+  await showThumbnails(page);
+
+  await expect(thumbnail(page, 1).locator("input")).toBeHidden();
+  await expect(page.locator("#viewsManagerStatus")).toBeHidden();
+  await expect(page.locator("#viewsManagerAddFileButton")).toBeHidden();
+
+  await dragThumbnail(page, 1, 3);
+  // Files dropped on the thumbnails aren't taken either.
+  await page.evaluate(async (bytes) => {
+    const dataTransfer = new DataTransfer();
+    const file = new File([new Uint8Array(bytes)], "more.pdf", { type: "application/pdf" });
+    dataTransfer.items.add(file);
+    const target = /** @type {Element} */ (document.querySelector("#thumbnailsView > .thumbnail"));
+    target.dispatchEvent(new DragEvent("dragenter", { dataTransfer, bubbles: true }));
+  }, [...(await fs.readFile(more))]);
+  await expect(page.locator("#thumbnailsView")).not.toHaveClass(/isDraggingFile/);
+  expect(await pageTexts(page)).toEqual(["Page 1", "Page 2", "Page 3"]);
+  expect(await isEdited(app, page)).toBe(false);
+
+  // The thumbnails still go to their pages.
+  await thumbnail(page, 3).locator(".thumbnailImageContainer").click();
+  await expect.poll(() => currentPage(page)).toBe(3);
+});
+
+test("a signed document asks before its first drag of pages only", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "signed.pdf");
+  await writeSigned(file, { pages: 3 });
+  const { app, page } = await pdflion([file]);
+  await showThumbnails(page);
+  const ask = "Changing pages invalidates the signatures in “signed.pdf”.";
+
+  await answerMessages(app, "Cancel");
+  await dragThumbnail(page, 2, 3);
+  await expect.poll(() => messages(app)).toEqual([ask]);
+  // A click still goes to its page, without asking.
+  await thumbnail(page, 2).locator(".thumbnailImageContainer").click();
+  await expect.poll(() => currentPage(page)).toBe(2);
+
+  // Agreeing uses up the drag, and the next one moves the page.
+  await answerMessages(app, "Change Pages");
+  await dragThumbnail(page, 2, 3);
+  await expect.poll(() => messages(app)).toEqual([ask, ask]);
+  expect(await pageTexts(page)).toEqual(["", "Page 2", "Page 3"]);
+  await dragThumbnail(page, 2, 3);
+  await expect.poll(() => pageTexts(page)).toEqual(["", "Page 3", "Page 2"]);
+  expect(await messages(app)).toEqual([ask, ask]);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+});
+
+test("saving pages moved in a document with XMP metadata asks once", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "xmp.pdf");
+  await writeLabelled(file, 3, "Page", { xmp: true });
+  let { app, page } = await pdflion([file]);
+  await showThumbnails(page);
+  await answerMessages(app, "Save");
+
+  await dragThumbnail(page, 1, 3);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  expect(await messages(app)).toEqual(["Saving removes some information from “xmp.pdf”."]);
+
+  await dragThumbnail(page, 1, 3);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 3", "Page 1", "Page 2"]);
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  expect(await messages(app)).toHaveLength(1);
+  await app.close();
+
+  ({ app, page } = await pdflion([file]));
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 3", "Page 1", "Page 2"]);
+});
+
+test("saving pages moved in a document without such data doesn't ask", async ({ pdflion }) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  await showThumbnails(page);
+  await answerMessages(app, "Cancel");
+
+  await dragThumbnail(page, 1, 2);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  expect(await messages(app)).toEqual([]);
 });

@@ -3,6 +3,7 @@
  * committed.
  */
 import fs from "node:fs/promises";
+import { PDFDocument } from "@cantoo/pdf-lib";
 
 /**
  * @param {string[]} objects the body of each object, numbered from 1, with the
@@ -53,6 +54,17 @@ function kids(count, first) {
   return Array.from({ length: count }, (_, index) => `${first + 2 * index} 0 R`);
 }
 
+/** XMP metadata that names its creator, and no title, which pdf.js would show. */
+const XMP = [
+  '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>',
+  '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+  '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+  '<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+  "<dc:creator><rdf:Seq><rdf:li>PDFLion</rdf:li></rdf:Seq></dc:creator>",
+  "</rdf:Description></rdf:RDF></x:xmpmeta>",
+  '<?xpacket end="r"?>',
+].join("\n");
+
 /**
  * Writes a document whose pages show "Page 1", "Page 2" and so on, or another
  * label, so that tests can tell them apart by their text.
@@ -60,18 +72,35 @@ function kids(count, first) {
  * @param {string} file
  * @param {number} pages
  * @param {string} [label]
+ * @param {{ xmp?: boolean }} [options] xmp: whether it has XMP metadata
  */
-export async function writeLabelled(file, pages, label = "Page") {
+export async function writeLabelled(file, pages, label = "Page", { xmp = false } = {}) {
   const labels = Array.from({ length: pages }, (_, index) => `${label} ${index + 1}`);
+  const metadata = 4 + 2 * pages;
   await fs.writeFile(
     file,
     pdf([
-      "<< /Type /Catalog /Pages 2 0 R >>",
+      `<< /Type /Catalog /Pages 2 0 R${xmp ? ` /Metadata ${metadata} 0 R` : ""} >>`,
       `<< /Type /Pages /Count ${pages} /Kids [${kids(pages, 4).join(" ")}] >>`,
       HELVETICA,
       ...labelledPages(labels, 4, 3),
+      ...(xmp ? [stream(XMP).replace("<<", "<< /Type /Metadata /Subtype /XML")] : []),
     ]),
   );
+}
+
+/**
+ * Writes writeLabelled()'s document encrypted with an owner password only,
+ * so that it opens without asking.
+ *
+ * @param {string} file
+ * @param {number} pages
+ */
+export async function writeProtected(file, pages) {
+  await writeLabelled(file, pages);
+  const document = await PDFDocument.load(await fs.readFile(file));
+  document.encrypt({ ownerPassword: "owner" });
+  await fs.writeFile(file, await document.save());
 }
 
 /**
@@ -127,19 +156,23 @@ export async function writeLinks(file) {
 }
 
 /**
- * Writes a page in a document that says it's signed: its form's `SigFlags`
- * has SignaturesExist set, for a signature field that's still empty.
+ * Writes a document that says it's signed: its form's `SigFlags` has
+ * SignaturesExist set, for a signature field that's still empty, on its first
+ * page. Further pages show "Page 2", "Page 3" and so on.
  *
  * @param {string} file
+ * @param {{ pages?: number }} [options]
  */
-export async function writeSigned(file) {
+export async function writeSigned(file, { pages = 1 } = {}) {
+  const more = Array.from({ length: pages - 1 }, (_, index) => `Page ${index + 2}`);
   await fs.writeFile(
     file,
     pdf([
       "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /SigFlags 3 >> >>",
-      "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+      `<< /Type /Pages /Count ${pages} /Kids [${["3 0 R", ...kids(pages - 1, 6)].join(" ")}] >>`,
       "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] >>",
       "<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature) /Rect [0 0 0 0] /F 132 /P 3 0 R >>",
+      ...(pages > 1 ? [HELVETICA, ...labelledPages(more, 6, 5)] : []),
     ]),
   );
 }

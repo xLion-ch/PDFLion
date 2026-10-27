@@ -491,6 +491,16 @@
   }
 }
 
+/* A document whose pages can't change (bridge.js): its thumbnails only go to
+   pages, without pdf.js's checkboxes, Manage menu and Add file. */
+#outerContainer.pdflionPagesLocked #viewsManager {
+  #thumbnailsView > .thumbnail > input,
+  #viewsManagerStatus,
+  #viewsManagerAddFileButton {
+    display: none;
+  }
+}
+
 .treeView {
   .treeItem > a {
     box-sizing: border-box;

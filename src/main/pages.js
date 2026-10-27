@@ -22,6 +22,7 @@ const DROPPED_ITEMS = {
   scripts: "its document scripts",
   "viewer-settings": "how it asks to be shown when it opens",
   tagging: "the tags that make it accessible",
+  language: "the language setting screen readers use",
   info: "its title, author, subject and keywords",
   "page-labels": "its page labels",
 };

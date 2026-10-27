@@ -8,12 +8,15 @@
  * checked against pdf.js v6.4.299: web/app.js and web/app_options.js; for the
  * range transport src/display/api.js and src/display/transport_stream.js; for
  * page changes src/display/api.js (getMetadata, isPureXfa, extractPages,
- * pagesMapper), src/display/annotation_storage.js, src/core/document.js (the
- * metadata flags), web/pdf_thumbnail_viewer.js (getStructuralChanges and
- * #mergeFiles), src/display/pages_mapper.js, web/pdf_viewer.js (pagesCount,
- * onPagesEdited), web/pdf_page_view.js (updatePageNumber),
- * web/views_manager.js and web/viewer.html (the toolbar and the views
- * manager's waiting bar).
+ * pagesMapper, and what findDroppable() reads), src/core/catalog.js (what
+ * those answer without an entry), src/core/editor/pdf_editor.js (what
+ * extractPages() keeps), src/display/annotation_storage.js,
+ * src/core/document.js (the metadata flags), web/pdf_thumbnail_viewer.js
+ * (getStructuralChanges, #mergeFiles and the listeners guardPageTools() goes
+ * before), src/display/pages_mapper.js, web/pdf_viewer.js (pagesCount,
+ * onPagesEdited), web/pdf_page_view.js (updatePageNumber), web/menu.js,
+ * web/views_manager.js and web/viewer.html (the toolbar, and the views
+ * manager's Manage menu, Add file and waiting bar).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. Page changes that pdf.js can't make go through
@@ -35,6 +38,48 @@
 
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
   const PDF_LIB_URL = "/lib/pdf-lib.min.js";
+
+  /**
+   * How far a press on a thumbnail moves before pdf.js drags the page:
+   * `DRAG_THRESHOLD_IN_PIXELS` in web/pdf_thumbnail_viewer.js.
+   */
+  const DRAG_THRESHOLD = 5;
+
+  // Where pdf.js's page tools are, in web/viewer.html and as
+  // web/pdf_thumbnail_viewer.js builds the thumbnails.
+  const THUMBNAILS = "#thumbnailsView";
+  const THUMBNAIL_IMAGE = `${THUMBNAILS} > .thumbnail > .thumbnailImageContainer`;
+  const CHECKED_THUMBNAIL = `${THUMBNAILS} > .thumbnail > input:checked`;
+  /** The Manage menu's items that change pages. Export selected doesn't. */
+  const PAGE_CHANGE_ITEMS = [
+    "#viewsManagerStatusActionCopy",
+    "#viewsManagerStatusActionCut",
+    "#viewsManagerStatusActionDelete",
+  ].join(", ");
+  const ADD_FILE_PICKER = "#viewsManagerAddFilePicker";
+
+  /**
+   * What the file can hold that saving through extractPages() drops, in the
+   * order the save prompt lists it: the items of DROPPED_ITEMS in
+   * src/main/pages.js.
+   */
+  const DROPPABLE = [
+    "xmp",
+    "layers",
+    "scripts",
+    "viewer-settings",
+    "tagging",
+    "language",
+    "info",
+    "page-labels",
+  ];
+
+  /**
+   * What extractPages() drops only when it makes the new file of several:
+   * it keeps a single file's Info dictionary and page labels (`isSingleFile`
+   * in src/core/editor/pdf_editor.js).
+   */
+  const DROPPED_FROM_SEVERAL = new Set(["info", "page-labels"]);
 
   /** Whether shortcuts use ⌘, as on macOS, rather than Ctrl, as on Windows. */
   const isMac = window.pdflion.platform === "darwin";
@@ -72,6 +117,27 @@
    * document has loaded, they can't.
    */
   let locked = true;
+
+  /** Whether the document says it's signed, once checkLocked() has read it. */
+  let signed = false;
+
+  /** @type {Promise<boolean> | null} confirmPageChange(), while it asks */
+  let asking = null;
+
+  /**
+   * @type {Promise<Set<string>>} which of DROPPABLE the file holds, as it was
+   * opened or last saved
+   */
+  let droppable = Promise.resolve(new Set());
+
+  /**
+   * Which of DROPPABLE the user agreed to lose. Like signedChangesAllowed, it
+   * belongs to the tab.
+   */
+  const dropAgreed = new Set();
+
+  /** Whether Add file made the document of several files since it was opened or saved. */
+  let merged = false;
 
   /** @type {Promise<any> | null} @cantoo/pdf-lib, once loading it started */
   let pdfLib = null;
@@ -139,6 +205,7 @@
       addFilesAsPageChanges(app);
       // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
       insertButton = addInsertButton(app);
+      guardPageTools(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
           Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
@@ -146,6 +213,8 @@
         app.eventBus.on("documentloaded", () => {
           trackEdits(app);
           checkLocked(app);
+          // A reopened document shows changes to the file, not the file.
+          if (!reopening) noteDroppable(app);
         });
         // Pages moved, copied or deleted in the thumbnails, or that change undone.
         app.eventBus.on("pagesedited", () => {
@@ -398,7 +467,8 @@
    * tab then shows that file, as it's now saved, so that the document matches
    * the file and the page tools start afresh. Changes made while the file was
    * being written would be lost that way, so after those the tab keeps the
-   * document as it is, edited.
+   * document as it is, edited. A new file drops some of what the old one held,
+   * so the save asks first: see confirmRewrite().
    *
    * @param {any} app
    * @param {(bytes: Uint8Array) => Promise<string | null>} write
@@ -411,6 +481,7 @@
     editedWhileSaving = false;
     updateInsertButton(app);
     try {
+      if (!(await confirmRewrite(app))) return false;
       const pageChanges = hasPageChanges(app);
       let bytes, url;
       await app.pdfScriptingManager.dispatchWillSave();
@@ -436,10 +507,93 @@
         if (url !== app.url) showDocumentUrl(app, url);
         updateEdited(app);
       }
+      noteDroppable(app);
       return true;
     } finally {
       busy = false;
       updateInsertButton(app);
+    }
+  }
+
+  /**
+   * Before a save that writes a new file, through extractPages(), asks
+   * whether to drop what the file holds and the new one won't. That's a save
+   * with page changes from pdf.js's page tools, or of a document Add file made
+   * anew. Each item is asked about once per tab.
+   *
+   * @param {any} app
+   * @returns {Promise<boolean>} whether to save
+   */
+  async function confirmRewrite(app) {
+    const pageChanges = hasPageChanges(app);
+    if (!pageChanges && !merged) return true;
+    const several = merged || fromSeveralCopies(app);
+    const held = await droppable;
+    const items = DROPPABLE.filter(
+      (item) =>
+        held.has(item) && !dropAgreed.has(item) && (several || !DROPPED_FROM_SEVERAL.has(item)),
+    );
+    if (items.length === 0) return true;
+    if (!(await window.pdflion.pageDialog("rewrite", items))) return false;
+    for (const item of items) dropAgreed.add(item);
+    return true;
+  }
+
+  /**
+   * Whether extractPages() will make the new file of several, although no
+   * file was added: with typed form values, withFormValues() gives each copy
+   * of a page its own copy of the document.
+   *
+   * @param {any} app
+   * @returns {boolean}
+   */
+  function fromSeveralCopies({ pdfDocument, pdfThumbnailViewer }) {
+    const { pageInfos } = pdfThumbnailViewer.getStructuralChanges();
+    return pageInfos.length > 1 && hasFormValues(pdfDocument);
+  }
+
+  /**
+   * Notes what the file holds that a new file of its pages would drop, from
+   * the document shown, once it's the file as opened or saved.
+   *
+   * @param {any} app
+   */
+  function noteDroppable(app) {
+    merged = false;
+    droppable = findDroppable(app.pdfDocument);
+  }
+
+  /**
+   * @param {any} pdfDocument
+   * @returns {Promise<Set<string>>} which of DROPPABLE the document holds
+   */
+  async function findDroppable(pdfDocument) {
+    try {
+      const { info, metadata } = await pdfDocument.getMetadata();
+      /** @type {Record<string, boolean>} */
+      const holds = {
+        xmp: metadata !== null,
+        // Its optional content groups, one for each layer.
+        layers: [...(await pdfDocument.getOptionalContentConfig())].length > 0,
+        // The JavaScript name tree, and the catalog's actions.
+        scripts: (await pdfDocument.getJSActions()) !== null,
+        // pdf.js answers with these defaults when the catalog has no entry.
+        "viewer-settings":
+          (await pdfDocument.getViewerPreferences()) !== null ||
+          (await pdfDocument.getOpenAction()) !== null ||
+          (await pdfDocument.getPageMode()) !== "UseNone" ||
+          (await pdfDocument.getPageLayout()) !== "",
+        // A Map, from the worker, whatever the JSDoc says.
+        tagging: (await pdfDocument.getMarkInfo())?.get("Marked") === true,
+        // The catalog's Lang.
+        language: Boolean(info.Language),
+        info: ["Title", "Author", "Subject", "Keywords"].some((key) => info[key]),
+        "page-labels": (await pdfDocument.getPageLabels()) !== null,
+      };
+      return new Set(DROPPABLE.filter((item) => holds[item]));
+    } catch (error) {
+      console.warn("Couldn't read what the document holds:", error);
+      return new Set();
     }
   }
 
@@ -478,13 +632,21 @@
    * @returns {Promise<object[]>}
    */
   async function withFormValues(pdfDocument, pageInfos) {
-    const keys = [...pdfDocument.annotationStorage].map(([key]) => key);
-    if (!keys.some((key) => !key.startsWith(EDITOR_PREFIX))) return pageInfos;
+    if (!hasFormValues(pdfDocument)) return pageInfos;
     const saved = await pdfDocument.saveDocument();
     // Each gets its own copy, since posting them to the worker may detach them.
     return pageInfos.map((info) =>
       info.document === null ? { ...info, document: saved.slice() } : info,
     );
+  }
+
+  /**
+   * @param {any} pdfDocument
+   * @returns {boolean} whether the annotation storage holds more than
+   *   annotations made in the viewer: form values
+   */
+  function hasFormValues(pdfDocument) {
+    return [...pdfDocument.annotationStorage].some(([key]) => !key.startsWith(EDITOR_PREFIX));
   }
 
   /**
@@ -563,6 +725,8 @@
               pdfDocument.extractPages(await withFormValues(pdfDocument, pageInfos), copyLevels),
             app.pdfViewer.pagesCount + 1,
           );
+          // The new document has dropped what a new file of several does.
+          if (added) merged = true;
         }
       } finally {
         busy = false;
@@ -753,7 +917,12 @@
     return null;
   }
 
-  /** @param {any} app */
+  /**
+   * Finds out whether the document is locked, which `pdflionPagesLocked` on
+   * #outerContainer shows (see overrides.css), and whether it's signed.
+   *
+   * @param {any} app
+   */
   async function checkLocked(app) {
     const { pdfDocument } = app;
     locked = true;
@@ -762,10 +931,214 @@
       const { info } = await pdfDocument.getMetadata();
       if (app.pdfDocument !== pdfDocument) return;
       locked = lockReason(pdfDocument, info) !== null;
+      signed = Boolean(info.IsSignaturesPresent);
     } catch (error) {
       console.warn("Couldn't read the document's metadata:", error);
     }
+    document.getElementById("outerContainer")?.classList.toggle("pdflionPagesLocked", locked);
     updateInsertButton(app);
+  }
+
+  /**
+   * Keeps pdf.js's page tools from changing the pages of a locked document,
+   * and asks before the first page change of a signed one: dragging pages,
+   * Copy, Cut and Delete from the Manage menu or the keyboard, Add file, and
+   * files dropped on the thumbnails. Capturing on window comes before pdf.js's
+   * own listeners. A click on a thumbnail still goes to its page.
+   *
+   * A locked document's page tools are hidden, and its thumbnails take
+   * neither drags nor files. A signed document's change waits for the user's
+   * answer, and then goes ahead or is dropped. A drag can't be repeated, so
+   * once the user agrees, the next drag moves pages.
+   *
+   * @param {any} app
+   */
+  function guardPageTools(app) {
+    window.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.button !== 0 || !targetIn(event, THUMBNAIL_IMAGE)) return;
+        if (!locked && !mustAsk()) return;
+        // pdf.js would get ready to drag the page.
+        event.stopPropagation();
+        if (!locked) askOnceDragged(app, event);
+      },
+      true,
+    );
+    window.addEventListener(
+      "dragenter",
+      (event) => {
+        // pdf.js would take files dropped on the thumbnails. PDFs dropped
+        // there then open as tabs, as anywhere else (preload.cjs).
+        if (locked && targetIn(event, THUMBNAILS)) event.stopPropagation();
+      },
+      true,
+    );
+    window.addEventListener(
+      "drop",
+      (event) => {
+        const thumbnails = targetIn(event, `${THUMBNAILS}.isDraggingFile`);
+        if (!thumbnails || !mustAsk()) return;
+        // Only readable while the event is dispatched.
+        const files = [...(event.dataTransfer?.files ?? [])];
+        const { clientX, clientY } = event;
+        holdBack(
+          app,
+          event,
+          () => {
+            const dataTransfer = new DataTransfer();
+            for (const file of files) dataTransfer.items.add(file);
+            const init = { dataTransfer, clientX, clientY, bubbles: true, cancelable: true };
+            thumbnails.dispatchEvent(new DragEvent("drop", init));
+          },
+          // pdf.js still marks where the files would go, until they leave.
+          () =>
+            thumbnails.dispatchEvent(
+              new DragEvent("dragleave", { clientX: -1, clientY: -1, bubbles: true }),
+            ),
+        );
+      },
+      true,
+    );
+    window.addEventListener(
+      "click",
+      (event) => {
+        const item = targetIn(event, PAGE_CHANGE_ITEMS);
+        if (item && mustAsk()) holdBack(app, event, () => item.click());
+      },
+      true,
+    );
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        if (!isPageChangeKey(event) || !mustAsk()) return;
+        const { target, key, code, ctrlKey, metaKey, altKey, shiftKey } = event;
+        const init = { key, code, ctrlKey, metaKey, altKey, shiftKey };
+        holdBack(app, event, () =>
+          target?.dispatchEvent(
+            new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true }),
+          ),
+        );
+      },
+      true,
+    );
+    window.addEventListener(
+      "change",
+      (event) => {
+        const picker = targetIn(event, ADD_FILE_PICKER);
+        if (!picker || !mustAsk()) return;
+        holdBack(
+          app,
+          event,
+          () => picker.dispatchEvent(new Event("change")),
+          // So that picking the same files again is a change.
+          () => {
+            picker.value = "";
+          },
+        );
+      },
+      true,
+    );
+  }
+
+  /** @returns {boolean} whether a page change must ask first, or say why it can't */
+  function mustAsk() {
+    return locked || (signed && !signedChangesAllowed);
+  }
+
+  /**
+   * @param {Event} event
+   * @param {string} selector
+   * @returns {any} the event's target, or its closest ancestor, that matches
+   *   `selector`, or null
+   */
+  function targetIn({ target }, selector) {
+    return /** @type {any} */ (target)?.closest?.(selector) ?? null;
+  }
+
+  /**
+   * Whether a key in the thumbnails changes pages, as pdf.js's keydown
+   * listener in web/pdf_thumbnail_viewer.js decides: Copy, Cut and Delete,
+   * with pages checked.
+   *
+   * @param {KeyboardEvent} event
+   * @returns {boolean}
+   */
+  function isPageChangeKey(event) {
+    const { key, ctrlKey, metaKey } = event;
+    const deletion = key === "Delete" || key === "Backspace";
+    const copyOrCut = (key === "c" || key === "x") && (ctrlKey || metaKey);
+    return (
+      (deletion || copyOrCut) &&
+      targetIn(event, THUMBNAILS) !== null &&
+      document.querySelector(CHECKED_THUMBNAIL) !== null
+    );
+  }
+
+  /**
+   * Holds back an event that would change the pages, asks, then repeats it
+   * if the user agrees.
+   *
+   * @param {any} app
+   * @param {Event} event
+   * @param {() => void} repeat
+   * @param {() => void} [drop] when the user doesn't agree, or can't
+   */
+  function holdBack(app, event, repeat, drop = () => {}) {
+    event.stopPropagation();
+    event.preventDefault();
+    askToChangePages(app).then((agreed) => (agreed ? repeat() : drop()));
+  }
+
+  /**
+   * Asks once a press on a thumbnail turns into a drag, as far as pdf.js
+   * counts it as one. A press that doesn't is a click, which goes to the page.
+   *
+   * @param {any} app
+   * @param {PointerEvent} press
+   */
+  function askOnceDragged(app, { pointerId, clientX, clientY }) {
+    const controller = new AbortController();
+    const { signal } = controller;
+    window.addEventListener(
+      "pointermove",
+      (event) => {
+        if (event.pointerId !== pointerId) return;
+        const dx = Math.abs(event.clientX - clientX);
+        const dy = Math.abs(event.clientY - clientY);
+        if (dx <= DRAG_THRESHOLD && dy <= DRAG_THRESHOLD) return;
+        controller.abort();
+        askToChangePages(app);
+      },
+      { capture: true, signal },
+    );
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(
+        type,
+        (event) => {
+          if (event.pointerId === pointerId) controller.abort();
+        },
+        { capture: true, signal },
+      );
+    }
+  }
+
+  /**
+   * confirmPageChange(), unless it's already asking.
+   *
+   * @param {any} app
+   * @returns {Promise<boolean>} whether the pages may change
+   */
+  function askToChangePages(app) {
+    asking ??= confirmPageChange(app)
+      .catch((error) => {
+        console.error("Couldn't check whether the pages may change:", error);
+        return false;
+      })
+      .finally(() => {
+        asking = null;
+      });
+    return asking;
   }
 
   /** @returns {Promise<any>} @cantoo/pdf-lib, loaded the first time it's needed */
