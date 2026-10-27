@@ -83,16 +83,30 @@ function isTabDrag(event) {
   return event.dataTransfer?.types.includes(TAB_TYPE) ?? false;
 }
 
+/**
+ * Whether pdf.js's thumbnails take the drag, to add the dropped files' pages
+ * to the document. They mark themselves while they do (#thumbnailsView's
+ * `isDraggingFile`, in web/pdf_thumbnail_viewer.js).
+ *
+ * @param {DragEvent} event
+ */
+function isThumbnailsDrag(event) {
+  const { target } = event;
+  return target instanceof Element && target.closest("#thumbnailsView.isDraggingFile") !== null;
+}
+
 // Dropped PDFs open as tabs through main, which needs their paths for Save.
 // Left alone, pdf.js would open them in this tab as pathless blobs. A tab
 // dragged from another window's strip joins this window, which shows no strip
 // to drop it on while it has one tab. Capturing on window runs before pdf.js's
-// own listeners, so pdf.js never sees either drag.
+// own listeners, so pdf.js never sees either drag, except PDFs dropped on the
+// thumbnails, whose pages pdf.js adds to the document.
 window.addEventListener(
   "dragover",
   (event) => {
     const pdf = isPdfDrag(event);
     if (!pdf && !isTabDrag(event)) return;
+    if (pdf && isThumbnailsDrag(event)) return;
     event.preventDefault();
     event.stopPropagation();
     /** @type {DataTransfer} */ (event.dataTransfer).dropEffect = pdf ? "copy" : "move";
@@ -110,7 +124,7 @@ window.addEventListener(
       ipcRenderer.send("pdflion:drop-tab", dataTransfer.getData(TAB_TYPE));
       return;
     }
-    if (!isPdfDrag(event)) return;
+    if (!isPdfDrag(event) || isThumbnailsDrag(event)) return;
     event.preventDefault();
     event.stopPropagation();
     const paths = [...dataTransfer.files]

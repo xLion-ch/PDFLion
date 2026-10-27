@@ -7,14 +7,19 @@
  * eventBus, AppOptions). They aren't a stable API, so every name here was
  * checked against pdf.js v6.4.299: web/app.js and web/app_options.js; for the
  * range transport src/display/api.js and src/display/transport_stream.js; for
- * page changes src/display/api.js (getMetadata, isPureXfa, extractPages),
- * src/display/annotation_storage.js, src/core/document.js (the metadata
- * flags), web/pdf_thumbnail_viewer.js, src/display/pages_mapper.js,
- * web/views_manager.js and web/viewer.html (the toolbar).
+ * page changes src/display/api.js (getMetadata, isPureXfa, extractPages,
+ * pagesMapper), src/display/annotation_storage.js, src/core/document.js (the
+ * metadata flags), web/pdf_thumbnail_viewer.js (getStructuralChanges and
+ * #mergeFiles), src/display/pages_mapper.js, web/pdf_viewer.js (pagesCount,
+ * onPagesEdited), web/pdf_page_view.js (updatePageNumber),
+ * web/views_manager.js and web/viewer.html (the toolbar and the views
+ * manager's waiting bar).
  *
- * Page changes that pdf.js can't make go through @cantoo/pdf-lib, which
- * protocol.js serves at /lib/ and this script loads the first time it's
- * needed. It changes a document as an incremental update, after its bytes.
+ * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
+ * pages from other files. Page changes that pdf.js can't make go through
+ * @cantoo/pdf-lib, which protocol.js serves at /lib/ and this script loads the
+ * first time it's needed. It changes a document as an incremental update,
+ * after its bytes.
  */
 "use strict";
 
@@ -34,8 +39,17 @@
   /** Whether shortcuts use ⌘, as on macOS, rather than Ctrl, as on Windows. */
   const isMac = window.pdflion.platform === "darwin";
 
-  /** Whether the document has changes since it was opened or last saved. */
+  /**
+   * Whether the document has changes since it was opened or last saved, as
+   * main last heard it. updateEdited() works it out.
+   */
   let edited = false;
+
+  /** Whether pdf.js's annotation storage has changes: form values, annotations. */
+  let storageEdited = false;
+
+  /** Whether a page change reopened the document from bytes that aren't saved yet. */
+  let reopenedEdited = false;
 
   /** Whether a save or a page change is under way. Only one runs at a time. */
   let busy = false;
@@ -112,10 +126,17 @@
         defaultUrl: "",
         // Links go through window.open, which main's setWindowOpenHandler vets.
         externalLinkTarget: LINK_TARGET_BLANK,
+        // pdf.js's page tools, which its generic build leaves off: selecting,
+        // moving, copying and deleting pages in the thumbnails, and adding the
+        // pages of other files.
+        enableSplitMerge: true,
+        enableMerge: true,
       });
 
       const app = window.PDFViewerApplication;
       loadDocumentsInParts(app);
+      // pdf.js hasn't bound its events yet.
+      addFilesAsPageChanges(app);
       // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
       insertButton = addInsertButton(app);
       app.initializedPromise.then(() => {
@@ -123,8 +144,14 @@
           Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
         );
         app.eventBus.on("documentloaded", () => {
-          trackEdits(app.pdfDocument);
+          trackEdits(app);
           checkLocked(app);
+        });
+        // Pages moved, copied or deleted in the thumbnails, or that change undone.
+        app.eventBus.on("pagesedited", () => {
+          if (busy) editedWhileSaving = true;
+          updateEdited(app);
+          recachePages(app);
         });
         hideChangesIndicator(app);
       });
@@ -275,36 +302,75 @@
    * cleared when the changes are undone. pdf.js installs its own callbacks
    * before `documentloaded`, so wrap them rather than replace them.
    *
-   * saveDocument() also clears the flag, as soon as it has the bytes and
-   * before main has written them, so during a save save() decides instead.
+   * saveDocument() and extractPages() also clear the flag, as soon as they
+   * have the bytes and before main has written them, so during a save save()
+   * decides instead.
    *
-   * @param {any} pdfDocument
+   * @param {any} app
    */
-  function trackEdits(pdfDocument) {
-    const storage = pdfDocument.annotationStorage;
+  function trackEdits(app) {
+    const storage = app.pdfDocument.annotationStorage;
     const { onSetModified, onResetModified } = storage;
+    storageEdited = false;
     // A reopened document keeps the changes it was reopened with.
-    if (!reopening) edited = false;
+    if (!reopening) reopenedEdited = edited = false;
     storage.onSetModified = () => {
       onSetModified?.();
       if (busy) editedWhileSaving = true;
-      setEdited(true);
+      storageEdited = true;
+      updateEdited(app);
     };
     storage.onResetModified = () => {
       onResetModified?.();
-      if (!busy) setEdited(false);
+      if (busy) return;
+      storageEdited = false;
+      updateEdited(app);
     };
   }
 
   /**
    * Reports unsaved changes to main, which shows them in the title or on the
-   * tab, and asks about them before the tab closes.
+   * tab, and asks about them before the tab closes: form values and
+   * annotations, pages changed with pdf.js's page tools, and page changes that
+   * reopened the document.
    *
-   * @param {boolean} value
+   * @param {any} app
    */
-  function setEdited(value) {
-    edited = value;
-    window.pdflion.setEdited(value);
+  function updateEdited(app) {
+    edited = storageEdited || reopenedEdited || hasPageChanges(app);
+    window.pdflion.setEdited(edited);
+  }
+
+  /**
+   * pdf.js caches the document's pages by their place, and getPage() answers
+   * from that cache, for printing and Find among others. When a deletion is
+   * undone, the pages that return to the place they had before aren't cached
+   * there again, so getPage() answers with the page that took their place
+   * meanwhile. Setting the number of each page shown caches it at its place.
+   *
+   * @param {any} app
+   */
+  function recachePages({ pdfViewer }) {
+    for (let index = 0; index < pdfViewer.pagesCount; index++) {
+      const { pdfPage } = pdfViewer.getPageView(index);
+      if (pdfPage) pdfPage.pageNumber = index + 1;
+    }
+  }
+
+  /**
+   * Whether pages were moved, copied or deleted with pdf.js's page tools and
+   * not saved yet. pdf.js's hasStructuralChanges() stays true after the first
+   * change, even once it's undone, and after a Copy that was never pasted. So
+   * this compares the order of the pages with the document's own.
+   *
+   * @param {any} app
+   * @returns {boolean}
+   */
+  function hasPageChanges({ pdfDocument, pdfThumbnailViewer }) {
+    if (!pdfDocument || !pdfThumbnailViewer?.hasStructuralChanges()) return false;
+    /** @type {Uint32Array} each page's number in the document, in the order shown */
+    const order = pdfDocument.pagesMapper.getMapping();
+    return order.length !== pdfDocument.numPages || order.some((id, index) => id !== index + 1);
   }
 
   /**
@@ -324,9 +390,15 @@
   }
 
   /**
-   * Saves the document with its form data and annotations. Like pdf.js's own
-   * save, which downloads instead, it runs the PDF's WillSave and DidSave
-   * scripts around it.
+   * Saves the document with its form data, annotations and page changes. Like
+   * pdf.js's own save, which downloads instead, it runs the PDF's WillSave and
+   * DidSave scripts around it.
+   *
+   * Page changes made with pdf.js's page tools are written as a new file. The
+   * tab then shows that file, as it's now saved, so that the document matches
+   * the file and the page tools start afresh. Changes made while the file was
+   * being written would be lost that way, so after those the tab keeps the
+   * document as it is, edited.
    *
    * @param {any} app
    * @param {(bytes: Uint8Array) => Promise<string | null>} write
@@ -339,16 +411,32 @@
     editedWhileSaving = false;
     updateInsertButton(app);
     try {
+      const pageChanges = hasPageChanges(app);
+      let bytes, url;
       await app.pdfScriptingManager.dispatchWillSave();
       try {
-        const url = await write(await currentBytes(app));
-        if (!url) return false; // Still edited, whatever saveDocument() reported.
-        setEdited(editedWhileSaving);
-        if (url !== app.url) showDocumentUrl(app, url);
-        return true;
+        bytes = await currentBytes(app);
+        url = await write(bytes);
       } finally {
         await app.pdfScriptingManager.dispatchDidSave();
       }
+      if (!url) return false; // Still edited, whatever saveDocument() reported.
+      storageEdited = editedWhileSaving;
+      reopenedEdited = false;
+      if (pageChanges && !editedWhileSaving) {
+        try {
+          const filename = documentName(url);
+          await reopen(app, bytes, { page: app.page, url, filename, edited: false });
+        } catch (error) {
+          // The file is saved all the same.
+          console.error("Couldn't show the saved document:", error);
+          updateEdited(app);
+        }
+      } else {
+        if (url !== app.url) showDocumentUrl(app, url);
+        updateEdited(app);
+      }
+      return true;
     } finally {
       busy = false;
       updateInsertButton(app);
@@ -368,7 +456,7 @@
    */
   async function currentBytes(app) {
     const { pdfDocument, pdfThumbnailViewer } = app;
-    if (pdfThumbnailViewer?.hasStructuralChanges()) {
+    if (hasPageChanges(app)) {
       const { pageInfos, copyLevels } = pdfThumbnailViewer.getStructuralChanges();
       return pdfDocument.extractPages(await withFormValues(pdfDocument, pageInfos), copyLevels);
     }
@@ -418,7 +506,9 @@
       const [width, height] = [view[2] - view[0], view[3] - view[1]];
       // A page shown on its side, by its /Rotate, is as wide as it's tall.
       const size = rotate % 180 === 0 ? [width, height] : [height, width];
-      return await changeDocument(app, index + 1, (document) => document.insertPage(index, size));
+      return await changeDocument(app, index + 1, (bytes) =>
+        updateDocument(bytes, (document) => document.insertPage(index, size)),
+      );
     } finally {
       busy = false;
       updateInsertButton(app);
@@ -426,31 +516,107 @@
   }
 
   /**
-   * Changes the document with @cantoo/pdf-lib, as an incremental update of
-   * the bytes Save would write, then shows the result. If the library can't
-   * read the document, the user hears so and the document stays as it was.
+   * pdf.js's Add file, and files dropped on the thumbnails, add their pages
+   * through app.onSaveAndLoad(): extractPages() makes one file of the document
+   * and the added files, which then replaces the document. PDFLion's own goes
+   * the way of its other page changes instead:
+   * - form values typed since the last save come along
+   * - it doesn't run during a save or another page change
+   * - a locked document says why it can't, and a signed one asks first
+   * - the result counts as edited until it's saved
+   * - if it has no more pages than before, or pdf.js can't show it, the
+   *   document stays as it was and the user hears so
+   *
+   * pdf.js binds onSaveAndLoad() to its event as the viewer initialises, so
+   * this must run before.
+   *
+   * @param {any} app
+   */
+  function addFilesAsPageChanges(app) {
+    /** @param {{ data: { pageInfos: any[], copyLevels: Int32Array | null } }} event */
+    app.onSaveAndLoad = ({ data }) => addPages(app, data);
+  }
+
+  /**
+   * @param {any} app
+   * @param {{ pageInfos: any[], copyLevels: Int32Array | null }} changes the
+   *   document's pages, as getStructuralChanges() gives them, then those of
+   *   each added file, with the index of the page to insert them after
+   * @returns {Promise<boolean>} whether pages were added
+   */
+  async function addPages(app, { pageInfos, copyLevels }) {
+    let added = false;
+    if (!busy && app.pdfDocument) {
+      busy = true;
+      updateInsertButton(app);
+      try {
+        if (await confirmPageChange(app)) {
+          const { pdfDocument } = app;
+          const insertAfter =
+            pageInfos.find((info) => Number.isInteger(info.insertAfter))?.insertAfter ?? -1;
+          // Shows the first added page, which pdf.js also goes to once the
+          // pages have loaded.
+          added = await changeDocument(
+            app,
+            insertAfter + 2,
+            async () =>
+              pdfDocument.extractPages(await withFormValues(pdfDocument, pageInfos), copyLevels),
+            app.pdfViewer.pagesCount + 1,
+          );
+        }
+      } finally {
+        busy = false;
+        updateInsertButton(app);
+      }
+    }
+    // pdf.js waits for the new document until it's told otherwise, as its
+    // waiting bar's close button does.
+    if (!added) document.getElementById("viewsManagerStatusWaitingCloseButton")?.click();
+    return added;
+  }
+
+  /**
+   * Changes a document with @cantoo/pdf-lib, as an incremental update: the
+   * change goes after its bytes, which stay as they were.
+   *
+   * @param {Uint8Array} bytes
+   * @param {(document: any) => void} change given a PDFDocument
+   * @returns {Promise<Uint8Array>} the changed document
+   */
+  async function updateDocument(bytes, change) {
+    const { PDFDocument } = await loadPdfLib();
+    // updateMetadata: false keeps the Info dictionary as it is, rather than
+    // stamp pdf-lib as its producer.
+    const document = await PDFDocument.load(bytes, {
+      forIncrementalUpdate: true,
+      updateMetadata: false,
+    });
+    change(document);
+    return document.save();
+  }
+
+  /**
+   * Changes the document, starting from the bytes Save would write, then
+   * shows the result. If the change fails, or pdf.js can't show the result, or
+   * it has fewer than `minPages` pages, the user hears so and the document
+   * stays as it was.
    *
    * @param {any} app
    * @param {number} page the page to show afterwards
-   * @param {(document: any) => void} change given a PDFDocument
+   * @param {(bytes: Uint8Array) => Promise<Uint8Array | null>} change
+   * @param {number} [minPages]
    * @returns {Promise<boolean>} whether the document changed
    */
-  async function changeDocument(app, page, change) {
+  async function changeDocument(app, page, change, minPages = 1) {
     const wasEdited = edited;
     // A failed open() forgets them.
     const { url, _docFilename: filename, page: pageBefore } = app;
     const bytes = await currentBytes(app);
     let changed;
     try {
-      const { PDFDocument } = await loadPdfLib();
-      // updateMetadata: false keeps the Info dictionary as it is, rather than
-      // stamp pdf-lib as its producer.
-      const document = await PDFDocument.load(bytes, {
-        forIncrementalUpdate: true,
-        updateMetadata: false,
-      });
-      change(document);
-      changed = await document.save();
+      changed = await change(bytes);
+      // extractPages() answers null when it fails.
+      if (!changed) throw new Error("No changed document");
     } catch (error) {
       console.error("Couldn't change the document:", error);
       await window.pdflion.pageDialog("failed");
@@ -458,6 +624,8 @@
     }
     try {
       await reopen(app, changed, { page, url, filename });
+      const { numPages } = app.pdfDocument;
+      if (numPages < minPages) throw new Error(`The changed document has ${numPages} pages`);
       return true;
     } catch (error) {
       // Back to the bytes it had, which hold every change made so far.
@@ -517,7 +685,16 @@
       options.set("viewOnLoad", viewOnLoad);
       reopening = false;
     }
-    setEdited(isEdited);
+    reopenedEdited = isEdited;
+    updateEdited(app);
+  }
+
+  /**
+   * @param {string} url `/doc/<token>/<name>`
+   * @returns {string} the document's file name
+   */
+  function documentName(url) {
+    return decodeURIComponent(url.slice(url.lastIndexOf("/") + 1));
   }
 
   /**

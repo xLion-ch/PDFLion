@@ -12,6 +12,13 @@ const BRIDGE = fs.readFileSync(path.join(SRC, "viewer", "bridge.js"), "utf8");
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
+ * @param {any[][]} calls
+ * @param {string} name
+ * @returns {any[][]} the calls of `name`
+ */
+const named = (calls, name) => calls.filter(([other]) => other === name);
+
+/**
  * A stand-in for the PDFDataRangeTransport in pdf.js's src/display/api.js,
  * which records what the bridge hands it.
  */
@@ -117,6 +124,17 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   }
 
   const separator = Object.assign(new Element("div"), { id: "editorModeSeparator" });
+  /**
+   * The close button of the views manager's waiting bar, which ends pdf.js's
+   * wait for added files.
+   */
+  const stopWaiting = Object.assign(new Element("button"), {
+    id: "viewsManagerStatusWaitingCloseButton",
+    clicks: 0,
+    click() {
+      this.clicks++;
+    },
+  });
   const document = {
     title: "",
     listeners: /** @type {Record<string, Function>} */ ({}),
@@ -127,6 +145,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     toolbar: /** @type {Element[]} */ ([new Element("div"), separator]),
     /** @param {string} id */
     getElementById(id) {
+      if (id === stopWaiting.id) return stopWaiting;
       return toolbar ? (this.toolbar.find((element) => element.id === id) ?? null) : null;
     },
     /** @param {string} tagName */
@@ -184,12 +203,36 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   };
 
   /**
-   * @param {{ formData?: boolean, info?: object, isPureXfa?: boolean, data?: number[] }} options
+   * @typedef {object} DocumentOptions
+   * @property {boolean} [formData] whether a form value was typed
+   * @property {object} [info] what getMetadata() answers as `info`
+   * @property {boolean} [isPureXfa]
+   * @property {number[]} [data] the document's bytes
+   * @property {number} [numPages]
+   */
+
+  /**
+   * @param {DocumentOptions} options
    * @returns {any} a stand-in for pdf.js's PDFDocumentProxy
    */
-  const newDocument = ({ formData = false, info = {}, isPureXfa = false, data = [9] }) => {
+  const newDocument = ({
+    formData = false,
+    info = {},
+    isPureXfa = false,
+    data = [9],
+    numPages = 1,
+  }) => {
     const entries = formData ? [["4R", { value: "Ada" }]] : [];
     return {
+      numPages,
+      /** The order of the pages pdf.js's page tools show, once they changed it. */
+      pagesMapper: {
+        /** @type {Uint32Array | null} */
+        order: null,
+        getMapping() {
+          return this.order ?? undefined;
+        },
+      },
       annotationStorage: {
         get size() {
           return entries.length;
@@ -219,6 +262,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     _docFilename: "a.pdf",
     page: 1,
     pdfViewer: {
+      /** How many pages the viewer shows, with the page tools' changes. */
+      pagesCount: 1,
       currentScaleValue: "auto",
       pagesRotation: 0,
       /** @type {Promise<void> | null} */
@@ -267,6 +312,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     failNextOpen: false,
     /** Fails the pages of the next document opened with data, as for a broken page tree. */
     failNextPages: false,
+    /** How many pages the documents opened with data have. */
+    openedPages: 1,
     /**
      * Records the call. With data, it stands in for a reload: a new document,
      * and later its documentloaded, documentinit and metadataloaded.
@@ -274,14 +321,16 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     async open(args) {
       calls.push(["open", args]);
       if (!args?.data) return;
+      // pdf.js closes the open document first.
+      app.pdfDocument = null;
       if (app.failNextOpen) {
         app.failNextOpen = false;
         throw new Error("Invalid PDF structure.");
       }
       app.url = "";
       // pdf.js sets its own initial view, from what it remembers.
-      Object.assign(app.pdfViewer, { scrollMode: 0, spreadMode: 0 });
-      app.pdfDocument = newDocument({ data: [...args.data] });
+      Object.assign(app.pdfViewer, { scrollMode: 0, spreadMode: 0, pagesCount: app.openedPages });
+      app.pdfDocument = newDocument({ data: [...args.data], numPages: app.openedPages });
       if (app.failNextPages) {
         // pdf.js has the document, but not its pages, and sends no events.
         app.failNextPages = false;
@@ -356,13 +405,32 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     },
     /**
      * Pretends pdf.js has loaded a document.
-     * @param {{ formData?: boolean, info?: object, isPureXfa?: boolean }} [options]
+     * @param {DocumentOptions} [options]
      */
     openDocument(options = {}) {
       app.pdfDocument = newDocument(options);
+      app.pdfViewer.pagesCount = app.pdfDocument.numPages;
       eventBus.dispatch("documentloaded");
       return app.pdfDocument.annotationStorage;
     },
+    /**
+     * Pretends pages were moved, copied or deleted in pdf.js's page tools, or
+     * such a change undone.
+     *
+     * @param {number[]} order the document's page numbers, in the order shown
+     * @param {any[]} [pageInfos] what getStructuralChanges() gives for them
+     */
+    changePages(order, pageInfos = [{ document: null, includePages: order.map((n) => n - 1) }]) {
+      app.pdfDocument.pagesMapper.order = Uint32Array.from(order);
+      app.pdfThumbnailViewer = {
+        // Stays true once pages changed, as in pdf.js, until another document opens.
+        hasStructuralChanges: () => app.pdfDocument.pagesMapper.order !== null,
+        getStructuralChanges: () => ({ pageInfos, copyLevels: null }),
+      };
+      app.pdfViewer.pagesCount = order.length;
+      eventBus.dispatch("pagesedited");
+    },
+    stopWaiting,
     /** @param {string} command */
     run(command) {
       return /** @type {Function} */ (pdflion.handle)(command);
@@ -393,6 +461,8 @@ describe("bridge.js viewer options", () => {
       disablePreferences: true,
       defaultUrl: "",
       externalLinkTarget: 2,
+      enableSplitMerge: true,
+      enableMerge: true,
     });
   });
 
@@ -697,9 +767,6 @@ describe("bridge.js range loading", () => {
 });
 
 describe("bridge.js Insert Blank Page", () => {
-  /** @param {any[][]} calls */
-  const named = (calls, name) => calls.filter(([other]) => other === name);
-
   it("adds a toolbar button, enabled once a document that can change has loaded", async () => {
     const bridge = loadBridge();
     await bridge.load();
@@ -926,46 +993,299 @@ describe("bridge.js Insert Blank Page", () => {
 });
 
 describe("bridge.js document bytes", () => {
-  /** @param {Uint8Array} bytes */
-  const pageChanges = (bytes) => ({
-    hasStructuralChanges: () => true,
-    getStructuralChanges: () => ({
-      pageInfos: [
-        { document: null, includePages: [[1, 0]] },
-        { document: bytes, includePages: [[0, 1]] },
-      ],
-      copyLevels: null,
-    }),
-  });
+  /**
+   * Page 2, then page 1 of another document, as pdf.js's page tools describe them.
+   * @param {Uint8Array} other
+   */
+  const pageInfos = (other) => [
+    { document: null, includePages: [[1, 0]] },
+    { document: other, includePages: [[0, 1]] },
+  ];
 
   it("writes pdf.js's page changes", async () => {
     const bridge = loadBridge();
     await bridge.load();
-    const storage = bridge.openDocument();
+    const storage = bridge.openDocument({ numPages: 2 });
     const other = new Uint8Array([5]);
-    bridge.app.pdfThumbnailViewer = pageChanges(other);
+    bridge.changePages([2, 1], pageInfos(other));
     storage.add(["pdfjs_internal_editor_0", {}]);
     storage.onSetModified();
     await bridge.run("save");
     assert.deepEqual([...bridge.pdflion.writes[0][1]], [7]);
-    const [[, pageInfos, copyLevels]] = bridge.calls.filter(([name]) => name === "extractPages");
+    const [[, infos, copyLevels]] = named(bridge.calls, "extractPages");
     // Only viewer annotations, which pdf.js brings along itself.
-    assert.equal(pageInfos[0].document, null);
-    assert.equal(pageInfos[1].document, other);
+    assert.equal(infos[0].document, null);
+    assert.equal(infos[1].document, other);
     assert.equal(copyLevels, null);
   });
 
   it("brings typed form values along with pdf.js's page changes", async () => {
     const bridge = loadBridge();
     await bridge.load();
-    const storage = bridge.openDocument({ formData: true });
+    const storage = bridge.openDocument({ formData: true, numPages: 2 });
     const other = new Uint8Array([5]);
-    bridge.app.pdfThumbnailViewer = pageChanges(other);
+    bridge.changePages([2, 1], pageInfos(other));
     storage.onSetModified();
     await bridge.run("save");
-    const [[, pageInfos]] = bridge.calls.filter(([name]) => name === "extractPages");
+    const [[, infos]] = named(bridge.calls, "extractPages");
+    assert.deepEqual([...infos[0].document], [1, 2, 3]);
+    assert.deepEqual(infos[0].includePages, [[1, 0]]);
+    assert.equal(infos[1].document, other);
+  });
+
+  it("writes the document as it was once page changes are undone", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 2 });
+    bridge.changePages([2, 1]);
+    bridge.changePages([1, 2]);
+    assert.equal(await bridge.run("saveAs"), true);
+    assert.deepEqual([...bridge.pdflion.writes[0][1]], [9]);
+    assert.deepEqual(named(bridge.calls, "extractPages"), []);
+  });
+});
+
+describe("bridge.js page tools", () => {
+  it("count pages moved, copied or deleted as edits, until they're undone", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 3 });
+    bridge.changePages([2, 1, 3]);
+    bridge.changePages([1, 3]);
+    // pdf.js keeps an order once it has changed one, even when it's undone.
+    bridge.changePages([1, 2, 3]);
+    assert.deepEqual(bridge.pdflion.edited, [true, true, false]);
+  });
+
+  it("leave each shown page cached at its place, where getPage() finds it", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 3 });
+    /** pdf.js's cache of pages by their place, which a page's number updates. */
+    const cache = new Map();
+    class Page {
+      #number = 0;
+      get pageNumber() {
+        return this.#number;
+      }
+      set pageNumber(number) {
+        this.#number = number;
+        cache.set(number, this);
+      }
+    }
+    const [first, second, third] = [1, 2, 3].map((number) =>
+      Object.assign(new Page(), { pageNumber: number }),
+    );
+    const { pdfViewer } = bridge.app;
+
+    // Deleting page 2 moves page 3 to its place.
+    third.pageNumber = 2;
+    pdfViewer.pages = [first, third];
+    bridge.changePages([1, 3]);
+    assert.equal(cache.get(2), third);
+
+    // Undoing it moves page 3 back. Page 2 keeps its number, so pdf.js leaves
+    // page 3 cached at its place.
+    third.pageNumber = 3;
+    pdfViewer.pages = [first, second, third];
+    bridge.changePages([1, 2, 3]);
+    for (const [index, page] of [first, second, third].entries()) {
+      assert.equal(cache.get(index + 1), page, `page ${index + 1}`);
+    }
+  });
+
+  it("keep the document edited when its form changes are undone", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const storage = bridge.openDocument({ numPages: 2 });
+    bridge.changePages([2, 1]);
+    storage.onSetModified();
+    storage.onResetModified();
+    assert.deepEqual(bridge.pdflion.edited, [true, true, true]);
+  });
+
+  it("keep a document with an inserted page edited when its form changes are undone", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    await bridge.run("insertBlankPage");
+    const storage = bridge.app.pdfDocument.annotationStorage;
+    storage.onSetModified();
+    storage.onResetModified();
+    assert.deepEqual(bridge.pdflion.edited, [true, true, true]);
+  });
+});
+
+describe("bridge.js save with page changes", () => {
+  it("writes them, then shows the file as saved", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 2 });
+    bridge.changePages([2, 1]);
+    bridge.app.page = 2;
+    bridge.app.openedPages = 2;
+    assert.equal(await bridge.run("save"), true);
+    assert.deepEqual([...bridge.pdflion.writes[0][1]], [7]);
+    const [[, args]] = named(bridge.calls, "open");
+    assert.deepEqual([...args.data], [7]);
+    assert.equal(args.filename, "a.pdf");
+    assert.equal(bridge.app.initialBookmark, "page=2&zoom=auto");
+    assert.equal(bridge.app.url, "/doc/t/a.pdf");
+    assert.deepEqual(bridge.pdflion.edited, [true, false]);
+    // pdf.js's page tools start afresh.
+    assert.equal(bridge.app.pdfThumbnailViewer.hasStructuralChanges(), false);
+    // The scripts hear of the save before the document is replaced.
+    assert.deepEqual(
+      bridge.calls.map(([name]) => name).filter((name) => /Save$|^open$/.test(name)),
+      ["willSave", "didSave", "open"],
+    );
+  });
+
+  it("shows the file under its new name after Save As", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 2 });
+    bridge.changePages([2, 1]);
+    bridge.pdflion.answer = "/doc/u/Copy%20of%20a.pdf";
+    assert.equal(await bridge.run("saveAs"), true);
+    const [[, args]] = named(bridge.calls, "open");
+    assert.equal(args.filename, "Copy of a.pdf");
+    assert.equal(bridge.app.url, "/doc/u/Copy%20of%20a.pdf");
+  });
+
+  for (const [what, change] of [
+    ["pages", (/** @type {any} */ bridge) => bridge.changePages([2, 3, 1])],
+    [
+      "form values",
+      (/** @type {any} */ bridge) => bridge.app.pdfDocument.annotationStorage.onSetModified(),
+    ],
+  ]) {
+    it(`keeps the document as it is, edited, when ${what} change during the save`, async () => {
+      const bridge = loadBridge();
+      await bridge.load();
+      bridge.openDocument({ numPages: 3 });
+      bridge.changePages([2, 1, 3]);
+      bridge.pdflion.duringWrite = () => change(bridge);
+      assert.equal(await bridge.run("save"), true);
+      assert.deepEqual(named(bridge.calls, "open"), []);
+      assert.equal(bridge.pdflion.edited.at(-1), true);
+    });
+  }
+
+  it("stays saved when pdf.js can't show the saved file", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 2 });
+    bridge.changePages([2, 1]);
+    bridge.app.failNextOpen = true;
+    assert.equal(await bridge.run("save"), true);
+    assert.equal(named(bridge.calls, "console.error").length, 1);
+    assert.equal(bridge.pdflion.edited.at(-1), false);
+  });
+});
+
+describe("bridge.js Add file", () => {
+  /**
+   * What pdf.js's Add file hands onSaveAndLoad() for a file of its own: the
+   * open document, then the file, to insert after the first page.
+   */
+  const addition = () => ({
+    pageInfos: [{ document: null }, { document: new Uint8Array([5]), insertAfter: 0 }],
+    copyLevels: null,
+  });
+
+  /**
+   * Opens a two-page document, whose pages after adding a file are `openedPages`.
+   * @param {object} [options] for openDocument()
+   */
+  async function withDocument(options = {}, openedPages = 4) {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 2, ...options });
+    bridge.app.openedPages = openedPages;
+    return bridge;
+  }
+
+  it("adds the file's pages, shows the first, and counts them as edits", async () => {
+    const bridge = await withDocument();
+    const data = addition();
+    assert.equal(await bridge.app.onSaveAndLoad({ source: {}, data }), true);
+    const [[, pageInfos, copyLevels]] = named(bridge.calls, "extractPages");
+    assert.equal(pageInfos, data.pageInfos);
+    assert.equal(copyLevels, null);
+    const [[, args]] = named(bridge.calls, "open");
+    assert.deepEqual([...args.data], [7]);
+    assert.equal(args.filename, "a.pdf");
+    assert.equal(bridge.app.initialBookmark, "page=2&zoom=auto");
+    assert.equal(bridge.app.url, "/doc/t/a.pdf");
+    assert.deepEqual(bridge.pdflion.edited, [true]);
+    assert.equal(bridge.stopWaiting.clicks, 0);
+  });
+
+  it("brings typed form values along", async () => {
+    const bridge = await withDocument({ formData: true });
+    await bridge.app.onSaveAndLoad({ data: addition() });
+    const [[, pageInfos]] = named(bridge.calls, "extractPages");
     assert.deepEqual([...pageInfos[0].document], [1, 2, 3]);
-    assert.deepEqual(pageInfos[0].includePages, [[1, 0]]);
-    assert.equal(pageInfos[1].document, other);
+    assert.deepEqual([...pageInfos[1].document], [5]);
+  });
+
+  it("goes back to the document as it was, and says so, when the file adds no pages", async () => {
+    const bridge = await withDocument({}, 2);
+    assert.equal(await bridge.app.onSaveAndLoad({ data: addition() }), false);
+    assert.deepEqual(
+      named(bridge.calls, "open").map(([, args]) => [...args.data]),
+      [[7], [9]],
+    );
+    assert.deepEqual(bridge.pdflion.dialogs, [["failed", undefined]]);
+    assert.equal(bridge.pdflion.edited.at(-1), false);
+    assert.equal(bridge.stopWaiting.clicks, 1);
+  });
+
+  it("changes nothing, and says so, when pdf.js can't make the new document", async () => {
+    const bridge = await withDocument();
+    bridge.app.pdfDocument.extractPages = async () => null;
+    assert.equal(await bridge.app.onSaveAndLoad({ data: addition() }), false);
+    assert.deepEqual(named(bridge.calls, "open"), []);
+    assert.deepEqual(bridge.pdflion.dialogs, [["failed", undefined]]);
+    assert.equal(bridge.stopWaiting.clicks, 1);
+  });
+
+  for (const [description, options, answer, reason] of [
+    [
+      "refuses a document with a password",
+      { info: { EncryptFilterName: "Standard" } },
+      true,
+      "locked-encrypted",
+    ],
+    [
+      "leaves a signed document if the user says so",
+      { info: { IsSignaturesPresent: true } },
+      false,
+      "signed",
+    ],
+  ]) {
+    it(/** @type {string} */ (description), async () => {
+      const bridge = await withDocument(/** @type {object} */ (options));
+      bridge.pdflion.dialogAnswer = /** @type {boolean} */ (answer);
+      assert.equal(await bridge.app.onSaveAndLoad({ data: addition() }), false);
+      assert.deepEqual(bridge.pdflion.dialogs, [[reason, undefined]]);
+      assert.deepEqual(named(bridge.calls, "extractPages"), []);
+      assert.equal(bridge.stopWaiting.clicks, 1);
+    });
+  }
+
+  it("doesn't run during a save", async () => {
+    const bridge = await withDocument();
+    bridge.app.pdfDocument.annotationStorage.onSetModified();
+    /** @type {Promise<unknown> | undefined} */
+    let adding;
+    bridge.pdflion.duringWrite = () => {
+      adding = bridge.app.onSaveAndLoad({ data: addition() });
+    };
+    await bridge.run("save");
+    assert.equal(await adding, false);
+    assert.equal(bridge.stopWaiting.clicks, 1);
+    assert.deepEqual(named(bridge.calls, "extractPages"), []);
   });
 });

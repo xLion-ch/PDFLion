@@ -406,6 +406,13 @@
       font-weight: 400;
     }
   }
+
+  /* Menus without marks, such as the page tools' Manage menu. There
+     menu.css's mark size is a unitless 0, which makes the calc() above
+     invalid. */
+  &:not(.withMark) > button {
+    padding-inline: 12px 16px;
+  }
 }
 
 /* The find bar, with filter chips for its options. */

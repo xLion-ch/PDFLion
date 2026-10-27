@@ -32,21 +32,68 @@ const HELVETICA =
   "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
 
 /**
- * Writes a one-page form with a single empty text field named "name", which
- * pdf.js shows as an `<input>`.
+ * @param {string[]} labels the text of each page
+ * @param {number} first the number the first page's object gets
+ * @param {number} font the number of the font's object
+ * @returns {string[]} each page's object, followed by its content stream's
+ */
+function labelledPages(labels, first, font) {
+  return labels.flatMap((label, index) => [
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F ${font} 0 R >> >> /Contents ${first + 2 * index + 1} 0 R >>`,
+    stream(`BT /F 36 Tf 72 700 Td (${label}) Tj ET`),
+  ]);
+}
+
+/**
+ * @param {number} count
+ * @param {number} first the number the first page's object gets
+ * @returns {string[]} references to `count` pages from labelledPages()
+ */
+function kids(count, first) {
+  return Array.from({ length: count }, (_, index) => `${first + 2 * index} 0 R`);
+}
+
+/**
+ * Writes a document whose pages show "Page 1", "Page 2" and so on, or another
+ * label, so that tests can tell them apart by their text.
  *
  * @param {string} file
+ * @param {number} pages
+ * @param {string} [label]
  */
-export async function writeForm(file) {
+export async function writeLabelled(file, pages, label = "Page") {
+  const labels = Array.from({ length: pages }, (_, index) => `${label} ${index + 1}`);
+  await fs.writeFile(
+    file,
+    pdf([
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      `<< /Type /Pages /Count ${pages} /Kids [${kids(pages, 4).join(" ")}] >>`,
+      HELVETICA,
+      ...labelledPages(labels, 4, 3),
+    ]),
+  );
+}
+
+/**
+ * Writes a form with a single empty text field named "name", which pdf.js
+ * shows as an `<input>`, on its first page. Further pages show "Page 2",
+ * "Page 3" and so on.
+ *
+ * @param {string} file
+ * @param {{ pages?: number }} [options]
+ */
+export async function writeForm(file, { pages = 1 } = {}) {
+  const more = Array.from({ length: pages - 1 }, (_, index) => `Page ${index + 2}`);
   await fs.writeFile(
     file,
     pdf([
       "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] /DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv 5 0 R >> >> >> >>",
-      "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+      `<< /Type /Pages /Count ${pages} /Kids [${["3 0 R", ...kids(pages - 1, 7)].join(" ")}] >>`,
       "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F 5 0 R >> >> /Contents 6 0 R /Annots [4 0 R] >>",
       "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [72 670 360 700] /F 4 /P 3 0 R /DA (/Helv 14 Tf 0 g) /MK << /BC [0 0 0] >> >>",
       HELVETICA,
       stream("BT /F 14 Tf 72 710 Td (Name:) Tj ET"),
+      ...labelledPages(more, 7, 5),
     ]),
   );
 }

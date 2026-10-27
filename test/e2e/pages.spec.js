@@ -14,7 +14,7 @@ import {
   test,
   tracemonkey,
 } from "./pdflion.js";
-import { writeBrokenForm, writeForm, writeSigned } from "./pdfs.js";
+import { writeBrokenForm, writeForm, writeLabelled, writeSigned } from "./pdfs.js";
 
 /** @typedef {import("./pdflion.js").ElectronApplication} ElectronApplication */
 /** @typedef {import("./pdflion.js").Page} Page */
@@ -38,6 +38,60 @@ const pageView = (page, number) =>
  * @returns {Promise<string[]>} the messages answerMessages() has answered
  */
 const messages = (app) => app.evaluate(() => /** @type {any} */ (globalThis).messages ?? []);
+
+/**
+ * @param {Page} page
+ * @returns {Promise<string[]>} the text of each page, in the order the viewer
+ *   shows them, with the page tools' changes
+ */
+const pageTexts = (page) =>
+  page.evaluate(async () => {
+    const { pdfDocument, pdfViewer } = PDFViewerApplication;
+    const texts = [];
+    for (let number = 1; number <= pdfViewer.pagesCount; number++) {
+      const { items } = await (await pdfDocument.getPage(number)).getTextContent();
+      texts.push(items.map((item) => /** @type {any} */ (item).str ?? "").join(""));
+    }
+    return texts;
+  });
+
+/**
+ * @param {Page} page
+ * @param {number} number
+ * @returns {import("@playwright/test").Locator} the page's thumbnail
+ */
+const thumbnail = (page, number) =>
+  page.locator(`#thumbnailsView > .thumbnail[page-number="${number}"]`);
+
+/**
+ * Opens the sidebar on the pages' thumbnails, where pdf.js's page tools are.
+ *
+ * @param {Page} page
+ */
+async function showThumbnails(page) {
+  await page.locator("#viewsManagerToggleButton").click();
+  await expect(page.locator("#thumbnailsView")).toBeVisible();
+  const count = await page.evaluate(() => PDFViewerApplication.pagesCount);
+  await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(count);
+}
+
+/**
+ * Drags a page's thumbnail with the mouse, and drops it after another's.
+ *
+ * @param {Page} page
+ * @param {number} from
+ * @param {number} after
+ */
+async function dragThumbnail(page, from, after) {
+  const start = await thumbnail(page, from).locator(".thumbnailImageContainer").boundingBox();
+  const end = await thumbnail(page, after).locator(".thumbnailImageContainer").boundingBox();
+  if (!start || !end) throw new Error("No thumbnail to drag");
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  // pdf.js drops it after the thumbnail whose middle the dragged one's is below.
+  await page.mouse.move(end.x + end.width / 2, end.y + end.height * 0.75, { steps: 20 });
+  await page.mouse.up();
+}
 
 test("Insert Blank Page adds a page after the current one, and Save appends it", async ({
   pdflion,
@@ -173,4 +227,134 @@ test("a new document with an inserted page asks about saving when it closes", as
   expect(await messages(app)).toEqual([
     "Do you want to save the changes made to the document “Untitled.pdf”?",
   ]);
+});
+
+test("pages moved in the thumbnails are saved in their new order", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  let { app, page } = await pdflion([file]);
+  await showThumbnails(page);
+
+  await dragThumbnail(page, 1, 3);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  // The tab shows the file as it's now saved.
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+  expect(await pagesCount(page)).toBe(3);
+  await expect(page).toHaveTitle("pages.pdf");
+  await app.close();
+
+  ({ app, page } = await pdflion([file]));
+  expect(await pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+});
+
+test("a page deleted in the thumbnails comes back with Undo", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const { app, page } = await pdflion([file]);
+  await showThumbnails(page);
+
+  await thumbnail(page, 2).locator("input").check();
+  await page.locator("#viewsManagerStatusActionButton").click();
+  await page.locator("#viewsManagerStatusActionDelete").click();
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 3"]);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+
+  await page.locator("#viewsManagerStatusUndoButton").click();
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "Page 3"]);
+  // Undone, the document is as it was.
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+});
+
+test("Add file adds a file's pages after the current page", async ({ pdflion }) => {
+  const dir = await tempDir();
+  const file = path.join(dir, "pages.pdf");
+  await writeLabelled(file, 3);
+  const more = path.join(dir, "more.pdf");
+  await writeLabelled(more, 2, "More");
+  let { app, page } = await pdflion([file]);
+  await showThumbnails(page);
+  await page.evaluate(() => {
+    PDFViewerApplication.page = 2;
+  });
+
+  await page.locator("#viewsManagerAddFilePicker").setInputFiles(more);
+  const added = ["Page 1", "Page 2", "More 1", "More 2", "Page 3"];
+  await expect.poll(() => pageTexts(page)).toEqual(added);
+  expect(await pagesCount(page)).toBe(5);
+  await expect.poll(() => currentPage(page)).toBe(3);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+  await expect(page).toHaveTitle("pages.pdf");
+  // pdf.js selects the pages it added.
+  await expect(page.locator("#thumbnailsView input:checked")).toHaveCount(2);
+
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  await app.close();
+
+  ({ app, page } = await pdflion([file]));
+  expect(await pageTexts(page)).toEqual(added);
+});
+
+test("a PDF dropped on the thumbnails adds its pages there", async ({ pdflion }) => {
+  const dir = await tempDir();
+  const file = path.join(dir, "pages.pdf");
+  await writeLabelled(file, 2);
+  const more = path.join(dir, "more.pdf");
+  await writeLabelled(more, 1, "More");
+  const { app, page } = await pdflion([file]);
+  await showThumbnails(page);
+
+  const bytes = [...(await fs.readFile(more))];
+  /** Drops more.pdf, as a file without a path, below the middle of `target`. */
+  const drop = (/** @type {string} */ target) =>
+    page.evaluate(
+      async ({ target, bytes }) => {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(
+          new File([new Uint8Array(bytes)], "more.pdf", { type: "application/pdf" }),
+        );
+        const element = /** @type {Element} */ (document.querySelector(target));
+        const { left, top, width, height } = element.getBoundingClientRect();
+        const at = { clientX: left + width / 2, clientY: top + height * 0.75 };
+        for (const type of ["dragenter", "dragover", "drop"]) {
+          element.dispatchEvent(
+            new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true, ...at }),
+          );
+        }
+      },
+      { target, bytes },
+    );
+
+  // On the document, PDFLion opens dropped PDFs as tabs, which needs their paths.
+  await drop("#viewerContainer");
+  await drop('#thumbnailsView > .thumbnail[page-number="1"] .thumbnailImageContainer');
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "More 1", "Page 2"]);
+  await expect(page).toHaveTitle("pages.pdf");
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+});
+
+test("a typed form value survives moving pages and saving", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "form.pdf");
+  await writeForm(file, { pages: 2 });
+  let { app, page } = await pdflion([file]);
+  await page.locator(".annotationLayer input").fill("Ada Lovelace");
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+  await showThumbnails(page);
+
+  await dragThumbnail(page, 1, 2);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Name:"]);
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  await app.close();
+
+  ({ app, page } = await pdflion([file]));
+  expect(await pageTexts(page)).toEqual(["Page 2", "Name:"]);
+  await page.evaluate(() => {
+    PDFViewerApplication.page = 2;
+  });
+  await expect(page.locator(".annotationLayer input")).toHaveValue("Ada Lovelace");
 });
