@@ -9,6 +9,7 @@ A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://githu
 
 - Opens PDFs from Finder, Explorer, Files and Nemo, the Open dialog, or by dropping them on a window, as tabs of the front window.
 - Tabs can be dragged into another order, onto another window, or out of every window into a window of their own. The tab bar shows once a window has two tabs.
+- File > New opens an untitled document with one blank page, US Letter or A4, whichever your region uses. The first save asks where to put it.
 - Saves form data and annotations into the file in place, or to a new file with Save As. Unsaved changes show in the title, or on the tab when a window has several, and PDFLion asks about them before closing or quitting.
 - Shows the first page of a large PDF before the rest has loaded.
 - Zoom, rotation, search, sidebar, Presentation Mode and printing, all from the menu and the platform's usual shortcuts.
@@ -40,6 +41,7 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
+| New | ⌘N | Ctrl+N | Ctrl+N |
 | Open… | ⌘O | Ctrl+O | Ctrl+O |
 | Save / Save As… | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S | Ctrl+S / Ctrl+Shift+S |
 | Print… | ⌘P | Ctrl+P | Ctrl+P |
@@ -164,6 +166,7 @@ On every platform, and on Linux both on Wayland and on X11:
 - Closing a window with several edited tabs asks about each in turn, showing each first, and Cancel keeps the window open.
 - Presentation Mode in a window with several tabs fills the screen, without the tab bar, and leaving full screen ends it.
 - The tab bar follows the system's light or dark appearance, and the system's high contrast mode where there is one.
+- File > New gives a US Letter page with the system's region set to the United States or Canada, and an A4 page with it set to Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Editing the new document's page, for example with a drawing, and closing it asks about saving, and Save there asks where to save it.
 
 ## License
 
@@ -177,6 +180,7 @@ PDFLion is built on:
 - [Electron](https://www.electronjs.org) (MIT)
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, the viewer's icons (Apache-2.0)
 - [Material Design 3](https://m3.material.io) by Google, the design guidelines the viewer follows
+- [Unicode CLDR](https://cldr.unicode.org) by Unicode, whose paper size data decides between US Letter and A4 for new documents (Unicode-3.0)
 
 pdf.js includes:
 

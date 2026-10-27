@@ -9,7 +9,8 @@
  */
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { BrowserWindow, WebContentsView, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, shell } from "electron";
+import { blankPdf, paperSize } from "./blank.js";
 import * as documents from "./documents.js";
 import { preloadPath } from "./paths.js";
 import { addRecentDocument } from "./recent.js";
@@ -112,6 +113,20 @@ export function openTab(win, token) {
   webContents.loadURL(viewerUrl(token, documentName(tab)));
   changed();
   return tab;
+}
+
+/**
+ * Opens a new untitled document with one blank page in a new tab of `win`,
+ * and selects it. It's called `Untitled.pdf`, or `Untitled 2.pdf` and so on,
+ * with the lowest number no open tab has. Its page is US Letter or A4,
+ * whichever the system's region uses. It stays in memory until it's saved.
+ *
+ * @param {BrowserWindow} win
+ * @returns {Tab}
+ */
+export function newDocument(win) {
+  const bytes = blankPdf(paperSize(app.getLocaleCountryCode()));
+  return openTab(win, documents.registerUntitled(untitledName(), bytes));
 }
 
 /**
@@ -268,7 +283,8 @@ export function documentToken(tab) {
 
 /**
  * @param {Tab} tab
- * @returns {string | undefined} the path of the file the tab shows
+ * @returns {string | undefined} the path of the file the tab shows, or
+ *   undefined for an untitled document
  */
 export function documentFile(tab) {
   return documents.resolve(tab.token);
@@ -276,10 +292,21 @@ export function documentFile(tab) {
 
 /**
  * @param {Tab} tab
- * @returns {string} the name the tab and the save prompt show
+ * @returns {boolean} whether the tab shows a document from File > New that
+ *   hasn't been saved yet
+ */
+export function isUntitled(tab) {
+  return documents.untitled(tab.token) !== undefined;
+}
+
+/**
+ * @param {Tab} tab
+ * @returns {string} the name the tab, the title and the save prompt show: the
+ *   file's, or the untitled document's
  */
 export function documentName(tab) {
-  return path.basename(documentFile(tab) ?? "");
+  const file = documentFile(tab);
+  return file ? path.basename(file) : (documents.untitled(tab.token)?.name ?? "");
 }
 
 /**
@@ -329,6 +356,15 @@ export function isEdited(tab) {
  */
 export function onTabsChange(listener) {
   listeners.add(listener);
+}
+
+/** @returns {string} `Untitled.pdf`, or `Untitled N.pdf` with the lowest N no open tab has */
+function untitledName() {
+  const names = new Set([...tabs.values()].map(documentName));
+  for (let number = 1; ; number++) {
+    const name = number === 1 ? "Untitled.pdf" : `Untitled ${number}.pdf`;
+    if (!names.has(name)) return name;
+  }
 }
 
 /**

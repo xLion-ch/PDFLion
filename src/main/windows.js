@@ -89,6 +89,13 @@ export function openDocument(file) {
   return openDocuments([file]);
 }
 
+/** File > New: an untitled document as a tab of the frontmost window, or of a new one. */
+export function newDocument() {
+  const win = frontmostWindow() ?? createWindow();
+  tabs.newDocument(win);
+  showWindow(win);
+}
+
 /**
  * @param {BrowserWindow | null | undefined} win
  * @returns {boolean} whether `win` is a window showing documents

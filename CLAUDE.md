@@ -41,11 +41,12 @@ src/main/        main process: one module per concern
   protocol.js    pdflion:// scheme handler
   routes.js      pdflion:// URL layout: viewer URLs, /doc/ tokens, mount paths. Electron-free so unit tests can import it
   ranges.js      Range headers for /doc/ (Electron-free, unit tested)
-  documents.js   token registry for opened files, atomic writes (Electron-free, unit tested)
+  documents.js   token registry for opened files and untitled documents, atomic writes (Electron-free, unit tested)
+  blank.js       the blank PDF File > New opens, and its paper size by region (Electron-free, unit tested)
   saving.js      Save and Save As: dialogs and error alerts
   unsaved.js     save prompts when an edited tab or window closes, the app quits, a Windows session ends, or Linux shuts down
   windows.js     document windows: where they open, which is in front, opening documents as tabs, the Open panel, moving tabs to new windows
-  tabs.js        one tab per document: its WebContentsView, edited state and navigation guards, the window's layout and title, the strip's state
+  tabs.js        one tab per document, File > New's untitled ones too: its WebContentsView, edited state and navigation guards, the window's layout and title, the strip's state
   tablist.js     each window's tabs in order and its active tab (Electron-free, unit tested)
   strip.js       the tab strip's messages (sender and payload checks), its context menu, dragging tabs between windows
   placement.js   where a new window opens: the last window's place, on screen, cascaded (Electron-free, unit tested)
@@ -115,7 +116,7 @@ Everything a window loads comes from the custom privileged scheme `pdflion://app
 | `/viewer/…` | the pdf.js generic build. For `web/viewer.html`, the handler injects `overrides.css` and `bridge.js` before `</head>` and adds a CSP header |
 | `/pdflion/…` | `src/viewer/` |
 | `/tabs/…` | `src/tabs/`. `tabs.html` gets a CSP header of its own: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'` |
-| `/doc/<token>/<name>.pdf` | a file the user opened, whole or as byte ranges. The main process mints tokens, so the renderer can only read files the user chose |
+| `/doc/<token>/<name>.pdf` | a file the user opened, or an untitled document from File > New, whole or as byte ranges. The main process mints tokens, so the renderer can only read files the user chose and documents PDFLion made |
 
 A window is a `BrowserWindow` whose own page is the tab strip, `pdflion://app/tabs/tabs.html`. Each tab is a `WebContentsView` that loads `pdflion://app/viewer/web/viewer.html?file=/doc/<token>/<name>.pdf`. It sits below the strip, or covers the whole window while the window has one tab or the page is full screen, which hides the strip. Moving a tab to another window moves its view, so the page and its unsaved changes come along without a reload. Main keys documents, edited state and commands by tab, not by window.
 - The document must be same-origin, because the generic viewer rejects a `file=` from any other origin.
@@ -123,6 +124,7 @@ A window is a `BrowserWindow` whose own page is the tab strip, `pdflion://app/ta
 - `bridge.js` is a classic script. It runs before the viewer's module scripts, so its `webviewerloaded` listener is in place before the viewer initialises.
 - pdf.js makes range requests only for http(s) URLs, so `bridge.js` opens `/doc/` URLs through a `PDFDataRangeTransport`. It streams the file and fetches the parts pdf.js needs sooner as byte ranges, with `If-Match` so that a changed file gets 412.
 - The handler resolves every path against its root and returns 404 for anything that escapes it.
+- An untitled document (`blank.js`, `documents.registerUntitled`) lives in main's memory until its first save, and `/doc/` serves it from there with a fixed `ETag`. Its tab is named `Untitled.pdf`, `Untitled 2.pdf` and so on. Save on it always means Save As, edited or not: `runCommand()` sends `saveAs` for `save`, which also covers the Save button of the save prompts. Save As then turns its token into a file token (`documents.update`).
 
 ## Menu commands
 
@@ -172,7 +174,7 @@ Reviewed in October 2026, for Electron 45, against the [checklist](https://www.e
 ## Tests
 
 - `npm test` runs `node --test "test/unit/**/*.test.js"`. The glob is quoted so Node expands it: since Node 21, `node --test` treats a directory argument as a file.
-- Modules that unit tests import stay free of Electron: `arguments.js`, `routes.js`, `ranges.js`, `documents.js`, `placement.js`, `tablist.js` and `credits.js`.
+- Modules that unit tests import stay free of Electron: `arguments.js`, `routes.js`, `ranges.js`, `documents.js`, `blank.js`, `placement.js`, `tablist.js` and `credits.js`.
 - `bridge.test.js` runs `bridge.js` itself in `node:vm`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge starts using something new from the page, add it to the stand-ins. The test also reads `menu.js` for `commandItem("label", "command", …)` calls, to check that the bridge knows every command.
 - `npm run test:e2e` drives the dev app with Playwright. Each launch gets its own `--user-data-dir`. `test/e2e/pdfs.js` writes the test PDFs, so no binary fixtures are committed. The suite is the safety net for pdf.js updates, so it must cover every bridge command. `windows-linux.spec.js` runs only on Windows and Linux.
 - Playwright lists each tab's viewer and each window's strip as pages, and `app.firstWindow()` is a strip. The helpers in `test/e2e/pdflion.js` find a document's page by its URL (`documentPage`), a page's strip by its window (`stripOf`, since every strip has the same URL), and count windows in main. `app.browserWindow(page)` works for a tab's page and gives its window. A tab that isn't shown doesn't render, so tests open tabs one at a time and wait for each.
@@ -187,6 +189,7 @@ These were settled on purpose. Change them only on purpose.
 - One build per Mac architecture, each about half the size of a universal build. The alternative is a single `universal` build, so nobody can download the wrong one.
 - Windows x64 only. Windows on Arm runs it emulated. Adding `arm64` would run it natively there.
 - Linux gets a `.deb` for x64, for Ubuntu 22.04 and Linux Mint 21 and later, and nothing else. AppImage would lose the sandbox on Ubuntu 24.04, and Flatpak and Snap bring their own confinement, which Electron's sandbox would have to fit into, and their own stores.
+- File > New makes an untitled document in memory, with one blank page: US Letter in the regions CLDR lists for it, from `app.getLocaleCountryCode()`, and A4 everywhere else, including where the region is unknown. The first save asks where to put it, suggesting Documents. It counts as edited only once it changes, so closing it untouched asks nothing, as in TextEdit.
 - Launching without a file shows the Open panel, like Preview. On Windows the app then quits if the panel is cancelled, because a Windows app without windows has nothing to show. The alternative is an empty viewer window.
 - No code signing, no notarization, no CI and no auto-updates. Releases are built by hand, as the README describes. On macOS, auto-updates would need a Developer ID signature anyway: Electron's updater accepts only an update signed like the running app, and an ad-hoc signature differs with every build.
 - The viewer follows Material Design 3, as CSS on top of pdf.js's own UI rather than a UI library. The colour scheme is Material's monochrome one: near-white in light mode, near-black in dark mode. Text uses the system font, not Roboto. Colours apply only outside forced-colors mode, which keeps pdf.js's high contrast styles.

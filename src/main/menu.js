@@ -28,6 +28,7 @@ import {
   isDocumentWindow,
   mergeAllWindows,
   moveTabToNewWindow,
+  newDocument,
   openDocument,
   showOpenPanel,
 } from "./windows.js";
@@ -112,6 +113,14 @@ function template() {
     {
       label: "&File",
       submenu: [
+        // pdf.js binds a plain N (next page), but not ⌘N or Ctrl+N. On macOS
+        // it works without a window, like Open.
+        {
+          id: "newDocument",
+          label: "&New",
+          accelerator: "CmdOrCtrl+N",
+          click: () => newDocument(),
+        },
         { label: "&Open…", accelerator: "CmdOrCtrl+O", click: () => showOpenPanel() },
         // The role is macOS only.
         isMac

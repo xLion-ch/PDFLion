@@ -5,8 +5,10 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import {
   register,
+  registerUntitled,
   resolve,
   unregister,
+  untitled,
   update,
   writeFileAtomic,
 } from "../../src/main/documents.js";
@@ -43,7 +45,40 @@ describe("documents", () => {
   it("knows no other tokens", () => {
     for (const token of ["", "nope", "__proto__", "constructor", "toString"]) {
       assert.equal(resolve(token), undefined);
+      assert.equal(untitled(token), undefined);
     }
+  });
+});
+
+describe("untitled documents", () => {
+  const bytes = new Uint8Array([37, 80, 68, 70]);
+
+  it("keeps an untitled document's name and bytes under a token of its own", () => {
+    const token = registerUntitled("Untitled.pdf", bytes);
+    assert.match(token, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(untitled(token), { name: "Untitled.pdf", bytes });
+    assert.equal(resolve(token), undefined);
+    assert.notEqual(registerUntitled("Untitled.pdf", bytes), token);
+  });
+
+  it("turns into a file's token after Save As", () => {
+    const token = registerUntitled("Untitled 2.pdf", bytes);
+    update(token, "/Users/me/saved.pdf");
+    assert.equal(resolve(token), "/Users/me/saved.pdf");
+    assert.equal(untitled(token), undefined);
+  });
+
+  it("forgets an unregistered one", () => {
+    const token = registerUntitled("Untitled 3.pdf", bytes);
+    unregister(token);
+    assert.equal(untitled(token), undefined);
+    update(token, "/Users/me/f.pdf");
+    assert.equal(resolve(token), undefined);
+  });
+
+  it("keeps files and untitled documents apart", () => {
+    const file = register("/Users/me/g.pdf");
+    assert.equal(untitled(file), undefined);
   });
 });
 

@@ -2,8 +2,8 @@
  * The `pdflion://` scheme. Windows load everything from `pdflion://app/`: the
  * pdf.js generic viewer at `/viewer/`, `src/viewer/` at `/pdflion/`, the tab
  * strip at `/tabs/`, and opened documents at `/doc/<token>/<name>`, whole or
- * in byte ranges. One origin for all of it keeps the viewer's same-origin
- * `file=` check happy.
+ * in byte ranges, from their files or, for untitled documents, from memory.
+ * One origin for all of it keeps the viewer's same-origin `file=` check happy.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +17,9 @@ import { SCHEME, docToken, resolveUrl } from "./routes.js";
 
 /** Read size for documents. Larger than Node's 64 KiB, for fewer, bigger chunks to the viewer. */
 const DOCUMENT_CHUNK_SIZE = 1024 * 1024;
+
+/** An untitled document's bytes never change until it's saved, as a file. */
+const UNTITLED_ETAG = '"untitled"';
 
 const mounts = { viewer: viewerRoot, pdflion: pdflionRoot, tabs: tabsRoot };
 const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
@@ -89,7 +92,9 @@ async function serve(request) {
   const token = docToken(request.url);
   if (token) {
     const file = documents.resolve(token);
-    return file ? serveDocument(request, file) : notFound();
+    if (file) return serveDocument(request, file);
+    const untitled = documents.untitled(token);
+    return untitled ? serveBytes(request, untitled.bytes) : notFound();
   }
 
   const file = resolveUrl(request.url, mounts);
@@ -116,9 +121,8 @@ async function serveViewerHtml() {
 }
 
 /**
- * Serves an opened document, whole or a byte range of it. The `ETag` changes
- * when the file is replaced or written, and a request whose `If-Match` names
- * an older one gets 412, so that bridge.js never mixes parts of two versions.
+ * Serves an opened document from its file. The `ETag` changes when the file
+ * is replaced or written.
  *
  * @param {Request} request
  * @param {string} file absolute path
@@ -132,42 +136,75 @@ async function serveDocument(request, file) {
     return notFound(); // moved, deleted or no longer readable
   }
 
-  /** @type {ReadableStream | null} */
-  let body = null;
+  let streaming = false;
   try {
     const stats = await handle.stat();
     if (!stats.isFile()) return notFound();
-    const headers = new Headers({
-      // Whatever the extension, it was opened as a PDF.
-      "Content-Type": "application/pdf",
-      "Accept-Ranges": "bytes",
-      ETag: `"${stats.ino}-${stats.size}-${stats.mtimeMs}"`,
-    });
-
-    // bridge.js sends exactly the ETag it got.
-    const ifMatch = request.headers.get("If-Match");
-    if (ifMatch !== null && ifMatch !== headers.get("ETag")) {
-      return new Response(null, { status: 412, headers });
-    }
-
-    const range = answerRange(request.headers.get("Range"), stats.size);
-    if (range.status === 416) {
-      headers.set("Content-Range", `bytes */${stats.size}`);
-      return new Response(null, { status: 416, headers });
-    }
-
-    const { start, end } = range.status === 206 ? range : { start: 0, end: stats.size - 1 };
-    headers.set("Content-Length", String(end - start + 1));
-    if (range.status === 206) headers.set("Content-Range", `bytes ${start}-${end}/${stats.size}`);
-    if (stats.size > 0) {
-      // Closes the file once read, or once the viewer cancels the request.
-      const stream = handle.createReadStream({ start, end, highWaterMark: DOCUMENT_CHUNK_SIZE });
-      body = /** @type {ReadableStream} */ (Readable.toWeb(stream));
-    }
-    return new Response(body, { status: range.status, headers });
+    return answerDocument(
+      request,
+      stats.size,
+      `"${stats.ino}-${stats.size}-${stats.mtimeMs}"`,
+      (start, end) => {
+        // Closes the file once read, or once the viewer cancels the request.
+        const stream = handle.createReadStream({ start, end, highWaterMark: DOCUMENT_CHUNK_SIZE });
+        streaming = true;
+        return /** @type {ReadableStream} */ (Readable.toWeb(stream));
+      },
+    );
   } finally {
-    if (!body) await handle.close();
+    if (!streaming) await handle.close();
   }
+}
+
+/**
+ * Serves an untitled document from memory.
+ *
+ * @param {Request} request
+ * @param {Uint8Array} bytes
+ * @returns {Response}
+ */
+function serveBytes(request, bytes) {
+  return answerDocument(request, bytes.length, UNTITLED_ETAG, (start, end) =>
+    bytes.slice(start, end + 1),
+  );
+}
+
+/**
+ * The response for a document, whole or a byte range of it. A request whose
+ * `If-Match` names another `ETag` than the document's gets 412, so that
+ * bridge.js never mixes parts of two versions.
+ *
+ * @param {Request} request
+ * @param {number} size the document's length in bytes
+ * @param {string} etag
+ * @param {(start: number, end: number) => BodyInit} body bytes `start` to
+ *   `end`, inclusive; called only if there are any to send
+ * @returns {Response}
+ */
+function answerDocument(request, size, etag, body) {
+  const headers = new Headers({
+    // Whatever the extension, it was opened as a PDF.
+    "Content-Type": "application/pdf",
+    "Accept-Ranges": "bytes",
+    ETag: etag,
+  });
+
+  // bridge.js sends exactly the ETag it got.
+  const ifMatch = request.headers.get("If-Match");
+  if (ifMatch !== null && ifMatch !== etag) {
+    return new Response(null, { status: 412, headers });
+  }
+
+  const range = answerRange(request.headers.get("Range"), size);
+  if (range.status === 416) {
+    headers.set("Content-Range", `bytes */${size}`);
+    return new Response(null, { status: 416, headers });
+  }
+
+  const { start, end } = range.status === 206 ? range : { start: 0, end: size - 1 };
+  headers.set("Content-Length", String(end - start + 1));
+  if (range.status === 206) headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
+  return new Response(size > 0 ? body(start, end) : null, { status: range.status, headers });
 }
 
 /**

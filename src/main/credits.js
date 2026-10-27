@@ -32,6 +32,13 @@ export const CREDITS = [
         url: "https://github.com/google/material-design-icons",
       },
       { name: "Material Design 3", by: "Google", url: "https://m3.material.io" },
+      // Its paper size data: which regions get Letter for File > New (blank.js).
+      {
+        name: "Unicode CLDR",
+        by: "Unicode",
+        license: "Unicode-3.0",
+        url: "https://cldr.unicode.org",
+      },
     ],
   },
   {

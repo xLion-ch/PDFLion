@@ -1,10 +1,11 @@
 /**
  * Save and Save As. bridge.js has pdf.js produce the document's bytes, with
- * form data and annotations, and main writes them.
+ * form data and annotations, and main writes them. An untitled document has
+ * no file yet, so saving it always asks where to put it.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { dialog } from "electron";
+import { app, dialog } from "electron";
 import * as documents from "./documents.js";
 import { docPath } from "./routes.js";
 import * as tabs from "./tabs.js";
@@ -31,6 +32,7 @@ const SAVE_ERRORS = {
  *   wasn't saved
  */
 export async function saveDocument(tab, bytes) {
+  if (tabs.isUntitled(tab)) return saveDocumentAs(tab, bytes);
   const win = tabs.windowOf(tab);
   const token = tabs.documentToken(tab);
   const file = documents.resolve(token);
@@ -47,7 +49,9 @@ export async function saveDocument(tab, bytes) {
 
 /**
  * Asks where to save a tab's document, writes it there, and makes the tab
- * show the new file. The dialogs attach to the tab's window.
+ * show the new file. The dialogs attach to the tab's window. The dialog
+ * suggests the document's file, or for an untitled document its name in
+ * Documents.
  *
  * @param {tabs.Tab} tab
  * @param {Uint8Array} bytes
@@ -58,10 +62,10 @@ export async function saveDocumentAs(tab, bytes) {
   const win = tabs.windowOf(tab);
   const token = tabs.documentToken(tab);
   const current = documents.resolve(token);
-  if (!win || !current) return null;
+  if (!win || (!current && !tabs.isUntitled(tab))) return null;
 
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: current,
+    defaultPath: current ?? path.join(app.getPath("documents"), tabs.documentName(tab)),
     filters: [{ name: "PDF Document", extensions: ["pdf"] }],
     properties: ["createDirectory"],
   });

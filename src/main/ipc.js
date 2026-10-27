@@ -80,7 +80,10 @@ export function handleIpc() {
 export async function runCommand(tab, command) {
   const { webContents } = tab;
   if (webContents.isDestroyed()) return null;
-  if (COMMANDS_NEEDING_ACTIVATION.has(command)) {
+  // An untitled document has no file to save to, so Save means Save As, even
+  // before it changes. Unchanged, bridge.js would answer that it's saved.
+  const sent = command === "save" && tabs.isUntitled(tab) ? "saveAs" : command;
+  if (COMMANDS_NEEDING_ACTIVATION.has(sent)) {
     // Runs nothing, but as a user gesture, which gives the page activation.
     await webContents.executeJavaScript("void 0", true).catch(() => {});
   }
@@ -95,7 +98,7 @@ export async function runCommand(tab, command) {
     };
     pendingCommands.set(id, { webContents, settle });
     webContents.once("destroyed", gone).once("render-process-gone", gone);
-    webContents.send("pdflion:command", id, command);
+    webContents.send("pdflion:command", id, sent);
   });
 }
 
