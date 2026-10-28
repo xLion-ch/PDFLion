@@ -1,7 +1,7 @@
 /**
  * What PDFLion remembers between launches, in `userData/state.json`: where the
- * last document window was and, on Windows and Linux, the recently opened
- * documents.
+ * last document window was, the tool settings (toolsettings.js) and, on
+ * Windows and Linux, the recently opened documents.
  * The file is read once. Changes are written a moment later, batched, and
  * before the app quits.
  */
@@ -52,8 +52,8 @@ function load() {
 
 /**
  * Writes the state synchronously, since `will-quit` doesn't wait. It's a few
- * hundred bytes. The temporary file and rename keep a crash from leaving half
- * a file.
+ * hundred bytes, and some tens of kilobytes with hundreds of favourites. The
+ * temporary file and rename keep a crash from leaving half a file.
  */
 function save() {
   clearTimeout(saveTimer);

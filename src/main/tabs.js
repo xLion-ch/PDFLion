@@ -187,6 +187,11 @@ export function closeTab(tab) {
   changed();
 }
 
+/** @returns {Tab[]} every open tab, in every window */
+export function allTabs() {
+  return [...tabs.values()];
+}
+
 /**
  * @param {Electron.WebContents} webContents
  * @returns {Tab | undefined} the tab whose page `webContents` shows

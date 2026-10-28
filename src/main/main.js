@@ -12,6 +12,7 @@ import { installMenu } from "./menu.js";
 import { handlePermissions } from "./permissions.js";
 import { handleProtocol, registerScheme } from "./protocol.js";
 import { handleStrip } from "./strip.js";
+import { handleToolSettings } from "./toolsettings.js";
 import { guardUnsavedChanges } from "./unsaved.js";
 import { openDocument, openDocuments, showOpenPanel } from "./windows.js";
 
@@ -83,6 +84,7 @@ function start() {
     handleProtocol();
     handleIpc();
     handleStrip();
+    handleToolSettings();
     guardUnsavedChanges();
     installMenu();
 

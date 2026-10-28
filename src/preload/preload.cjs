@@ -61,6 +61,22 @@ contextBridge.exposeInMainWorld("pdflion", {
    * @returns {Promise<boolean>} whether the user went ahead, for a prompt
    */
   pageDialog: (reason, items) => ipcRenderer.invoke("pdflion:page-dialog", reason, items),
+  /**
+   * @returns {Promise<object | null>} the tool settings every tab shares:
+   *   `{ eraser: { mode, size }, favourites: [{ tool, color, … }] }`
+   */
+  getToolSettings: () => ipcRenderer.invoke("pdflion:get-tool-settings"),
+  /**
+   * @param {object} changes `{ eraser }`, `{ favourites }` or both, which main
+   *   checks, stores and sends to every tab, this one too
+   */
+  setToolSettings: (changes) => ipcRenderer.send("pdflion:set-tool-settings", changes),
+  /** @param {(settings: object) => void} callback called with all of them, whenever they change */
+  onToolSettingsChange(callback) {
+    ipcRenderer.on("pdflion:tool-settings-changed", (_event, settings) => callback(settings));
+  },
+  /** @param {object} favourite shows its context menu, with Remove Favourite */
+  showFavouriteMenu: (favourite) => ipcRenderer.send("pdflion:favourite-menu", favourite),
 });
 
 /** The drag data type of a tab dragged from a strip, as src/tabs/tabs.js sets it. */

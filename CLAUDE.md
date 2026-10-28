@@ -53,7 +53,9 @@ src/main/        main process: one module per concern
   tablist.js     each window's tabs in order and its active tab (Electron-free, unit tested)
   strip.js       the tab strip's messages (sender and payload checks), its context menu, dragging tabs between windows
   placement.js   where a new window opens: the last window's place, on screen, cascaded (Electron-free, unit tested)
-  state.js       userData/state.json: the last window placement and, on Windows and Linux, recent documents
+  state.js       userData/state.json: the last window placement, the tool settings and, on Windows and Linux, recent documents
+  tools.js       the tool settings PDFLion remembers, checked: the eraser's mode and size, and favourites (Electron-free, unit tested)
+  toolsettings.js  keeps the tool settings in state.json for every tab: the viewer's channels for them, and a favourite's context menu
   recent.js      recent documents, plus PDFLion's own list for File > Open Recent on Windows and Linux
   ipc.js         the viewer's IPC handlers (sender and payload checks), runCommand() to a tab's bridge.js
   permissions.js web permission handlers: deny all but full screen and clipboard writes
@@ -174,7 +176,7 @@ pdf.js can't insert or rotate pages, so Insert Blank Page and the overview's Rot
 
 - Every window and every tab's view uses `contextIsolation: true`, `sandbox: true` and `nodeIntegration: false`, and `app.enableSandbox()` sandboxes every renderer.
 - The preloads expose small, explicit APIs through `contextBridge` and never expose `ipcRenderer` itself. `preload.cjs` exposes `window.pdflion` only on the viewer page, and `tabs.cjs` exposes `window.pdflionTabs` only on the tab strip, since a preload runs in every page its `webContents` shows.
-- Main validates the sender and the payload of every IPC message. `pdflion:page-dialog` takes only a reason, and for `rewrite` the items, from the fixed lists in `pages.js`, which writes every word of the dialog. The sender must be the top frame, and its URL must be the viewer (`ipc.js`), or the tab strip for the strip's channels (`strip.js`). A strip message must also come from a window's own `webContents`, every tab id in it must be a tab of that window, and every index must be in range. Don't switch to comparing origins, as the Electron checklist suggests: an `about:blank` page the viewer navigates to has the viewer's origin, and the strip shares it too.
+- Main validates the sender and the payload of every IPC message. The tool settings' channels (`pdflion:get-tool-settings`, `pdflion:set-tool-settings` and `pdflion:favourite-menu`, in `toolsettings.js`) take only what `tools.js` accepts: the eraser's mode and size, and favourites of a known tool, with a `#rrggbb` colour and numbers within pdf.js's ranges for it, at most 500 of them. It rebuilds each from its known fields, so nothing else reaches `state.json`, and main sends the result to every tab as `pdflion:tool-settings-changed`. `pdflion:page-dialog` takes only a reason, and for `rewrite` the items, from the fixed lists in `pages.js`, which writes every word of the dialog. The sender must be the top frame, and its URL must be the viewer (`ipc.js`), or the tab strip for the strip's channels (`strip.js`). A strip message must also come from a window's own `webContents`, every tab id in it must be a tab of that window, and every index must be in range. Don't switch to comparing origins, as the Electron checklist suggests: an `about:blank` page the viewer navigates to has the viewer's origin, and the strip shares it too.
 - Tab ids are random and unrelated to document tokens, since drags carry them out of the app. Main accepts a dropped tab only if a strip reported starting to drag that tab.
 - Navigation away from `pdflion://app/viewer/` is blocked in tabs, and every navigation of the strip is blocked. External links (`http`, `https`, `mailto` only) open with `shell.openExternal`. Every other `window.open` is denied, and the strip's all are.
 - `viewer.html` is served with a CSP: no `unsafe-eval`, and `wasm-unsafe-eval` for pdf.js's image decoders.
@@ -212,7 +214,7 @@ Reviewed in October 2026, for Electron 45, against the [checklist](https://www.e
 ## Tests
 
 - `npm test` runs `node --test "test/unit/**/*.test.js"`. The glob is quoted so Node expands it: since Node 21, `node --test` treats a directory argument as a file.
-- Modules that unit tests import stay free of Electron: `arguments.js`, `routes.js`, `ranges.js`, `documents.js`, `blank.js`, `placement.js`, `tablist.js` and `credits.js`.
+- Modules that unit tests import stay free of Electron: `arguments.js`, `routes.js`, `ranges.js`, `documents.js`, `blank.js`, `placement.js`, `tablist.js`, `tools.js` and `credits.js`.
 - `bridge.test.js` runs `bridge.js` itself in `node:vm`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge starts using something new from the page, add it to the stand-ins. The test also reads `menu.js` for `commandItem("label", "command", …)` calls, to check that the bridge knows every command.
 - `geometry.test.js` runs `geometry.js` in `node:vm` the same way. It answers `Float32Array`s from the script's own realm, so the tests compare them as arrays.
 - `npm run test:e2e` drives the dev app with Playwright. Each launch gets its own `--user-data-dir`. `test/e2e/pdfs.js` writes the test PDFs, so no binary fixtures are committed. The few that would be hard to write, the tracemonkey paper and an encrypted document (`empty_protected.pdf`), come from the pdf.js submodule, and `writeProtected()` encrypts one with @cantoo/pdf-lib. The suite is the safety net for pdf.js updates, so it must cover every bridge command. `windows-linux.spec.js` runs only on Windows and Linux.
