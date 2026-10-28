@@ -11,9 +11,10 @@
  * pagesMapper, and what findDroppable() reads), src/core/catalog.js (what
  * those answer without an entry), src/core/editor/pdf_editor.js (what
  * extractPages() keeps), src/display/annotation_storage.js,
- * src/core/document.js (the metadata flags), web/pdf_thumbnail_viewer.js
- * (getStructuralChanges, #mergeFiles and the listeners guardPageTools() goes
- * before), src/display/pages_mapper.js, web/pdf_viewer.js (pagesCount,
+ * src/core/document.js (the metadata flags, and how it reads /Rotate),
+ * web/pdf_thumbnail_viewer.js (getStructuralChanges, #mergeFiles, the
+ * listeners guardPageTools() goes before, and the checkboxes' click),
+ * src/display/pages_mapper.js, web/pdf_viewer.js (pagesCount,
  * onPagesEdited), web/pdf_page_view.js (updatePageNumber), web/menu.js,
  * web/views_manager.js, web/sidebar.js (onResizing) and web/viewer.html (the
  * toolbar, and the views manager's header, Manage menu, Add file and waiting
@@ -145,14 +146,24 @@
    */
   const dropAgreed = new Set();
 
-  /** Whether Add file made the document of several files since it was opened or saved. */
-  let merged = false;
+  /**
+   * Whether a page change made the document anew with extractPages() since it
+   * was opened or saved, and of how many files: Add file makes it of several,
+   * and so do pages copied with typed form values. Pages moved, copied or
+   * deleted come along with any page change, as a new file of one.
+   * @type {"one" | "several" | null}
+   */
+  let newFile = null;
 
   /** @type {Promise<any> | null} @cantoo/pdf-lib, once loading it started */
   let pdfLib = null;
 
-  /** @type {HTMLButtonElement[]} Insert Blank Page's buttons, in the toolbar and the overview */
-  let insertButtons = [];
+  /**
+   * @type {HTMLButtonElement[]} the buttons that change pages: Insert Blank
+   *   Page in the toolbar and the overview, and the overview's Rotate Pages
+   *   Left and Right
+   */
+  let pageButtons = [];
 
   /** Whether the page overview is open: see openOverview(). */
   let overview = false;
@@ -224,7 +235,7 @@
       addFilesAsPageChanges(app);
       // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
       overviewButton = addOverviewButton(app);
-      insertButtons = [addInsertButton(app), addOverviewTools(app)].filter((button) => !!button);
+      pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
       guardPageTools(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
@@ -501,7 +512,7 @@
     if (busy) return false;
     busy = true;
     editedWhileSaving = false;
-    updateInsertButtons(app);
+    updatePageButtons(app);
     try {
       if (!(await confirmRewrite(app))) return false;
       const pageChanges = hasPageChanges(app);
@@ -533,23 +544,23 @@
       return true;
     } finally {
       busy = false;
-      updateInsertButtons(app);
+      updatePageButtons(app);
     }
   }
 
   /**
    * Before a save that writes a new file, through extractPages(), asks
    * whether to drop what the file holds and the new one won't. That's a save
-   * with page changes from pdf.js's page tools, or of a document Add file made
-   * anew. Each item is asked about once per tab.
+   * with page changes from pdf.js's page tools, or of a document a page
+   * change made anew. Each item is asked about once per tab.
    *
    * @param {any} app
    * @returns {Promise<boolean>} whether to save
    */
   async function confirmRewrite(app) {
     const pageChanges = hasPageChanges(app);
-    if (!pageChanges && !merged) return true;
-    const several = merged || fromSeveralCopies(app);
+    if (!pageChanges && !newFile) return true;
+    const several = newFile === "several" || (pageChanges && fromSeveralCopies(app));
     const held = await droppable;
     const items = DROPPABLE.filter(
       (item) =>
@@ -581,7 +592,7 @@
    * @param {any} app
    */
   function noteDroppable(app) {
-    merged = false;
+    newFile = null;
     droppable = findDroppable(app.pdfDocument);
   }
 
@@ -680,24 +691,73 @@
    * @param {any} app
    * @returns {Promise<boolean>} whether the page was inserted
    */
-  async function insertBlankPage(app) {
-    if (busy || !app.pdfDocument) return false;
-    busy = true;
-    updateInsertButtons(app);
-    try {
-      if (!(await confirmPageChange(app))) return false;
+  function insertBlankPage(app) {
+    return runPageChange(app, () => {
       // The page to insert after, which is also the new page's index.
-      const index = (overview && lastCheckedPage()) || app.page;
+      const index = (overview && checkedPages().at(-1)) || app.page;
       const { view, rotate } = app.pdfViewer.getPageView(index - 1).pdfPage;
       const [width, height] = [view[2] - view[0], view[3] - view[1]];
       // A page shown on its side, by its /Rotate, is as wide as it's tall.
       const size = rotate % 180 === 0 ? [width, height] : [height, width];
-      return await changeDocument(app, index + 1, (bytes) =>
+      return changeDocument(app, index + 1, (bytes) =>
         updateDocument(bytes, (document) => document.insertPage(index, size)),
       );
+    });
+  }
+
+  /**
+   * Turns the pages checked in the thumbnails a quarter turn, or the current
+   * page if none is. It sets their /Rotate after the document's bytes, as an
+   * incremental update, like insertBlankPage(), and they stay checked.
+   * View > Rotate Left and Right turn the view instead, which isn't saved.
+   *
+   * @param {any} app
+   * @param {number} delta -90 to turn them left, 90 to turn them right
+   * @returns {Promise<boolean>} whether the pages turned
+   */
+  function rotatePages(app, delta) {
+    return runPageChange(app, () => {
+      const checked = checkedPages();
+      const pages = checked.length > 0 ? checked : [app.page];
+      const change = (/** @type {Uint8Array} */ bytes) =>
+        updateDocument(bytes, (document, { degrees }) => {
+          for (const number of pages) {
+            const page = document.getPage(number - 1);
+            const angle = rightAngle(rightAngle(page.getRotation().angle) + delta);
+            page.setRotation(degrees(angle));
+          }
+        });
+      return changeDocument(app, app.page, change, { selection: checked });
+    });
+  }
+
+  /**
+   * @param {number} angle a page's /Rotate, in degrees
+   * @returns {number} the angle pdf.js turns the page by: 0, 90, 180 or 270,
+   *   and 0 for an angle that isn't a quarter turn (`get rotate()` in
+   *   src/core/document.js)
+   */
+  function rightAngle(angle) {
+    return angle % 90 === 0 ? ((angle % 360) + 360) % 360 : 0;
+  }
+
+  /**
+   * Runs a page change, unless a save or another page change is under way,
+   * or the document's pages may not change.
+   *
+   * @param {any} app
+   * @param {() => Promise<boolean>} change
+   * @returns {Promise<boolean>} whether the document changed
+   */
+  async function runPageChange(app, change) {
+    if (busy || !app.pdfDocument) return false;
+    busy = true;
+    updatePageButtons(app);
+    try {
+      return (await confirmPageChange(app)) && (await change());
     } finally {
       busy = false;
-      updateInsertButtons(app);
+      updatePageButtons(app);
     }
   }
 
@@ -734,7 +794,7 @@
     let added = false;
     if (!busy && app.pdfDocument) {
       busy = true;
-      updateInsertButtons(app);
+      updatePageButtons(app);
       try {
         if (await confirmPageChange(app)) {
           const { pdfDocument } = app;
@@ -747,14 +807,14 @@
             insertAfter + 2,
             async () =>
               pdfDocument.extractPages(await withFormValues(pdfDocument, pageInfos), copyLevels),
-            app.pdfViewer.pagesCount + 1,
+            { minPages: app.pdfViewer.pagesCount + 1 },
           );
           // The new document has dropped what a new file of several does.
-          if (added) merged = true;
+          if (added) newFile = "several";
         }
       } finally {
         busy = false;
-        updateInsertButtons(app);
+        updatePageButtons(app);
       }
     }
     // pdf.js waits for the new document until it's told otherwise, as its
@@ -768,18 +828,19 @@
    * change goes after its bytes, which stay as they were.
    *
    * @param {Uint8Array} bytes
-   * @param {(document: any) => void} change given a PDFDocument
+   * @param {(document: any, lib: any) => void} change given a PDFDocument,
+   *   and @cantoo/pdf-lib itself
    * @returns {Promise<Uint8Array>} the changed document
    */
   async function updateDocument(bytes, change) {
-    const { PDFDocument } = await loadPdfLib();
+    const lib = await loadPdfLib();
     // updateMetadata: false keeps the Info dictionary as it is, rather than
     // stamp pdf-lib as its producer.
-    const document = await PDFDocument.load(bytes, {
+    const document = await lib.PDFDocument.load(bytes, {
       forIncrementalUpdate: true,
       updateMetadata: false,
     });
-    change(document);
+    change(document, lib);
     return document.save();
   }
 
@@ -792,13 +853,16 @@
    * @param {any} app
    * @param {number} page the page to show afterwards
    * @param {(bytes: Uint8Array) => Promise<Uint8Array | null>} change
-   * @param {number} [minPages]
+   * @param {{ minPages?: number, selection?: number[] }} [options]
+   *   selection: the pages to check in the thumbnails afterwards
    * @returns {Promise<boolean>} whether the document changed
    */
-  async function changeDocument(app, page, change, minPages = 1) {
+  async function changeDocument(app, page, change, { minPages = 1, selection = [] } = {}) {
     const wasEdited = edited;
     // A failed open() forgets them.
     const { url, _docFilename: filename, page: pageBefore } = app;
+    // The bytes bring pages moved, copied or deleted along, as a new file.
+    const rewrite = hasPageChanges(app) ? (fromSeveralCopies(app) ? "several" : "one") : null;
     const bytes = await currentBytes(app);
     let changed;
     try {
@@ -811,18 +875,20 @@
       return false;
     }
     try {
-      await reopen(app, changed, { page, url, filename });
+      await reopen(app, changed, { page, url, filename, selection });
       const { numPages } = app.pdfDocument;
       if (numPages < minPages) throw new Error(`The changed document has ${numPages} pages`);
       return true;
     } catch (error) {
       // Back to the bytes it had, which hold every change made so far.
       console.error("Couldn't open the changed document:", error);
-      await reopen(app, bytes, { page: pageBefore, url, filename, edited: wasEdited }).catch(
-        () => {},
-      );
+      const restored = { page: pageBefore, url, filename, edited: wasEdited, selection };
+      await reopen(app, bytes, restored).catch(() => {});
       await window.pdflion.pageDialog("failed");
       return false;
+    } finally {
+      // Either way, the document shown is now that new file, which Save asks about.
+      if (rewrite && newFile !== "several") newFile = rewrite;
     }
   }
 
@@ -831,13 +897,19 @@
    * onSaveAndLoad() does, and keeps the view: the zoom, the rotation, the
    * scroll and spread modes, and the sidebar or the page overview, at `page`.
    * The document keeps its URL and file name, and counts as edited until it's
-   * saved.
+   * saved. pdf.js forgets which thumbnails were checked, so `selection` names
+   * the pages to check again.
    *
    * @param {any} app
    * @param {Uint8Array} bytes
-   * @param {{ page: number, url: string, filename: string, edited?: boolean }} options
+   * @param {{ page: number, url: string, filename: string, edited?: boolean,
+   *   selection?: number[] }} options
    */
-  async function reopen(app, bytes, { page, url, filename, edited: isEdited = true }) {
+  async function reopen(
+    app,
+    bytes,
+    { page, url, filename, edited: isEdited = true, selection = [] },
+  ) {
     const { eventBus, pdfViewer, viewsManager } = app;
     const { currentScaleValue, pagesRotation, scrollMode, spreadMode } = pdfViewer;
     // The thumbnails while the overview is open. It stays open, since
@@ -872,6 +944,7 @@
       else viewsManager?.close();
       // pdf.js would drag pages to where the old document's thumbnails were.
       if (sidebarView === SIDEBAR_THUMBS) relayoutThumbnails(app);
+      for (const number of selection) checkThumbnail(number);
       // open() with data forgets the URL, which save() compares against.
       showDocumentUrl(app, url);
     } finally {
@@ -955,7 +1028,7 @@
   async function checkLocked(app) {
     const { pdfDocument } = app;
     locked = true;
-    updateInsertButtons(app);
+    updatePageButtons(app);
     try {
       const { info } = await pdfDocument.getMetadata();
       if (app.pdfDocument !== pdfDocument) return;
@@ -965,7 +1038,7 @@
       console.warn("Couldn't read the document's metadata:", error);
     }
     document.getElementById("outerContainer")?.classList.toggle("pdflionPagesLocked", locked);
-    updateInsertButtons(app);
+    updatePageButtons(app);
   }
 
   /**
@@ -1224,24 +1297,25 @@
    * document.
    *
    * @param {any} app
-   * @returns {HTMLButtonElement | null} the overview's Insert Blank Page button
+   * @returns {HTMLButtonElement[]} the buttons
    */
   function addOverviewTools(app) {
     const addFile = document.getElementById("viewsManagerAddFileButton");
-    if (!addFile) return null;
+    if (!addFile) return [];
     const tools = document.createElement("div");
     tools.id = "pdflionPageTools";
     const className = "toolbarButton viewsManagerButton";
-    // PDFLion can't rotate pages yet.
     const rotateLeft = makeButton("pdflionRotatePagesLeft", className, "Rotate Pages Left");
+    rotateLeft.addEventListener("click", () => rotatePages(app, -90));
     const rotateRight = makeButton("pdflionRotatePagesRight", className, "Rotate Pages Right");
-    rotateLeft.disabled = rotateRight.disabled = true;
+    rotateRight.addEventListener("click", () => rotatePages(app, 90));
     const insert = makeButton("pdflionOverviewInsertBlankPage", className, "Insert Blank Page");
-    insert.disabled = true;
     insert.addEventListener("click", () => insertBlankPage(app));
-    tools.append(rotateLeft, rotateRight, insert);
+    const buttons = [rotateLeft, rotateRight, insert];
+    for (const button of buttons) button.disabled = true;
+    tools.append(...buttons);
     addFile.before(tools);
-    return insert;
+    return buttons;
   }
 
   /**
@@ -1267,13 +1341,13 @@
   }
 
   /**
-   * Insert Blank Page's buttons work once a document has loaded, while nothing
-   * else runs, and for documents that aren't locked.
+   * The buttons that change pages work once a document has loaded, while
+   * nothing else runs, and for documents that aren't locked.
    *
    * @param {any} app
    */
-  function updateInsertButtons(app) {
-    for (const button of insertButtons) button.disabled = busy || locked || !app.pdfDocument;
+  function updatePageButtons(app) {
+    for (const button of pageButtons) button.disabled = busy || locked || !app.pdfDocument;
   }
 
   /**
@@ -1387,12 +1461,25 @@
     app.eventBus.dispatch("resize", { source: app.viewsManager });
   }
 
-  /** @returns {number} the last page checked in the thumbnails, or 0 */
-  function lastCheckedPage() {
+  /** @returns {number[]} the pages checked in the thumbnails, in order */
+  function checkedPages() {
     const pages = [...document.querySelectorAll(CHECKED_THUMBNAIL)].map((checkbox) =>
       Number(checkbox.parentElement?.getAttribute("page-number")),
     );
-    return Math.max(0, ...pages.filter(Number.isInteger));
+    return pages.filter(Number.isInteger).sort((a, b) => a - b);
+  }
+
+  /**
+   * Checks a page's thumbnail with a click, as the user would, so that pdf.js
+   * selects the page too.
+   *
+   * @param {number} number
+   */
+  function checkThumbnail(number) {
+    const checkbox = document.querySelector(
+      `${THUMBNAILS} > .thumbnail[page-number="${number}"] > input`,
+    );
+    if (checkbox && !checkbox.checked) checkbox.click();
   }
 
   /**

@@ -57,6 +57,32 @@ const pageTexts = (page) =>
 
 /**
  * @param {Page} page
+ * @returns {Promise<number[]>} the angle each page's /Rotate turns it by, as
+ *   pdf.js reads it, without the view's rotation
+ */
+const pageRotations = (page) =>
+  page.evaluate(async () => {
+    const { pdfDocument, pdfViewer } = PDFViewerApplication;
+    const rotations = [];
+    for (let number = 1; number <= pdfViewer.pagesCount; number++) {
+      rotations.push((await pdfDocument.getPage(number)).rotate);
+    }
+    return rotations;
+  });
+
+/**
+ * @param {Page} page
+ * @returns {Promise<number[]>} the pages checked in the thumbnails
+ */
+const checkedThumbnails = (page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll("#thumbnailsView > .thumbnail > input:checked")].map((input) =>
+      Number(/** @type {Element} */ (input.parentElement).getAttribute("page-number")),
+    ),
+  );
+
+/**
+ * @param {Page} page
  * @param {number} number
  * @returns {import("@playwright/test").Locator} the page's thumbnail
  */
@@ -518,9 +544,6 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
   await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(3);
   const insert = page.locator("#pdflionOverviewInsertBlankPage");
   await expect(insert).toBeEnabled();
-  // Rotating pages isn't in yet.
-  await expect(page.locator("#pdflionRotatePagesLeft")).toBeDisabled();
-  await expect(page.locator("#pdflionRotatePagesRight")).toBeDisabled();
 
   await thumbnail(page, 1).locator("input").check();
   await thumbnail(page, 2).locator("input").check();
@@ -538,6 +561,85 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
   await insert.click();
   await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "", "Page 2", "", "Page 3"]);
   expect(await overviewOpen(page)).toBe(true);
+});
+
+test("checked pages rotated in the page overview stay checked, and are saved", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const original = await fs.readFile(file);
+  let { app, page } = await pdflion([file]);
+  await page.locator("#pdflionPageOverview").click();
+  await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(3);
+
+  await thumbnail(page, 1).locator("input").check();
+  await thumbnail(page, 3).locator("input").check();
+  await page.locator("#pdflionRotatePagesRight").click();
+  await expect.poll(() => pageRotations(page)).toEqual([90, 0, 90]);
+  expect(await checkedThumbnails(page)).toEqual([1, 3]);
+  // pdf.js's selection too, which its status bar counts.
+  await expect(page.locator("#viewsManagerStatusActionLabel")).toContainText("2");
+  expect(await overviewOpen(page)).toBe(true);
+  expect(await pageTexts(page)).toEqual(["Page 1", "Page 2", "Page 3"]);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+
+  // Again, now that the pages have a /Rotate of their own.
+  await page.locator("#pdflionRotatePagesRight").click();
+  await expect.poll(() => pageRotations(page)).toEqual([180, 0, 180]);
+
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  const saved = await fs.readFile(file);
+  // An incremental update: the file as it was, then the new rotations.
+  expect(saved.subarray(0, original.length).equals(original)).toBe(true);
+  await app.close();
+
+  ({ app, page } = await pdflion([file]));
+  expect(await pageRotations(page)).toEqual([180, 0, 180]);
+});
+
+test("Rotate Pages Left turns the current page with none checked, keeping form values", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "form.pdf");
+  await writeForm(file, { pages: 2 });
+  const { app, page } = await pdflion([file]);
+  await page.locator(".annotationLayer input").fill("Ada Lovelace");
+  await page.locator("#pdflionPageOverview").click();
+  await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(2);
+  await page.evaluate(() => {
+    PDFViewerApplication.page = 2;
+  });
+
+  await page.locator("#pdflionRotatePagesLeft").click();
+  await expect.poll(() => pageRotations(page)).toEqual([0, 270]);
+  expect(await currentPage(page)).toBe(2);
+  expect(await checkedThumbnails(page)).toEqual([]);
+  expect(await isEdited(app, page)).toBe(true);
+
+  await page.locator("#pdflionPageOverview").click();
+  await page.evaluate(() => {
+    PDFViewerApplication.page = 1;
+  });
+  await expect(page.locator(".annotationLayer input")).toHaveValue("Ada Lovelace");
+});
+
+test("View > Rotate Right turns only the view, which isn't an edit", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 2);
+  const { app, page } = await pdflion([file]);
+
+  await clickMenu(app, page, "rotateRight");
+  await expect.poll(() => page.evaluate(() => PDFViewerApplication.pdfViewer.pagesRotation)).toBe(90);
+  expect(await pageRotations(page)).toEqual([0, 0]);
+  expect(await isEdited(app, page)).toBe(false);
+
+  // The overview's rotation adds to it, and the view keeps its own.
+  await page.locator("#pdflionPageOverview").click();
+  await page.locator("#pdflionRotatePagesRight").click();
+  await expect.poll(() => pageRotations(page)).toEqual([90, 0]);
+  expect(await page.evaluate(() => PDFViewerApplication.pdfViewer.pagesRotation)).toBe(90);
 });
 
 test("a document with a password shows its pages, but no page tools", async ({ pdflion }) => {

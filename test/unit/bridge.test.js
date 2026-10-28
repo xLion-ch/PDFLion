@@ -217,6 +217,24 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   const separator = Object.assign(new Element("div"), { id: "editorModeSeparator" });
   /** The current page's thumbnail, which takes the focus. */
   const currentThumbnail = { focus: record("thumbnail.focus") };
+
+  /**
+   * @param {number} number
+   * @returns {object} the checkbox of a page's thumbnail, which a click checks
+   *   or unchecks, as in pdf.js
+   */
+  const checkbox = (number) => ({
+    get checked() {
+      return document.checkedPages.includes(number);
+    },
+    click() {
+      calls.push(["thumbnail.click", number]);
+      const { checkedPages } = document;
+      document.checkedPages = this.checked
+        ? checkedPages.filter((other) => other !== number)
+        : [...checkedPages, number];
+    },
+  });
   const addFileButton = Object.assign(new Element("button"), { id: "viewsManagerAddFileButton" });
   /** The views manager, which has the focus while `activeElement` is `inside`. */
   const viewsManagerElement = {
@@ -282,7 +300,9 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       if (selector === CHECKED_THUMBNAIL && this.checked) return {};
       if (selector === DRAGGING_PAGES && this.dragging) return {};
       if (selector === CURRENT_THUMBNAIL) return currentThumbnail;
-      return null;
+      const [, number] =
+        /^#thumbnailsView > \.thumbnail\[page-number="(\d+)"\] > input$/.exec(selector) ?? [];
+      return number ? checkbox(Number(number)) : null;
     },
     /** @param {string} selector */
     querySelectorAll(selector) {
@@ -316,6 +336,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   const pdfLib = {
     /** Set to make load() throw, as for a file the library can't read. */
     failure: /** @type {Error | null} */ (null),
+    /** Each page's /Rotate, as the file has it, by index: 0 where it's missing. */
+    rotations: /** @type {number[]} */ ([]),
+    /** @param {number} angle */
+    degrees: (angle) => ({ type: "degrees", angle }),
     PDFDocument: {
       async load(bytes, options) {
         // Copies, since the bridge's arrays and objects come from another realm.
@@ -323,6 +347,12 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
         if (pdfLib.failure) throw pdfLib.failure;
         return {
           insertPage: (index, size) => calls.push(["PDFLib.insertPage", index, [...size]]),
+          /** @param {number} index */
+          getPage: (index) => ({
+            getRotation: () => pdfLib.degrees(pdfLib.rotations[index] ?? 0),
+            setRotation: (/** @type {{ type: string, angle: number }} */ rotation) =>
+              calls.push(["PDFLib.setRotation", index, { ...rotation }]),
+          }),
           save: async () => new Uint8Array([...bytes, 0xff]),
         };
       },
@@ -506,8 +536,9 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     async open(args) {
       calls.push(["open", args]);
       if (!args?.data) return;
-      // pdf.js closes the open document first.
+      // pdf.js closes the open document first, and makes new thumbnails, none checked.
       app.pdfDocument = null;
+      document.checkedPages = [];
       if (app.failNextOpen) {
         app.failNextOpen = false;
         throw new Error("Invalid PDF structure.");
@@ -1264,11 +1295,7 @@ describe("bridge.js page overview", () => {
     }
     bridge.openDocument();
     await settle();
-    const [rotateLeft, rotateRight, insert] = tools.children;
-    assert.equal(insert.disabled, false);
-    // Rotating pages isn't in yet.
-    assert.equal(rotateLeft.disabled, true);
-    assert.equal(rotateRight.disabled, true);
+    for (const tool of tools.children) assert.equal(tool.disabled, false, tool.id);
   });
 
   for (const [before, description] of [
@@ -1444,6 +1471,133 @@ describe("bridge.js page overview", () => {
       named(bridge.calls, "PDFLib.insertPage").map(([, index]) => index),
       [2, 2],
     );
+  });
+});
+
+describe("bridge.js rotating pages", () => {
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @returns {[number, number][]} each page turned, by index, and its new /Rotate
+   */
+  const turned = (bridge) =>
+    named(bridge.calls, "PDFLib.setRotation").map(([, index, { type, angle }]) => {
+      assert.equal(type, "degrees");
+      return [index, angle];
+    });
+
+  /**
+   * Opens a three-page document and clicks one of the overview's buttons.
+   *
+   * @param {"left" | "right"} direction
+   * @param {object} [state]
+   * @param {number[]} [state.checked] the pages checked in the thumbnails
+   * @param {number[]} [state.rotations] each page's /Rotate
+   * @param {number} [state.page] the current page
+   */
+  async function rotate(direction, { checked = [], rotations = [], page = 1 } = {}) {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 3 });
+    await settle();
+    bridge.app.openedPages = 3;
+    bridge.app.page = page;
+    bridge.page.document.checkedPages = checked;
+    bridge.pdfLib.rotations = rotations;
+    const [rotateLeft, rotateRight] = bridge.header[0].children;
+    const button = direction === "left" ? rotateLeft : rotateRight;
+    const done = await button.listeners.click();
+    return { bridge, done };
+  }
+
+  it("turns the checked pages right, as an increment, and keeps them checked", async () => {
+    const { bridge, done } = await rotate("right", { checked: [3, 1], page: 2 });
+    assert.equal(done, true);
+    assert.deepEqual(named(bridge.calls, "PDFLib.load"), [
+      ["PDFLib.load", [9], { forIncrementalUpdate: true, updateMetadata: false }],
+    ]);
+    assert.deepEqual(turned(bridge), [
+      [0, 90],
+      [2, 90],
+    ]);
+    const [[, args]] = named(bridge.calls, "open");
+    assert.deepEqual([...args.data], [9, 0xff]);
+    // At the page it showed, with the same pages checked, in a new document.
+    assert.equal(bridge.app.initialBookmark, "page=2&zoom=auto");
+    assert.deepEqual(named(bridge.calls, "thumbnail.click"), [
+      ["thumbnail.click", 1],
+      ["thumbnail.click", 3],
+    ]);
+    assert.deepEqual(bridge.page.document.checkedPages, [1, 3]);
+    assert.deepEqual(bridge.pdflion.edited, [true]);
+  });
+
+  it("turns the current page when no page is checked", async () => {
+    const { bridge } = await rotate("left", { page: 2 });
+    assert.deepEqual(turned(bridge), [[1, 270]]);
+    assert.deepEqual(named(bridge.calls, "thumbnail.click"), []);
+  });
+
+  for (const [rotation, direction, expected] of /** @type {const} */ ([
+    [0, "right", 90],
+    [90, "right", 180],
+    [270, "right", 0],
+    [0, "left", 270],
+    [90, "left", 0],
+    // As pdf.js shows them: past 360 and below 0 wrap around, and an angle
+    // that isn't a quarter turn counts as none.
+    [450, "right", 180],
+    [-90, "right", 0],
+    [-450, "left", 180],
+    [45, "left", 270],
+  ])) {
+    it(`turns a page at ${rotation}° ${direction} to ${expected}°`, async () => {
+      const { bridge } = await rotate(direction, { rotations: [rotation] });
+      assert.deepEqual(turned(bridge), [[0, expected]]);
+    });
+  }
+
+  it("keeps the pages checked when pdf.js can't show the result", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 3 });
+    await settle();
+    bridge.app.openedPages = 3;
+    bridge.app.failNextOpen = true;
+    bridge.page.document.checkedPages = [2];
+    assert.equal(await bridge.header[0].children[1].listeners.click(), false);
+    assert.deepEqual(
+      named(bridge.calls, "open").map(([, args]) => [...args.data]),
+      [[9, 0xff], [9]],
+    );
+    assert.deepEqual(bridge.pdflion.dialogs, [["failed", undefined]]);
+    assert.deepEqual(bridge.page.document.checkedPages, [2]);
+  });
+
+  it("refuses a document with a password, saying why", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ info: { EncryptFilterName: "Standard" } });
+    await settle();
+    for (const button of bridge.header[0].children) assert.equal(button.disabled, true);
+    assert.equal(await bridge.header[0].children[1].listeners.click(), false);
+    assert.deepEqual(bridge.pdflion.dialogs, [["locked-encrypted", undefined]]);
+    assert.deepEqual(named(bridge.calls, "PDFLib.load"), []);
+  });
+
+  it("doesn't run during a save", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    await settle();
+    bridge.app.pdfDocument.annotationStorage.onSetModified();
+    /** @type {Promise<unknown> | undefined} */
+    let rotating;
+    bridge.pdflion.duringWrite = () => {
+      rotating = bridge.header[0].children[1].listeners.click();
+    };
+    await bridge.run("save");
+    assert.equal(await rotating, false);
+    assert.deepEqual(named(bridge.calls, "PDFLib.load"), []);
   });
 });
 
@@ -2011,6 +2165,18 @@ describe("bridge.js saving a new file", () => {
     );
     await bridge.run("save");
     assert.deepEqual(bridge.pdflion.dialogs[0][1].slice(-2), ["info", "page-labels"]);
+  });
+
+  it("asks too after a page change that brought moved pages along", async () => {
+    const bridge = await withDocument(RICH);
+    bridge.changePages([2, 1]);
+    bridge.app.openedPages = 3;
+    assert.equal(await bridge.run("insertBlankPage"), true);
+    assert.deepEqual(bridge.pdflion.dialogs, []);
+    await bridge.run("save");
+    assert.deepEqual(bridge.pdflion.dialogs, [
+      ["rewrite", ["xmp", "layers", "viewer-settings", "language"]],
+    ]);
   });
 
   it("saves nothing when the user cancels, and asks again next time", async () => {
