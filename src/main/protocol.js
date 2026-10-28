@@ -27,11 +27,15 @@ const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
 const tabsHtml = path.join(tabsRoot, "tabs.html");
 
 /**
- * Added before `</head>` of viewer.html. The classic bridge.js runs before the
- * viewer's deferred module scripts, and overrides.css comes after viewer.css.
+ * Added before `</head>` of viewer.html. The classic scripts run in order,
+ * before the viewer's deferred module scripts, so bridge.js can use what
+ * geometry.js defines. overrides.css comes after viewer.css.
  */
-const VIEWER_INJECTION =
-  '<link rel="stylesheet" href="/pdflion/overrides.css"><script src="/pdflion/bridge.js"></script>';
+const VIEWER_INJECTION = [
+  '<link rel="stylesheet" href="/pdflion/overrides.css">',
+  '<script src="/pdflion/geometry.js"></script>',
+  '<script src="/pdflion/bridge.js"></script>',
+].join("");
 
 /**
  * Sent with viewer.html. The `<meta>` CSP in pdf.js's viewer.html stays, and

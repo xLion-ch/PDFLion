@@ -25,6 +25,19 @@ test("opens a PDF in a window, titled with its name", async ({ pdflion }) => {
   }
 });
 
+test("the viewer loads the eraser's geometry", async ({ pdflion }) => {
+  const { page } = await pdflion([await tracemonkey(await tempDir())]);
+  expect(
+    await page.evaluate(() => {
+      const runs = /** @type {any} */ (window).PDFLionGeometry.cutStroke([0, 0, 100, 0], [50, 0], 10);
+      return runs.map((/** @type {Float32Array} */ run) => [...run]);
+    }),
+  ).toEqual([
+    [0, 0, 40, 0],
+    [60, 0, 100, 0],
+  ]);
+});
+
 test("opening a file again keeps its tab, and another file opens as a tab", async ({
   pdflion,
 }) => {

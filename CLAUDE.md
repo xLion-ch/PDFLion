@@ -10,9 +10,10 @@ A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and 
 - **Never edit `vendor/pdf.js/`.** It is a git submodule pinned to an upstream release tag. All customisation happens outside it:
   - `src/viewer/bridge.js` is a main-world script that sets `PDFViewerApplicationOptions` and drives `PDFViewerApplication`.
   - `src/viewer/overrides.css` restyles the viewer UI in Material Design 3, with Material Symbols icons from `src/viewer/icons/`.
-  - The `pdflion://` protocol handler (`src/main/protocol.js`) injects both into `viewer.html` as it serves it.
+  - `src/viewer/geometry.js` is a main-world script with the eraser's geometry, for `bridge.js`. It touches nothing in pdf.js.
+  - The `pdflion://` protocol handler (`src/main/protocol.js`) injects them into `viewer.html` as it serves it.
 
-  If something seems to need a pdf.js patch, look for a way through those three first. If there really is none, stop and ask.
+  If something seems to need a pdf.js patch, look for a way through those first. If there really is none, stop and ask.
 - Prefer pdf.js's built-in behaviour over reimplementing it.
 - `bridge.js` is the only code that touches pdf.js internals (`PDFViewerApplication`, its `eventBus`, `AppOptions`). These are not a stable API and change between releases. For example, `pdfSidebar` became `viewsManager`, and `isEvalSupported` was removed. Check names against `vendor/pdf.js/web/app.js` and `web/app_options.js` for the pinned version, never from memory.
 - The app runs on macOS, Windows and Linux (Ubuntu and Linux Mint) and follows each platform's conventions. On all three, each document gets its own tab, in PDFLion's own tab strip, and opens in the frontmost window.
@@ -65,6 +66,7 @@ src/preload/
 src/tabs/        served at pdflion://app/tabs/: tabs.html, tabs.css, tabs.js, each window's tab strip
 src/viewer/      served at pdflion://app/pdflion/, injected into viewer.html
   bridge.js
+  geometry.js    the eraser's geometry: strokes as x, y pairs, cut by a circle (pdf.js-free, unit tested)
   overrides.css  Material Design 3 theme, mostly through the variables viewer.css reads
   icons/         Material Symbols (Apache-2.0) for the toolbar and menus
 resources/       icon, entitlements (electron-builder buildResources); about-icon.png also ships in the app
@@ -115,7 +117,7 @@ Everything a window loads comes from the custom privileged scheme `pdflion://app
 
 | Path | Serves |
 |---|---|
-| `/viewer/…` | the pdf.js generic build. For `web/viewer.html`, the handler injects `overrides.css` and `bridge.js` before `</head>` and adds a CSP header |
+| `/viewer/…` | the pdf.js generic build. For `web/viewer.html`, the handler injects `overrides.css`, `geometry.js` and `bridge.js` before `</head>` and adds a CSP header |
 | `/pdflion/…` | `src/viewer/` |
 | `/tabs/…` | `src/tabs/`. `tabs.html` gets a CSP header of its own: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'` |
 | `/lib/…` | @cantoo/pdf-lib's `dist/`, of which only `pdf-lib.min.js` is packaged |
@@ -212,6 +214,7 @@ Reviewed in October 2026, for Electron 45, against the [checklist](https://www.e
 - `npm test` runs `node --test "test/unit/**/*.test.js"`. The glob is quoted so Node expands it: since Node 21, `node --test` treats a directory argument as a file.
 - Modules that unit tests import stay free of Electron: `arguments.js`, `routes.js`, `ranges.js`, `documents.js`, `blank.js`, `placement.js`, `tablist.js` and `credits.js`.
 - `bridge.test.js` runs `bridge.js` itself in `node:vm`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge starts using something new from the page, add it to the stand-ins. The test also reads `menu.js` for `commandItem("label", "command", …)` calls, to check that the bridge knows every command.
+- `geometry.test.js` runs `geometry.js` in `node:vm` the same way. It answers `Float32Array`s from the script's own realm, so the tests compare them as arrays.
 - `npm run test:e2e` drives the dev app with Playwright. Each launch gets its own `--user-data-dir`. `test/e2e/pdfs.js` writes the test PDFs, so no binary fixtures are committed. The few that would be hard to write, the tracemonkey paper and an encrypted document (`empty_protected.pdf`), come from the pdf.js submodule, and `writeProtected()` encrypts one with @cantoo/pdf-lib. The suite is the safety net for pdf.js updates, so it must cover every bridge command. `windows-linux.spec.js` runs only on Windows and Linux.
 - Playwright lists each tab's viewer and each window's strip as pages, and `app.firstWindow()` is a strip. The helpers in `test/e2e/pdflion.js` find a document's page by its URL (`documentPage`), a page's strip by its window (`stripOf`, since every strip has the same URL), and count windows in main. `app.browserWindow(page)` works for a tab's page and gives its window. A tab that isn't shown doesn't render, so tests open tabs one at a time and wait for each.
 - Playwright can't drag between windows. `tabs.spec.js` sends the strip's `dragStarted`, `drop` and `dragEnded` itself, and stubs `screen.getCursorScreenPoint()` for tearing off. It catches the tab context menu by replacing `Menu.prototype.popup`.

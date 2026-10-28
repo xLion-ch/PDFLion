@@ -100,6 +100,7 @@ PDFLion keeps the Electron side thin. pdf.js is a Git submodule in `vendor/pdf.j
 
 - `src/viewer/bridge.js` connects the menus to pdf.js.
 - `src/viewer/overrides.css` restyles its interface in Material Design 3.
+- `src/viewer/geometry.js` works out what the eraser erases.
 
 The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLAUDE.md) describes the architecture, the ground rules, the security model and the decisions behind them.
 
