@@ -7,6 +7,7 @@ import vm from "node:vm";
 
 const SRC = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..", "src");
 const BRIDGE = fs.readFileSync(path.join(SRC, "viewer", "bridge.js"), "utf8");
+const GEOMETRY = fs.readFileSync(path.join(SRC, "viewer", "geometry.js"), "utf8");
 
 /** Lets pending promises and stream reads settle. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -160,6 +161,23 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       pdflion.dialogs.push([reason, items && [...items]]);
       return pdflion.dialogAnswer;
     },
+    /** The tool settings main keeps. */
+    toolSettings: { eraser: { mode: "object", size: 24 }, favourites: [] },
+    /** @type {object[]} what the page asked main to store */
+    storedToolSettings: [],
+    /** @type {((settings: object) => void) | null} */
+    toolSettingsListener: null,
+    async getToolSettings() {
+      return pdflion.toolSettings;
+    },
+    /** @param {object} changes */
+    setToolSettings(changes) {
+      pdflion.storedToolSettings.push(JSON.parse(JSON.stringify(changes)));
+    },
+    /** @param {(settings: object) => void} callback */
+    onToolSettingsChange(callback) {
+      pdflion.toolSettingsListener = callback;
+    },
   };
 
   /**
@@ -185,6 +203,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
         },
       };
       this.textContent = "";
+      /** @type {Record<string, string>} */
+      this.style = {};
     }
     /** @param {Element[]} children */
     append(...children) {
@@ -265,7 +285,17 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
         else outerContainer.classes.delete(name);
       },
     },
+    /** @type {Element[]} what the bridge adds to it, such as the eraser's cursor */
+    children: [],
+    /** @param {Element[]} children */
+    append(...children) {
+      outerContainer.children.push(...children);
+    },
   };
+  const viewerContainer = Object.assign(new Element("div"), { id: "viewerContainer" });
+  /** pdf.js's Pencil, after which the eraser goes, and its button. */
+  const pencil = Object.assign(new Element("div"), { id: "editorInk" });
+  const pencilButton = Object.assign(new Element("button"), { id: "editorInkButton" });
   const document = {
     title: "",
     listeners: /** @type {Record<string, Function>} */ ({}),
@@ -276,7 +306,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
      * The toolbar's children: the sidebar's button, then from
      * #editorModeButtons on.
      */
-    toolbar: /** @type {Element[]} */ ([sidebarButton, new Element("div"), separator]),
+    toolbar: /** @type {Element[]} */ ([sidebarButton, pencil, separator]),
     /** The views manager header's children, from Add file on. */
     header: /** @type {Element[]} */ ([addFileButton]),
     /** @param {string} id */
@@ -284,6 +314,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       if (id === stopWaiting.id) return stopWaiting;
       if (id === outerContainer.id) return outerContainer;
       if (id === viewsManagerElement.id) return viewsManagerElement;
+      if (id === pencilButton.id) return pencilButton;
+      if (id === viewerContainer.id) return viewerContainer;
       if (!toolbar) return null;
       return [...this.toolbar, ...this.header].find((element) => element.id === id) ?? null;
     },
@@ -474,6 +506,15 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     };
   };
 
+  /** A stand-in for pdf.js's AnnotationEditorUIManager. */
+  const uiManager = {
+    /** Whether an editor takes the keys, as a Text box being typed in does. */
+    isEditorHandlingKeyboard: false,
+    unselectAll: record("ui.unselectAll"),
+    addCommands: record("ui.addCommands"),
+    *getEditors() {},
+  };
+
   const app = {
     initializedPromise: Promise.resolve(),
     eventBus,
@@ -493,9 +534,16 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       pages: [{ view: [0, 0, 612, 792], rotate: 0 }],
       /** @param {number} index */
       getPageView(index) {
-        return { pdfPage: this.pages[index] };
+        return { pdfPage: this.pages[index], div: this.pageDiv, viewport: this.viewport };
       },
+      /** @type {any} the first page's div, for the eraser */
+      pageDiv: undefined,
+      /** @type {any} the first page's viewport, for the eraser */
+      viewport: undefined,
       focus: record("pdfViewer.focus"),
+      /** pdf.js's tool, as an `AnnotationEditorType`: none until one is chosen. */
+      annotationEditorMode: 0,
+      _layerProperties: { annotationEditorUIManager: uiManager },
     },
     /** @type {any} */
     pdfThumbnailViewer: null,
@@ -564,6 +612,12 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     pdfDocument: null,
   };
 
+  // pdf.js switches tools, as web/app.js and web/pdf_viewer.js do.
+  eventBus.on("switchannotationeditormode", (/** @type {{ mode: number }} */ { mode }) => {
+    app.pdfViewer.annotationEditorMode = mode;
+    eventBus.dispatch("annotationeditormodechanged", { mode });
+  });
+
   const page = {
     pdflion,
     PDFViewerApplication: app,
@@ -613,6 +667,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     console: { warn: record("console.warn"), error: record("console.error") },
   };
   page.window = page;
+  vm.runInNewContext(GEOMETRY, page, { filename: "geometry.js" });
   vm.runInNewContext(BRIDGE, page, { filename: "bridge.js" });
 
   return {
@@ -713,6 +768,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     },
     outerContainer,
     viewsManagerElement,
+    pencil,
+    pencilButton,
+    uiManager,
+    viewerContainer,
   };
 }
 
@@ -1599,6 +1658,281 @@ describe("bridge.js rotating pages", () => {
     assert.equal(await rotating, false);
     assert.deepEqual(named(bridge.calls, "PDFLib.load"), []);
   });
+});
+
+describe("bridge.js eraser", () => {
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const eraserOf = (bridge) => {
+    const container = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser");
+    const [button, box] = container.children;
+    const [settings] = box.children;
+    const [modes, sizeSetter] = settings.children;
+    const [line, object] = modes.children.map((/** @type {any} */ label) => label.children[0]);
+    return { container, button, box, line, object, size: sizeSetter.children[1] };
+  };
+
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const mode = (bridge) => bridge.app.pdfViewer.annotationEditorMode;
+
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const isErasing = (bridge) => bridge.outerContainer.classes.has("pdflionErasing");
+
+  /** @param {ReturnType<typeof loadBridge>} bridge @param {number} mode */
+  const switchTool = (bridge, mode) =>
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode });
+
+  it("adds a button after Pencil, with an option box and a circle for the pages", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { container, button, box, line, object, size } = eraserOf(bridge);
+    assert.equal(bridge.toolbar.indexOf(container), bridge.toolbar.indexOf(bridge.pencil) + 1);
+    assert.equal(container.className, "toolbarButtonWithContainer");
+    assert.equal(button.id, "pdflionEditorEraserButton");
+    assert.equal(button.title, "Eraser");
+    assert.equal(button.attributes["aria-controls"], box.id);
+    assert.equal(box.className, "editorParamsToolbar hidden doorHangerRight");
+    assert.deepEqual([line.value, object.value], ["line", "object"]);
+    // Line mode isn't in yet.
+    assert.equal(line.disabled, true);
+    assert.equal(object.disabled, undefined);
+    assert.deepEqual([size.min, size.max], ["2", "50"]);
+    const [cursor] = bridge.outerContainer.children;
+    assert.equal(cursor.id, "pdflionEraserCursor");
+    assert.equal(cursor.hidden, true);
+  });
+
+  it("works whenever pdf.js's tools do", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { button } = eraserOf(bridge);
+    assert.equal(button.disabled, true);
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    assert.equal(button.disabled, false);
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: -1 });
+    assert.equal(button.disabled, true);
+  });
+
+  it("shows the settings main keeps for every tab, and has main keep new ones", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { object, size } = eraserOf(bridge);
+    assert.equal(size.value, "24");
+    assert.equal(object.checked, true);
+    bridge.pdflion.toolSettingsListener?.({ eraser: { mode: "object", size: 40 }, favourites: [] });
+    assert.equal(size.value, "40");
+
+    size.value = "30";
+    size.listeners.input();
+    assert.deepEqual(bridge.pdflion.storedToolSettings, [], "not before the slider is let go");
+    size.listeners.change();
+    assert.deepEqual(bridge.pdflion.storedToolSettings, [{ eraser: { mode: "object", size: 30 } }]);
+  });
+
+  it("turns on in pdf.js's ink mode, shown as Pencil's, and off with its button", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { button, box } = eraserOf(bridge);
+    button.listeners.click();
+    assert.equal(mode(bridge), 15);
+    assert.ok(isErasing(bridge));
+    assert.ok(button.classes.has("toggled"));
+    assert.equal(button.attributes["aria-expanded"], "true");
+    assert.ok(!box.classes.has("hidden"));
+    assert.equal(bridge.pencilButton.attributes["aria-expanded"], "false");
+
+    button.listeners.click();
+    assert.equal(mode(bridge), 0);
+    assert.ok(!isErasing(bridge));
+    assert.ok(!button.classes.has("toggled"));
+    assert.equal(button.attributes["aria-expanded"], "false");
+    assert.ok(box.classes.has("hidden"));
+  });
+
+  it("makes Pencil's strokes a drawing first, when Pencil is on", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    switchTool(bridge, 15);
+    eraserOf(bridge).button.listeners.click();
+    assert.ok(isErasing(bridge));
+    // Once to commit Pencil's drawing session, once to unselect the drawing.
+    assert.equal(named(bridge.calls, "ui.unselectAll").length, 2);
+    assert.equal(mode(bridge), 15);
+  });
+
+  it("stops for another tool, and for Pencil, whose ink mode stays", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { button } = eraserOf(bridge);
+    button.listeners.click();
+    switchTool(bridge, 3);
+    assert.ok(!isErasing(bridge));
+    assert.equal(mode(bridge), 3);
+
+    button.listeners.click();
+    assert.equal(mode(bridge), 15);
+    // pdf.js would turn Pencil off, since ink mode shows it on.
+    const click = bridge.fire("click", { target: element("#editorInkButton") });
+    assert.ok(click.stopped);
+    assert.ok(!isErasing(bridge));
+    assert.equal(mode(bridge), 15);
+    assert.equal(bridge.pencilButton.attributes["aria-expanded"], "true");
+    // Pencil works as pdf.js has it when the eraser is off.
+    assert.ok(!bridge.fire("click", { target: element("#editorInkButton") }).stopped);
+  });
+
+  it("stops with Esc, unless pdf.js or the page overview used it", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    eraserOf(bridge).button.listeners.click();
+    bridge.fire("keydown", { key: "Escape", defaultPrevented: true });
+    assert.ok(isErasing(bridge));
+    bridge.fire("keydown", { key: "Escape" });
+    assert.ok(!isErasing(bridge));
+    assert.equal(mode(bridge), 0);
+  });
+
+  it("erases the drawings it touches, whole, only Pencil's, as one step to undo", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { app, uiManager, viewerContainer } = bridge;
+    /** The first page, at the window's top left, 792 points tall, at 100 %. */
+    const pageDiv = {
+      dataset: { pageNumber: "1" },
+      clientLeft: 0,
+      clientTop: 0,
+      getBoundingClientRect: () => ({ left: 0, top: 0 }),
+      /** @param {string} selector */
+      closest: (selector) => (selector === "#viewerContainer .page[data-page-number]" ? pageDiv : null),
+    };
+    app.pdfViewer.pageDiv = pageDiv;
+    app.pdfViewer.viewport = {
+      scale: 1,
+      convertToPdfPoint: (/** @type {number} */ x, /** @type {number} */ y) => [x, 792 - y],
+    };
+    /** @type {string[]} */
+    const removed = [];
+    /**
+     * @param {string} id
+     * @param {string} editorType
+     * @param {number} y where its stroke goes across, in PDF coordinates
+     */
+    const editor = (id, editorType, y) => ({
+      id,
+      editorType,
+      pageIndex: 0,
+      serialize: (/** @type {boolean} */ isForCopying) =>
+        isForCopying && editorType !== "highlight"
+          ? { paths: { points: [[100, y, 300, y]] }, thickness: 2 }
+          : null,
+      remove() {
+        removed.push(id);
+        editors.splice(editors.indexOf(this), 1);
+      },
+    });
+    const [crossed, missed] = [editor("crossed", "ink", 700), editor("missed", "ink", 500)];
+    const editors = [crossed, missed, editor("signature", "signature", 700), editor("highlight", "highlight", 700)];
+    uiManager.getEditors = function* () {
+      yield* editors;
+    };
+    /** @type {any[]} */
+    const commands = [];
+    uiManager.addCommands = (/** @type {any} */ command) => commands.push(command);
+    /** @type {string[]} */
+    const restored = [];
+    uiManager.getLayer = () => ({ addOrRebuild: (/** @type {any} */ e) => restored.push(e.id) });
+
+    app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    eraserOf(bridge).button.listeners.click();
+    // Down from above the strokes at y 700, then on across them.
+    const down = { target: pageDiv, button: 0, pointerId: 7, clientX: 200, clientY: 50, stopped: false, prevented: false };
+    Object.assign(down, {
+      stopPropagation: () => (down.stopped = true),
+      preventDefault: () => (down.prevented = true),
+    });
+    viewerContainer.listeners.pointerdown(down);
+    assert.ok(down.stopped && down.prevented, "pdf.js gets no press to draw with");
+    assert.ok(bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: 200, clientY: 150 }).stopped);
+    assert.deepEqual(removed, ["crossed"]);
+    assert.deepEqual(commands, [], "not before the drag ends");
+    // Another pointer's events are left alone.
+    assert.ok(!bridge.fire("pointerup", { target: pageDiv, pointerId: 8 }).stopped);
+    bridge.fire("pointerup", { target: pageDiv, pointerId: 7 });
+
+    assert.equal(commands.length, 1);
+    const [{ cmd, undo, mustExec }] = commands;
+    assert.equal(mustExec, false);
+    undo();
+    assert.deepEqual(restored, ["crossed"]);
+    cmd();
+    assert.deepEqual(removed, ["crossed", "crossed"]);
+    // The drag is over.
+    bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: 200, clientY: 300 });
+    assert.deepEqual(removed, ["crossed", "crossed"]);
+
+    // A drag that erases nothing is no step to undo.
+    viewerContainer.listeners.pointerdown({ ...down, clientY: 400 });
+    bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: 200, clientY: 450 });
+    bridge.fire("pointerup", { target: pageDiv, pointerId: 7 });
+    assert.equal(commands.length, 1);
+  });
+
+  it("goes nowhere without a document to edit", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.app.pdfViewer._layerProperties.annotationEditorUIManager = null;
+    eraserOf(bridge).button.listeners.click();
+    assert.ok(!isErasing(bridge));
+    assert.equal(mode(bridge), 0);
+  });
+});
+
+describe("bridge.js Undo and Redo", () => {
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @returns {string[]} the editing actions dispatched to pdf.js
+   */
+  const actions = (bridge) =>
+    bridge.app.eventBus.dispatched
+      .filter(([name]) => name === "editingaction")
+      .map(([, data]) => data.name);
+
+  it("leave them to Chromium without a drawing tool", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.equal(bridge.run("undo"), false);
+    assert.equal(bridge.run("redo"), false);
+    assert.deepEqual(actions(bridge), []);
+  });
+
+  it("send them to pdf.js while a drawing tool is on", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 15 });
+    assert.equal(bridge.run("undo"), true);
+    assert.equal(bridge.run("redo"), true);
+    // A checkbox has the focus, but no text is being typed.
+    bridge.page.document.activeElement = { tagName: "INPUT", type: "checkbox" };
+    assert.equal(bridge.run("undo"), true);
+    assert.deepEqual(actions(bridge), ["undo", "redo", "undo"]);
+  });
+
+  for (const [description, typing] of [
+    ["in a text field", { activeElement: { tagName: "INPUT", type: "text" } }],
+    ["in a number field", { activeElement: { tagName: "INPUT", type: "number" } }],
+    ["in a text area", { activeElement: { tagName: "TEXTAREA" } }],
+    ["in editable content", { activeElement: { isContentEditable: true } }],
+    ["in a Text box of pdf.js's", { isEditorHandlingKeyboard: true }],
+  ]) {
+    it(`leave typing ${description} to Chromium`, async () => {
+      const bridge = loadBridge();
+      await bridge.load();
+      bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 3 });
+      if ("activeElement" in typing) bridge.page.document.activeElement = typing.activeElement;
+      if ("isEditorHandlingKeyboard" in typing) bridge.uiManager.isEditorHandlingKeyboard = true;
+      assert.equal(bridge.run("undo"), false);
+      assert.deepEqual(actions(bridge), []);
+    });
+  }
 });
 
 describe("bridge.js document bytes", () => {

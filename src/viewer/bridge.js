@@ -43,6 +43,14 @@
   /** `AnnotationEditorPrefix` in src/shared/util.js: annotations made in the viewer. */
   const EDITOR_PREFIX = "pdfjs_internal_editor_";
 
+  /**
+   * `AnnotationEditorType` in src/shared/util.js: editing turned off, no tool,
+   * and Pencil, whose ink mode the eraser works in.
+   */
+  const EDITOR_DISABLE = -1;
+  const EDITOR_NONE = 0;
+  const EDITOR_INK = 15;
+
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
   const PDF_LIB_URL = "/lib/pdf-lib.min.js";
 
@@ -175,6 +183,51 @@
   let overviewButton = null;
 
   /**
+   * @typedef {object} EraserSettings as main keeps them for every tab
+   * @property {"line" | "object"} mode
+   * @property {number} size the eraser's width, in points
+   */
+
+  /** @type {EraserSettings} */
+  let eraser = { mode: "object", size: 10 };
+
+  /** Whether the eraser is on: see startErasing(). */
+  let erasing = false;
+
+  /**
+   * @typedef {object} EraserTool what addEraserTool() adds
+   * @property {HTMLButtonElement} button
+   * @property {HTMLElement} box its option box
+   * @property {Record<"line" | "object", HTMLInputElement>} modes
+   * @property {HTMLInputElement} size
+   * @property {HTMLElement} cursor the circle that follows the pointer over pages
+   */
+
+  /** @type {EraserTool | null} */
+  let eraserTool = null;
+
+  /**
+   * @typedef {object} Drawing an ink editor's strokes, read once per drag
+   * @property {ArrayLike<number>[]} strokes x, y pairs in PDF coordinates
+   * @property {number} thickness
+   * @property {[number, number, number, number]} box around the strokes' points
+   */
+
+  /**
+   * @typedef {object} Gesture a drag of the eraser
+   * @property {number} pointerId
+   * @property {{ pageIndex: number, point: number[] } | null} last where the
+   *   eraser last was on a page
+   * @property {Map<any, Drawing | null>} drawings each editor seen, and its
+   *   strokes if it's Pencil's
+   * @property {any[]} erased the editors it removed
+   * @property {AbortController} listening for the drag's pointer events
+   */
+
+  /** @type {Gesture | null} */
+  let gesture = null;
+
+  /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
    * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
@@ -197,6 +250,9 @@
     save: (app) => !edited || save(app, window.pdflion.save),
     saveAs: (app) => save(app, window.pdflion.saveAs),
     insertBlankPage: (app) => insertBlankPage(app),
+    // Edit > Undo and Redo. False leaves them to Chromium, which main asks next.
+    undo: (app) => editingAction(app, "undo"),
+    redo: (app) => editingAction(app, "redo"),
   };
 
   // The page gets key events before the native menu, on macOS and Windows
@@ -236,6 +292,7 @@
       // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
       overviewButton = addOverviewButton(app);
       pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
+      eraserTool = addEraserTool(app);
       guardPageTools(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
@@ -243,6 +300,8 @@
         );
         // After pdf.js's own listeners, which come with the views manager.
         followOverview(app);
+        // After the overview's, whose Esc comes first.
+        followEraser(app);
         app.eventBus.on("documentloaded", () => {
           trackEdits(app);
           checkLocked(app);
@@ -1436,10 +1495,13 @@
     viewsManager.onResizing = function (/** @type {number} */ width) {
       if (!overview) onResizing.call(this, width);
     };
-    // After pdf.js's own listener, which prevents the default of what it handles.
+    // After pdf.js's own listener, which prevents the default of what it
+    // handles. This one does too, so the eraser stays on.
     window.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || !overview || event.defaultPrevented) return;
-      if (!document.querySelector(DRAGGING_PAGES)) closeOverview(app);
+      if (document.querySelector(DRAGGING_PAGES)) return;
+      closeOverview(app);
+      event.preventDefault();
     });
     window.addEventListener("dblclick", (event) => {
       // The first click went to the page.
@@ -1480,6 +1542,513 @@
       `${THUMBNAILS} > .thumbnail[page-number="${number}"] > input`,
     );
     if (checkbox && !checkbox.checked) checkbox.click();
+  }
+
+  /**
+   * The eraser: a tool after Pencil that erases Pencil's drawings, the file's
+   * ink annotations among them. It works in pdf.js's ink mode, where pdf.js
+   * turns the file's ink annotations into editors, and while it's on it takes
+   * the pointer events over pages before pdf.js would draw with them. In
+   * Object mode it removes every drawing it touches, whole, and a drag is one
+   * step to undo. Line mode isn't in yet.
+   *
+   * Adds it to the toolbar after Pencil, built like pdf.js's tools: a button,
+   * and an option box that shows while it's on, with Line and Object and the
+   * eraser's size. overrides.css draws them, and the circle that shows the
+   * eraser on the page, since the pointer's own cursor can't grow as large.
+   * The labels are English, like the native menus.
+   *
+   * @param {any} app
+   * @returns {EraserTool | null}
+   */
+  function addEraserTool(app) {
+    const pencil = document.getElementById("editorInk");
+    const outerContainer = document.getElementById("outerContainer");
+    if (!pencil || !outerContainer) return null;
+    const button = makeButton("pdflionEditorEraserButton", "toolbarButton", "Eraser");
+    button.disabled = true;
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-haspopup", "true");
+    button.setAttribute("aria-controls", "pdflionEditorEraserParamsToolbar");
+    button.addEventListener("click", () => {
+      if (erasing) stopErasing(app, EDITOR_NONE);
+      else startErasing(app);
+    });
+
+    /**
+     * @param {"line" | "object"} mode
+     * @param {string} text
+     * @param {string} title
+     */
+    const modeChoice = (mode, text, title) => {
+      const input = createElement("input", { type: "radio", name: "pdflionEraserMode", value: mode });
+      input.addEventListener("change", () => storeEraser({ ...eraser, mode }));
+      return { input, label: createElement("label", { className: "pdflionEraserMode", title }, input, text) };
+    };
+    const line = modeChoice("line", "Line", "Erases the parts of lines under it");
+    // Line mode isn't in yet.
+    line.input.disabled = true;
+    const object = modeChoice("object", "Object", "Erases whole drawings");
+    const size = createElement("input", {
+      type: "range",
+      id: "pdflionEraserSize",
+      className: "editorParamsSlider",
+      min: "2",
+      max: "50",
+      step: "1",
+    });
+    size.addEventListener("input", () => {
+      eraser = { ...eraser, size: Number(size.value) };
+    });
+    size.addEventListener("change", () => storeEraser(eraser));
+
+    const box = createElement(
+      "div",
+      {
+        id: "pdflionEditorEraserParamsToolbar",
+        className: "editorParamsToolbar hidden doorHangerRight",
+      },
+      createElement(
+        "div",
+        { className: "editorParamsToolbarContainer" },
+        createElement(
+          "div",
+          { className: "editorParamsSetter", role: "radiogroup", ariaLabel: "Erase" },
+          line.label,
+          object.label,
+        ),
+        createElement(
+          "div",
+          { className: "editorParamsSetter" },
+          createElement("label", {
+            className: "editorParamsLabel",
+            htmlFor: "pdflionEraserSize",
+            textContent: "Size",
+          }),
+          size,
+        ),
+      ),
+    );
+    pencil.after(
+      createElement(
+        "div",
+        { id: "pdflionEditorEraser", className: "toolbarButtonWithContainer" },
+        button,
+        box,
+      ),
+    );
+    const cursor = createElement("div", { id: "pdflionEraserCursor", hidden: true });
+    outerContainer.append(cursor);
+    return { button, box, modes: { line: line.input, object: object.input }, size, cursor };
+  }
+
+  /**
+   * Keeps the eraser in step with pdf.js, main and the user:
+   * - its button works whenever pdf.js's tools do
+   * - another tool turns it off. Pencil's button would turn ink mode off,
+   *   since the eraser leaves pdf.js showing Pencil on, so it just stops
+   *   erasing. Esc turns it off, unless pdf.js or the page overview used it.
+   * - its settings are main's, the same in every tab
+   * - a press on a page starts erasing, and the circle follows the pointer
+   *
+   * @param {any} app
+   */
+  function followEraser(app) {
+    app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+      if (eraserTool) eraserTool.button.disabled = mode === EDITOR_DISABLE;
+      if (!erasing) return;
+      if (mode === EDITOR_INK) hidePencil();
+      else stopErasing(app);
+    });
+    window.pdflion.getToolSettings().then((settings) => {
+      if (settings) showEraser(settings.eraser);
+    });
+    window.pdflion.onToolSettingsChange((settings) => showEraser(settings.eraser));
+    window.addEventListener(
+      "click",
+      (event) => {
+        if (!erasing || !targetIn(event, "#editorInkButton")) return;
+        event.stopImmediatePropagation();
+        stopErasing(app, EDITOR_INK);
+      },
+      true,
+    );
+    window.addEventListener("keydown", (event) => {
+      if (erasing && event.key === "Escape" && !event.defaultPrevented) {
+        stopErasing(app, EDITOR_NONE);
+      }
+    });
+    const container = document.getElementById("viewerContainer");
+    container?.addEventListener("pointerdown", (event) => startGesture(app, event), true);
+    container?.addEventListener("pointermove", (event) => moveCursor(app, event));
+    container?.addEventListener("pointerleave", () => {
+      if (eraserTool) eraserTool.cursor.hidden = true;
+    });
+  }
+
+  /**
+   * Turns the eraser on, in pdf.js's ink mode. Strokes Pencil has just drawn
+   * become a drawing first, so that the eraser can take them.
+   *
+   * @param {any} app
+   */
+  function startErasing(app) {
+    const ui = uiManager(app);
+    if (erasing || !ui) return;
+    erasing = true;
+    showErasing(true);
+    if (app.pdfViewer.annotationEditorMode === EDITOR_INK) {
+      commitDrawing(ui);
+      hidePencil();
+    } else {
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_INK });
+    }
+  }
+
+  /**
+   * Turns the eraser off.
+   *
+   * @param {any} app
+   * @param {number} [mode] pdf.js's tool from now on: none, after the eraser's
+   *   button or Esc, or Pencil, whose ink mode stays. Without it, pdf.js has
+   *   changed tools already.
+   */
+  function stopErasing(app, mode) {
+    if (!erasing) return;
+    endGesture(app);
+    erasing = false;
+    showErasing(false);
+    if (mode === EDITOR_NONE) {
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
+    } else if (mode === EDITOR_INK) {
+      // pdf.js shows Pencil on again, with its option box.
+      document.getElementById("editorInkButton")?.setAttribute("aria-expanded", "true");
+    }
+  }
+
+  /** @param {boolean} on whether the eraser is on */
+  function showErasing(on) {
+    document.getElementById("outerContainer")?.classList.toggle("pdflionErasing", on);
+    if (!eraserTool) return;
+    const { button, box, cursor } = eraserTool;
+    button.classList.toggle("toggled", on);
+    button.setAttribute("aria-expanded", String(on));
+    box.classList.toggle("hidden", !on);
+    if (!on) cursor.hidden = true;
+  }
+
+  /**
+   * pdf.js's ink mode shows Pencil on, with its option box open. While the
+   * eraser is on, overrides.css shows them off, and this says so too.
+   */
+  function hidePencil() {
+    document.getElementById("editorInkButton")?.setAttribute("aria-expanded", "false");
+  }
+
+  /**
+   * Shows the eraser's settings, as main sends them.
+   *
+   * @param {EraserSettings} settings
+   */
+  function showEraser(settings) {
+    eraser = settings;
+    if (!eraserTool) return;
+    // The eraser erases objects whatever the setting, until Line mode is in.
+    eraserTool.modes.object.checked = true;
+    eraserTool.size.value = String(settings.size);
+  }
+
+  /**
+   * Has main keep the eraser's settings, which it sends every tab.
+   *
+   * @param {EraserSettings} settings
+   */
+  function storeEraser(settings) {
+    eraser = settings;
+    window.pdflion.setToolSettings({ eraser: settings });
+  }
+
+  /**
+   * Starts a drag of the eraser on a page: pdf.js gets none of its pointer
+   * events, so it neither draws nor selects drawings.
+   *
+   * @param {any} app
+   * @param {PointerEvent} event
+   */
+  function startGesture(app, event) {
+    if (!erasing || gesture || event.button !== 0 || !placeOf(app, event)) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const listening = new AbortController();
+    gesture = { pointerId: event.pointerId, last: null, drawings: new Map(), erased: [], listening };
+    const options = { capture: true, signal: listening.signal };
+    window.addEventListener(
+      "pointermove",
+      (move) => {
+        if (move.pointerId !== gesture?.pointerId) return;
+        move.stopPropagation();
+        moveCursor(app, move);
+        eraseAlong(app, move);
+      },
+      options,
+    );
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(
+        type,
+        (end) => {
+          if (/** @type {PointerEvent} */ (end).pointerId !== gesture?.pointerId) return;
+          end.stopPropagation();
+          endGesture(app);
+        },
+        options,
+      );
+    }
+    eraseAlong(app, event);
+  }
+
+  /**
+   * Ends a drag of the eraser, as one step to undo, as pdf.js's own Delete
+   * is.
+   *
+   * @param {any} app
+   */
+  function endGesture(app) {
+    if (!gesture) return;
+    const { erased, listening } = gesture;
+    listening.abort();
+    gesture = null;
+    const ui = uiManager(app);
+    if (!ui || erased.length === 0) return;
+    ui.addCommands({
+      cmd: () => {
+        for (const editor of erased) editor.remove();
+      },
+      undo: () => {
+        for (const editor of erased) restoreEditor(ui, editor);
+      },
+      mustExec: false,
+    });
+  }
+
+  /**
+   * Erases where the eraser passed since the last pointer event, at points
+   * half its size apart, so that a fast drag misses nothing.
+   *
+   * @param {any} app
+   * @param {PointerEvent} event
+   */
+  function eraseAlong(app, event) {
+    if (!gesture) return;
+    const place = placeOf(app, event);
+    const { last } = gesture;
+    gesture.last = place;
+    if (!place) return;
+    const radius = eraser.size / 2;
+    const from = last?.pageIndex === place.pageIndex ? last.point : place.point;
+    const path = window.PDFLionGeometry.resample([...from, ...place.point], radius / 2);
+    for (let i = 0; i < path.length; i += 2) {
+      eraseDrawingsAt(app, place.pageIndex, [path[i], path[i + 1]], radius);
+    }
+  }
+
+  /**
+   * Removes the drawings on a page that the eraser touches, centred on a
+   * point.
+   *
+   * @param {any} app
+   * @param {number} pageIndex
+   * @param {number[]} center in PDF coordinates
+   * @param {number} radius
+   */
+  function eraseDrawingsAt(app, pageIndex, center, radius) {
+    const ui = uiManager(app);
+    if (!ui || !gesture) return;
+    for (const editor of [...ui.getEditors(pageIndex)]) {
+      const drawing = drawingOf(editor);
+      if (!drawing || !touches(drawing, center, radius)) continue;
+      editor.remove();
+      gesture.erased.push(editor);
+    }
+  }
+
+  /**
+   * @param {any} editor
+   * @returns {Drawing | null} its strokes, if it's Pencil's: not a free
+   *   highlight, nor a signature, which are drawings too
+   */
+  function drawingOf(editor) {
+    const drawings = /** @type {Gesture} */ (gesture).drawings;
+    if (!drawings.has(editor)) {
+      const data = editor.editorType === "ink" ? editor.serialize(true) : null;
+      drawings.set(
+        editor,
+        data && {
+          strokes: data.paths.points,
+          thickness: data.thickness,
+          box: boxAround(data.paths.points),
+        },
+      );
+    }
+    return drawings.get(editor) ?? null;
+  }
+
+  /**
+   * @param {Drawing} drawing
+   * @param {number[]} center
+   * @param {number} radius
+   * @returns {boolean} whether an eraser there touches the drawing's ink
+   */
+  function touches({ strokes, thickness, box: [x1, y1, x2, y2] }, center, radius) {
+    const reach = radius + thickness / 2;
+    const [x, y] = center;
+    if (x < x1 - reach || x > x2 + reach || y < y1 - reach || y > y2 + reach) return false;
+    return strokes.some((stroke) =>
+      window.PDFLionGeometry.hitsStroke(stroke, center, radius, thickness),
+    );
+  }
+
+  /**
+   * @param {ArrayLike<number>[]} strokes
+   * @returns {[number, number, number, number]} the smallest box around their points
+   */
+  function boxAround(strokes) {
+    const box = /** @type {[number, number, number, number]} */ ([
+      Infinity,
+      Infinity,
+      -Infinity,
+      -Infinity,
+    ]);
+    for (const stroke of strokes) {
+      for (let i = 0; i + 1 < stroke.length; i += 2) {
+        box[0] = Math.min(box[0], stroke[i]);
+        box[1] = Math.min(box[1], stroke[i + 1]);
+        box[2] = Math.max(box[2], stroke[i]);
+        box[3] = Math.max(box[3], stroke[i + 1]);
+      }
+    }
+    return box;
+  }
+
+  /**
+   * Puts a removed editor back, as pdf.js's own undo of Delete does
+   * (`#addEditorToLayer` in src/display/editor/tools.js).
+   *
+   * @param {any} ui
+   * @param {any} editor
+   */
+  function restoreEditor(ui, editor) {
+    const layer = ui.getLayer(editor.pageIndex);
+    if (layer) {
+      layer.addOrRebuild(editor);
+    } else {
+      ui.addEditor(editor);
+      ui.addToAnnotationStorage(editor);
+    }
+  }
+
+  /**
+   * Shows the eraser's circle where the pointer is, as large as the eraser at
+   * the page's zoom, or hides it off the pages.
+   *
+   * @param {any} app
+   * @param {PointerEvent} event
+   */
+  function moveCursor(app, event) {
+    if (!erasing || !eraserTool) return;
+    const { cursor } = eraserTool;
+    const place = placeOf(app, event);
+    cursor.hidden = !place;
+    if (!place) return;
+    const diameter = `${eraser.size * place.scale}px`;
+    Object.assign(cursor.style, {
+      width: diameter,
+      height: diameter,
+      left: `${event.clientX}px`,
+      top: `${event.clientY}px`,
+    });
+  }
+
+  /**
+   * @param {any} app
+   * @param {PointerEvent} event
+   * @returns {{ pageIndex: number, point: number[], scale: number } | null}
+   *   the page under the pointer, the pointer's place on it in PDF
+   *   coordinates, and how many pixels a point is there, or null off the pages
+   */
+  function placeOf(app, { target, clientX, clientY }) {
+    const div = /** @type {any} */ (target)?.closest?.("#viewerContainer .page[data-page-number]");
+    if (!div) return null;
+    const pageIndex = Number(div.dataset.pageNumber) - 1;
+    const view = app.pdfViewer.getPageView(pageIndex);
+    if (view?.div !== div || !view.viewport) return null;
+    const { left, top } = div.getBoundingClientRect();
+    const point = view.viewport.convertToPdfPoint(
+      clientX - left - div.clientLeft,
+      clientY - top - div.clientTop,
+    );
+    return { pageIndex, point, scale: view.viewport.scale };
+  }
+
+  /**
+   * Ends Pencil's drawing session, which makes its strokes one drawing, and
+   * unselects the drawings. pdf.js's unselectAll() only commits the session
+   * when there is one, so it runs twice.
+   *
+   * @param {any} ui
+   */
+  function commitDrawing(ui) {
+    ui.unselectAll();
+    ui.unselectAll();
+  }
+
+  /**
+   * Edit > Undo or Redo, for pdf.js's annotations, which Chromium's undo and
+   * redo don't reach. They apply while a drawing tool is on, as pdf.js's own
+   * ⌘Z and ⇧⌘Z do, and not while text is being typed, which is Chromium's to
+   * undo.
+   *
+   * @param {any} app
+   * @param {"undo" | "redo"} name
+   * @returns {boolean} whether pdf.js took it
+   */
+  function editingAction(app, name) {
+    const ui = uiManager(app);
+    const mode = app.pdfViewer.annotationEditorMode;
+    if (!ui || mode === EDITOR_NONE || mode === EDITOR_DISABLE) return false;
+    if (ui.isEditorHandlingKeyboard || isTyping()) return false;
+    app.eventBus.dispatch("editingaction", { source: null, name });
+    return true;
+  }
+
+  /**
+   * @returns {boolean} whether the focus is where text is typed, where pdf.js
+   *   leaves ⌘Z to Chromium (`textInputChecker` in src/display/editor/tools.js)
+   */
+  function isTyping() {
+    const element = /** @type {any} */ (document.activeElement);
+    if (element?.isContentEditable || element?.tagName === "TEXTAREA") return true;
+    return element?.tagName === "INPUT" && (element.type === "text" || element.type === "number");
+  }
+
+  /**
+   * @param {any} app
+   * @returns {any} pdf.js's AnnotationEditorUIManager, once a document has
+   *   loaded, as web/app.js reaches it
+   */
+  function uiManager(app) {
+    return app.pdfViewer?._layerProperties?.annotationEditorUIManager ?? null;
+  }
+
+  /**
+   * @param {string} tagName
+   * @param {object} [properties]
+   * @param {(Node | string)[]} children
+   * @returns {any} a new element
+   */
+  function createElement(tagName, properties = {}, ...children) {
+    const element = Object.assign(document.createElement(tagName), properties);
+    element.append(...children);
+    return element;
   }
 
   /**

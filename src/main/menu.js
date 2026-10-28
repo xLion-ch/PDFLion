@@ -157,13 +157,14 @@ function template() {
       ],
     },
     {
-      // Electron's editMenu role for each platform, plus Find. Copy and Select
-      // All act on the text layer, or on form fields and annotations while one
-      // has focus.
+      // Electron's editMenu role for each platform, plus Find, with Undo and
+      // Redo reaching pdf.js's annotations too. Copy and Select All act on the
+      // text layer, or on form fields and annotations while one has focus.
       label: "&Edit",
       submenu: [
-        { role: "undo", label: "&Undo" },
-        { role: "redo", label: "&Redo" },
+        undoItem("&Undo", "undo", "CmdOrCtrl+Z"),
+        // The redo role's shortcuts.
+        undoItem("&Redo", "redo", process.platform === "win32" ? "Ctrl+Y" : "Shift+CmdOrCtrl+Z"),
         { type: "separator" },
         { role: "cut", label: "Cu&t" },
         { role: "copy", label: "&Copy" },
@@ -321,6 +322,36 @@ function tabItem(label, id, accelerator, isEnabled, run) {
     click: (_item, win) => {
       const focused = win instanceof BrowserWindow ? win : null;
       if (isEnabled(focused) && focused) run(focused);
+    },
+  };
+}
+
+/**
+ * Edit > Undo or Redo. pdf.js keeps its own history of annotations, which
+ * Chromium's undo and redo, those of the roles, don't reach. So bridge.js
+ * gets the command first, and takes it while a drawing tool is on, unless
+ * text is being typed, which Chromium undoes and redoes. pdf.js handles ⌘Z
+ * and ⇧⌘Z itself while a drawing tool is on, before the menu sees them.
+ *
+ * @param {string} label
+ * @param {"undo" | "redo"} command
+ * @param {string} accelerator the role's
+ * @returns {Electron.MenuItemConstructorOptions}
+ */
+function undoItem(label, command, accelerator) {
+  return {
+    id: command,
+    label,
+    accelerator,
+    click: async (_item, win) => {
+      const tab = win instanceof BrowserWindow ? tabs.activeTab(win) : undefined;
+      if (!tab) {
+        // Another window, such as the About panel, as the role would.
+        if (isMac) Menu.sendActionToFirstResponder(`${command}:`);
+        return;
+      }
+      if ((await runCommand(tab, command)) === true || tab.webContents.isDestroyed()) return;
+      tab.webContents[command]();
     },
   };
 }

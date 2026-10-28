@@ -178,6 +178,84 @@
   mask-image: url(/pdflion/icons/rotate_right.svg);
 }
 
+#pdflionEditorEraserButton::before {
+  mask-image: url(/pdflion/icons/ink_eraser.svg);
+}
+
+/*
+ * The eraser (bridge.js), in its option box: Line and Object, as labelled
+ * radio buttons, and its size.
+ */
+#pdflionEditorEraserParamsToolbar .editorParamsSetter[role="radiogroup"] {
+  justify-content: flex-start;
+  gap: 16px;
+}
+
+.pdflionEraserMode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--main-color);
+
+  &:has(input:disabled) {
+    opacity: 0.38;
+  }
+
+  > input {
+    margin: 0;
+  }
+}
+
+/*
+ * While the eraser is on, pdf.js is in Pencil's ink mode, and shows Pencil on
+ * with its option box open: shown off instead. The pages show the eraser's
+ * circle rather than a cursor, and a touch erases rather than scrolls.
+ */
+#outerContainer.pdflionErasing {
+  #editorInkButton.toggled {
+    background-color: transparent;
+
+    &::before {
+      background-color: var(--toolbar-icon-bg-color);
+    }
+
+    &:is(:hover, :focus-visible) {
+      background-color: var(--button-hover-color);
+    }
+  }
+
+  #editorInkParamsToolbar {
+    display: none !important;
+  }
+
+  #viewerContainer .page {
+    touch-action: none;
+
+    &,
+    * {
+      cursor: none !important;
+    }
+  }
+}
+
+/* The eraser's circle, centred on the pointer. bridge.js sizes and places it. */
+#pdflionEraserCursor {
+  position: fixed;
+  z-index: 100001;
+  box-sizing: border-box;
+  translate: -50% -50%;
+  border-radius: 50%;
+  /* Dark and light rings, which show on any page. */
+  border: 1px solid rgb(0 0 0 / 0.7);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.8);
+  pointer-events: none;
+
+  &[hidden] {
+    display: none;
+  }
+}
+
 /* viewer.css sets this on a selector three classes deep, hence !important. */
 .editToolbar {
   --editor-toolbar-delete-image: url(/pdflion/icons/delete.svg) !important;

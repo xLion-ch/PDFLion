@@ -177,6 +177,37 @@ export async function writeSigned(file, { pages = 1 } = {}) {
   );
 }
 
+/** The strokes writeInk() draws, as x, y pairs: one across, one down to the right. */
+export const INK_STROKES = [
+  Array.from({ length: 21 }, (_, i) => [100 + 10 * i, 600]).flat(),
+  Array.from({ length: 21 }, (_, i) => [100 + 10 * i, 500 - 5 * i]).flat(),
+];
+
+/**
+ * Writes a page with an ink annotation, as another app's pen would leave it:
+ * INK_STROKES in red, 4 points wide, with its appearance stream.
+ *
+ * @param {string} file
+ */
+export async function writeInk(file) {
+  const path = (/** @type {number[]} */ points) =>
+    `${points[0]} ${points[1]} m ${points
+      .slice(2)
+      .map((value, i) => (i % 2 ? `${value} l` : value))
+      .join(" ")} S`;
+  const appearance = `1 0 0 RG 4 w 1 J 1 j ${INK_STROKES.map(path).join(" ")}`;
+  await fs.writeFile(
+    file,
+    pdf([
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] >>",
+      `<< /Type /Annot /Subtype /Ink /Rect [96 396 304 604] /C [1 0 0] /BS << /W 4 >> /F 4 /P 3 0 R /InkList [${INK_STROKES.map((points) => `[${points.join(" ")}]`).join(" ")}] /AP << /N 5 0 R >> >>`,
+      `<< /Type /XObject /Subtype /Form /BBox [96 396 304 604] /Length ${appearance.length} >>\nstream\n${appearance}\nendstream`,
+    ]),
+  );
+}
+
 /**
  * Writes writeForm()'s document with every cross-reference offset wrong, which
  * pdf.js repairs on load and @cantoo/pdf-lib can't.
