@@ -664,6 +664,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     fetch,
     URL,
     AbortController,
+    requestAnimationFrame: (/** @type {() => void} */ callback) => setImmediate(callback),
     console: { warn: record("console.warn"), error: record("console.error") },
   };
   page.window = page;
@@ -1692,8 +1693,7 @@ describe("bridge.js eraser", () => {
     assert.equal(button.attributes["aria-controls"], box.id);
     assert.equal(box.className, "editorParamsToolbar hidden doorHangerRight");
     assert.deepEqual([line.value, object.value], ["line", "object"]);
-    // Line mode isn't in yet.
-    assert.equal(line.disabled, true);
+    assert.equal(line.disabled, undefined);
     assert.equal(object.disabled, undefined);
     assert.deepEqual([size.min, size.max], ["2", "50"]);
     const [cursor] = bridge.outerContainer.children;
@@ -1791,11 +1791,23 @@ describe("bridge.js eraser", () => {
     assert.equal(mode(bridge), 0);
   });
 
-  it("erases the drawings it touches, whole, only Pencil's, as one step to undo", async () => {
-    const bridge = loadBridge();
+  /** Lets the eraser's queued work, frames and pdf.js's editors settle. */
+  const settleAll = async () => {
+    for (let turn = 0; turn < 10; turn++) await settle();
+  };
+
+  /**
+   * Turns the eraser on over a first page at the window's top left, 792
+   * points tall at 100 %, with stand-ins for pdf.js's editors on it. Like
+   * pdf.js's, its layer makes adding a new drawing a step to undo.
+   *
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @param {{ id: string, editorType: string, strokes: number[][] }[]} drawings
+   * @param {{ mode: string, size: number }} [eraser]
+   */
+  async function erasing(bridge, drawings, eraser = { mode: "object", size: 10 }) {
     await bridge.load();
-    const { app, uiManager, viewerContainer } = bridge;
-    /** The first page, at the window's top left, 792 points tall, at 100 %. */
+    const { app, uiManager, viewerContainer, calls } = bridge;
     const pageDiv = {
       dataset: { pageNumber: "1" },
       clientLeft: 0,
@@ -1809,71 +1821,205 @@ describe("bridge.js eraser", () => {
       scale: 1,
       convertToPdfPoint: (/** @type {number} */ x, /** @type {number} */ y) => [x, 792 - y],
     };
-    /** @type {string[]} */
-    const removed = [];
+    /** @type {any[]} the editors on the page */
+    const editors = [];
     /**
      * @param {string} id
      * @param {string} editorType
-     * @param {number} y where its stroke goes across, in PDF coordinates
+     * @param {any} data what serialize(true) gives
      */
-    const editor = (id, editorType, y) => ({
+    const editor = (id, editorType, data) => ({
       id,
       editorType,
       pageIndex: 0,
+      added: true,
+      data,
       serialize: (/** @type {boolean} */ isForCopying) =>
-        isForCopying && editorType !== "highlight"
-          ? { paths: { points: [[100, y, 300, y]] }, thickness: 2 }
-          : null,
+        isForCopying && editorType !== "highlight" ? data : null,
       remove() {
-        removed.push(id);
+        calls.push(["remove", id]);
         editors.splice(editors.indexOf(this), 1);
       },
     });
-    const [crossed, missed] = [editor("crossed", "ink", 700), editor("missed", "ink", 500)];
-    const editors = [crossed, missed, editor("signature", "signature", 700), editor("highlight", "highlight", 700)];
+    for (const { id, editorType, strokes } of drawings) {
+      editors.push(
+        editor(id, editorType, {
+          paths: { points: strokes },
+          color: [255, 0, 0],
+          thickness: 2,
+          opacity: 0.5,
+          rotation: 0,
+          rect: [1, 2, 3, 4],
+        }),
+      );
+    }
     uiManager.getEditors = function* () {
-      yield* editors;
+      yield* [...editors];
     };
     /** @type {any[]} */
     const commands = [];
     uiManager.addCommands = (/** @type {any} */ command) => commands.push(command);
-    /** @type {string[]} */
-    const restored = [];
-    uiManager.getLayer = () => ({ addOrRebuild: (/** @type {any} */ e) => restored.push(e.id) });
+    let built = 0;
+    class Layer {
+      /** @param {any} data */
+      async deserialize(data) {
+        calls.push(["deserialize", data]);
+        const points = data.paths.points.map((/** @type {Float32Array} */ p) => [...p]);
+        // New, unlike the drawings already on the page.
+        return Object.assign(editor(`built ${++built}`, "ink", { ...data, paths: { points } }), {
+          added: false,
+        });
+      }
+      /** @param {any} added */
+      addOrRebuild(added) {
+        calls.push(["addOrRebuild", added.id]);
+        editors.push(added);
+        if (!added.added) this.addUndoableEditor(added);
+        added.added = true;
+      }
+      /** @param {any} added */
+      addUndoableEditor(added) {
+        commands.push({ added: added.id });
+      }
+    }
+    const layer = new Layer();
+    uiManager.getLayer = () => layer;
 
     app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    bridge.pdflion.toolSettingsListener?.({ eraser, favourites: [] });
     eraserOf(bridge).button.listeners.click();
-    // Down from above the strokes at y 700, then on across them.
-    const down = { target: pageDiv, button: 0, pointerId: 7, clientX: 200, clientY: 50, stopped: false, prevented: false };
-    Object.assign(down, {
-      stopPropagation: () => (down.stopped = true),
-      preventDefault: () => (down.prevented = true),
-    });
-    viewerContainer.listeners.pointerdown(down);
-    assert.ok(down.stopped && down.prevented, "pdf.js gets no press to draw with");
-    assert.ok(bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: 200, clientY: 150 }).stopped);
-    assert.deepEqual(removed, ["crossed"]);
-    assert.deepEqual(commands, [], "not before the drag ends");
-    // Another pointer's events are left alone.
-    assert.ok(!bridge.fire("pointerup", { target: pageDiv, pointerId: 8 }).stopped);
-    bridge.fire("pointerup", { target: pageDiv, pointerId: 7 });
+    /** @type {any} */
+    let down;
+    return {
+      editors,
+      commands,
+      /**
+       * Drags pointer 7 along points in the window, which at 100 % are PDF
+       * points from the top. The drag stays down unless `up`.
+       *
+       * @param {number[][]} points
+       * @param {boolean} [up]
+       */
+      async drag(points, up = true) {
+        const [[clientX, clientY], ...moves] = points;
+        if (!down) {
+          down = { target: pageDiv, button: 0, pointerId: 7, clientX, clientY, stopped: false, prevented: false };
+          Object.assign(down, {
+            stopPropagation: () => (down.stopped = true),
+            preventDefault: () => (down.prevented = true),
+          });
+          viewerContainer.listeners.pointerdown(down);
+        } else {
+          moves.unshift([clientX, clientY]);
+        }
+        for (const [x, y] of moves) {
+          assert.ok(bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: x, clientY: y }).stopped);
+          await settleAll();
+        }
+        if (up) {
+          bridge.fire("pointerup", { target: pageDiv, pointerId: 7 });
+          await settleAll();
+          down = undefined;
+        }
+        return down;
+      },
+      /** @returns {string[]} the ids of the editors on the page */
+      ids: () => editors.map((shown) => shown.id),
+    };
+  }
 
-    assert.equal(commands.length, 1);
-    const [{ cmd, undo, mustExec }] = commands;
+  /** @param {any[]} calls @returns {any[]} the data each editor was built from */
+  const built = (calls) => named(calls, "deserialize").map(([, data]) => data);
+
+  it("erases the drawings it touches, whole, only Pencil's, as one step to undo", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, [
+      { id: "crossed", editorType: "ink", strokes: [[100, 700, 300, 700]] },
+      { id: "missed", editorType: "ink", strokes: [[100, 500, 300, 500]] },
+      { id: "signature", editorType: "signature", strokes: [[100, 700, 300, 700]] },
+      { id: "highlight", editorType: "highlight", strokes: [[100, 700, 300, 700]] },
+    ]);
+    // Down from above the strokes at y 700, then on across them.
+    const down = await page.drag([[200, 50], [200, 150]], false);
+    assert.ok(down.stopped && down.prevented, "pdf.js gets no press to draw with");
+    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(page.commands, [], "not before the drag ends");
+    // Another pointer's events are left alone.
+    assert.ok(!bridge.fire("pointerup", { target: down.target, pointerId: 8 }).stopped);
+    await page.drag([[200, 150]]);
+
+    assert.equal(page.commands.length, 1);
+    const [{ cmd, undo, mustExec }] = page.commands;
     assert.equal(mustExec, false);
     undo();
-    assert.deepEqual(restored, ["crossed"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "highlight", "crossed"]);
     cmd();
-    assert.deepEqual(removed, ["crossed", "crossed"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(built(bridge.calls), []);
     // The drag is over.
-    bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: 200, clientY: 300 });
-    assert.deepEqual(removed, ["crossed", "crossed"]);
+    bridge.fire("pointermove", { target: down.target, pointerId: 7, clientX: 200, clientY: 300 });
+    await settleAll();
+    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
 
     // A drag that erases nothing is no step to undo.
-    viewerContainer.listeners.pointerdown({ ...down, clientY: 400 });
-    bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: 200, clientY: 450 });
-    bridge.fire("pointerup", { target: pageDiv, pointerId: 7 });
-    assert.equal(commands.length, 1);
+    await page.drag([[200, 400], [200, 450]]);
+    assert.equal(page.commands.length, 1);
+  });
+
+  it("cuts strokes in Line mode, and shows what's left, as one step to undo", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(
+      bridge,
+      [{ id: "long", editorType: "ink", strokes: [[100, 700, 300, 700], [100, 500, 300, 500]] }],
+      { mode: "line", size: 20 },
+    );
+    // Across the first stroke at x 200, which the eraser's path, a point
+    // every 5, passes 2 points off at the closest. It reaches its radius, 10,
+    // and half the stroke's thickness, 1, from there.
+    await page.drag([[200, 50], [200, 150]], false);
+    const [first] = built(bridge.calls);
+    const across = Math.sqrt(11 ** 2 - 2 ** 2);
+    const round = (/** @type {number} */ value) => Math.round(value * 100) / 100;
+    assert.deepEqual(
+      first.paths.points.map((/** @type {Float32Array} */ points) => [...points].map(round)),
+      [
+        [100, 700, round(200 - across), 700],
+        [round(200 + across), 700, 300, 700],
+        [100, 500, 300, 500],
+      ],
+    );
+    assert.ok(first.paths.points.every((/** @type {any} */ points) => points.constructor.name === "Float32Array"));
+    assert.deepEqual(
+      { ...first, paths: undefined },
+      { annotationType: 15, color: [255, 0, 0], thickness: 2, opacity: 0.5, paths: undefined, rect: [1, 2, 3, 4], rotation: 0 },
+    );
+    assert.deepEqual(page.ids(), ["built 1"]);
+
+    // On to the right, across the first stroke again, in a later frame.
+    await page.drag([[260, 150], [260, 50]]);
+    assert.equal(built(bridge.calls).length, 2);
+    assert.equal(built(bridge.calls)[1].paths.points.length, 4);
+    assert.deepEqual(page.ids(), ["built 2"]);
+    // pdf.js would make each new drawing a step to undo.
+    assert.equal(page.commands.length, 1);
+    const [{ cmd, undo }] = page.commands;
+    undo();
+    assert.deepEqual(page.ids(), ["long"]);
+    cmd();
+    assert.deepEqual(page.ids(), ["built 2"]);
+  });
+
+  it("removes a drawing in Line mode once nothing is left of it", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, [{ id: "short", editorType: "ink", strokes: [[195, 700, 205, 700]] }], {
+      mode: "line",
+      size: 30,
+    });
+    await page.drag([[200, 50], [200, 150]]);
+    assert.deepEqual(built(bridge.calls), []);
+    assert.deepEqual(page.ids(), []);
+    page.commands[0].undo();
+    assert.deepEqual(page.ids(), ["short"]);
   });
 
   it("goes nowhere without a document to edit", async () => {

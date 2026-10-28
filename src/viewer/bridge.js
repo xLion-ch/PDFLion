@@ -207,25 +207,44 @@
   let eraserTool = null;
 
   /**
-   * @typedef {object} Drawing an ink editor's strokes, read once per drag
-   * @property {ArrayLike<number>[]} strokes x, y pairs in PDF coordinates
+   * @typedef {object} Drawing a Pencil drawing a drag of the eraser came to,
+   *   read once
+   * @property {any} editor the ink editor it was
+   * @property {any} data what `editor.serialize(true)` gave: its colour,
+   *   opacity, rotation and place, for what replaces it
+   * @property {ArrayLike<number>[]} strokes as the eraser has left them, x, y
+   *   pairs in PDF coordinates
    * @property {number} thickness
-   * @property {[number, number, number, number]} box around the strokes' points
+   * @property {[number, number, number, number]} box around the strokes'
+   *   points as they were
+   * @property {any} shown the editor on the page for it: the drawing's own,
+   *   one built from what's left of its strokes, or null once it's erased
+   * @property {boolean} cut whether its strokes changed since `shown` was built
    */
 
   /**
    * @typedef {object} Gesture a drag of the eraser
    * @property {number} pointerId
+   * @property {"line" | "object"} mode
    * @property {{ pageIndex: number, point: number[] } | null} last where the
    *   eraser last was on a page
-   * @property {Map<any, Drawing | null>} drawings each editor seen, and its
-   *   strokes if it's Pencil's
-   * @property {any[]} erased the editors it removed
+   * @property {Map<any, Drawing | null>} drawings each editor the drag found,
+   *   and its drawing if it's Pencil's
+   * @property {Map<any, Drawing>} replacements each editor built for a drawing,
+   *   and that drawing
+   * @property {boolean} redrawing whether a redraw waits for the next frame
    * @property {AbortController} listening for the drag's pointer events
    */
 
   /** @type {Gesture | null} */
   let gesture = null;
+
+  /**
+   * The eraser's work, one step after the other: pdf.js builds editors
+   * asynchronously, and a drag mustn't see a drawing while its replacement
+   * is being built.
+   */
+  let erasingDone = Promise.resolve();
 
   /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
@@ -1549,8 +1568,9 @@
    * ink annotations among them. It works in pdf.js's ink mode, where pdf.js
    * turns the file's ink annotations into editors, and while it's on it takes
    * the pointer events over pages before pdf.js would draw with them. In
-   * Object mode it removes every drawing it touches, whole, and a drag is one
-   * step to undo. Line mode isn't in yet.
+   * Object mode it removes every drawing it touches, whole. In Line mode it
+   * cuts away the parts of strokes under it, and replaces each drawing it
+   * cuts with one of what's left, once per frame. A drag is one step to undo.
    *
    * Adds it to the toolbar after Pencil, built like pdf.js's tools: a button,
    * and an option box that shows while it's on, with Line and Object and the
@@ -1586,8 +1606,6 @@
       return { input, label: createElement("label", { className: "pdflionEraserMode", title }, input, text) };
     };
     const line = modeChoice("line", "Line", "Erases the parts of lines under it");
-    // Line mode isn't in yet.
-    line.input.disabled = true;
     const object = modeChoice("object", "Object", "Erases whole drawings");
     const size = createElement("input", {
       type: "range",
@@ -1753,8 +1771,7 @@
   function showEraser(settings) {
     eraser = settings;
     if (!eraserTool) return;
-    // The eraser erases objects whatever the setting, until Line mode is in.
-    eraserTool.modes.object.checked = true;
+    eraserTool.modes[settings.mode].checked = true;
     eraserTool.size.value = String(settings.size);
   }
 
@@ -1770,25 +1787,38 @@
 
   /**
    * Starts a drag of the eraser on a page: pdf.js gets none of its pointer
-   * events, so it neither draws nor selects drawings.
+   * events, so it neither draws nor selects drawings. Where the pointer is on
+   * the page is read as each event comes, and erasing there waits its turn.
    *
    * @param {any} app
    * @param {PointerEvent} event
    */
   function startGesture(app, event) {
-    if (!erasing || gesture || event.button !== 0 || !placeOf(app, event)) return;
+    if (!erasing || gesture || event.button !== 0) return;
+    const place = placeOf(app, event);
+    if (!place) return;
     event.stopPropagation();
     event.preventDefault();
     const listening = new AbortController();
-    gesture = { pointerId: event.pointerId, last: null, drawings: new Map(), erased: [], listening };
+    const started = /** @type {Gesture} */ ({
+      pointerId: event.pointerId,
+      mode: eraser.mode,
+      last: null,
+      drawings: new Map(),
+      replacements: new Map(),
+      redrawing: false,
+      listening,
+    });
+    gesture = started;
     const options = { capture: true, signal: listening.signal };
     window.addEventListener(
       "pointermove",
       (move) => {
-        if (move.pointerId !== gesture?.pointerId) return;
+        if (move.pointerId !== started.pointerId) return;
         move.stopPropagation();
         moveCursor(app, move);
-        eraseAlong(app, move);
+        const next = placeOf(app, move);
+        afterErasing(() => eraseTo(app, started, next));
       },
       options,
     );
@@ -1796,96 +1826,212 @@
       window.addEventListener(
         type,
         (end) => {
-          if (/** @type {PointerEvent} */ (end).pointerId !== gesture?.pointerId) return;
+          if (/** @type {PointerEvent} */ (end).pointerId !== started.pointerId) return;
           end.stopPropagation();
           endGesture(app);
         },
         options,
       );
     }
-    eraseAlong(app, event);
+    afterErasing(() => eraseTo(app, started, place));
   }
 
   /**
-   * Ends a drag of the eraser, as one step to undo, as pdf.js's own Delete
-   * is.
+   * Ends a drag of the eraser. Once what it erased shows, it's one step to
+   * undo, as pdf.js's own Delete is: undoing puts each drawing back as it
+   * was, and redoing shows what the eraser left of it again.
    *
    * @param {any} app
    */
   function endGesture(app) {
     if (!gesture) return;
-    const { erased, listening } = gesture;
-    listening.abort();
+    const ended = gesture;
+    ended.listening.abort();
     gesture = null;
-    const ui = uiManager(app);
-    if (!ui || erased.length === 0) return;
-    ui.addCommands({
-      cmd: () => {
-        for (const editor of erased) editor.remove();
-      },
-      undo: () => {
-        for (const editor of erased) restoreEditor(ui, editor);
-      },
-      mustExec: false,
+    afterErasing(async () => {
+      await redraw(app, ended);
+      const ui = uiManager(app);
+      const changed = [...ended.drawings.values()].filter(
+        (drawing) => drawing !== null && drawing.shown !== drawing.editor,
+      );
+      if (!ui || changed.length === 0) return;
+      ui.addCommands({
+        cmd: () => {
+          for (const { editor, shown } of changed) {
+            editor.remove();
+            if (shown) restoreEditor(ui, shown);
+          }
+        },
+        undo: () => {
+          for (const { editor, shown } of changed) {
+            shown?.remove();
+            restoreEditor(ui, editor);
+          }
+        },
+        mustExec: false,
+      });
     });
   }
 
   /**
-   * Erases where the eraser passed since the last pointer event, at points
+   * Runs a step of the eraser's work once the steps before it are done.
+   *
+   * @param {() => unknown} step
+   */
+  function afterErasing(step) {
+    erasingDone = erasingDone.then(step).catch((error) => {
+      console.error("Couldn't erase:", error);
+    });
+  }
+
+  /**
+   * Erases where the eraser passed since it was last on the page, at points
    * half its size apart, so that a fast drag misses nothing.
    *
    * @param {any} app
-   * @param {PointerEvent} event
+   * @param {Gesture} drag
+   * @param {{ pageIndex: number, point: number[] } | null} place where the
+   *   eraser is now, from placeOf()
    */
-  function eraseAlong(app, event) {
-    if (!gesture) return;
-    const place = placeOf(app, event);
-    const { last } = gesture;
-    gesture.last = place;
+  function eraseTo(app, drag, place) {
+    const { last } = drag;
+    drag.last = place;
     if (!place) return;
     const radius = eraser.size / 2;
     const from = last?.pageIndex === place.pageIndex ? last.point : place.point;
     const path = window.PDFLionGeometry.resample([...from, ...place.point], radius / 2);
     for (let i = 0; i < path.length; i += 2) {
-      eraseDrawingsAt(app, place.pageIndex, [path[i], path[i + 1]], radius);
+      eraseAt(app, drag, place.pageIndex, [path[i], path[i + 1]], radius);
     }
   }
 
   /**
-   * Removes the drawings on a page that the eraser touches, centred on a
-   * point.
+   * Erases what the eraser touches on a page, centred on a point: the
+   * drawings, in Object mode, or the parts of their strokes, in Line mode,
+   * which a frame later show as a drawing of what's left.
    *
    * @param {any} app
+   * @param {Gesture} drag
    * @param {number} pageIndex
    * @param {number[]} center in PDF coordinates
    * @param {number} radius
    */
-  function eraseDrawingsAt(app, pageIndex, center, radius) {
+  function eraseAt(app, drag, pageIndex, center, radius) {
     const ui = uiManager(app);
-    if (!ui || !gesture) return;
+    if (!ui) return;
+    const { cutStroke, hitsStroke } = window.PDFLionGeometry;
     for (const editor of [...ui.getEditors(pageIndex)]) {
-      const drawing = drawingOf(editor);
+      const drawing = drag.replacements.get(editor) ?? drawingOf(drag, editor);
       if (!drawing || !touches(drawing, center, radius)) continue;
-      editor.remove();
-      gesture.erased.push(editor);
+      if (drag.mode === "object") {
+        editor.remove();
+        drawing.shown = null;
+        continue;
+      }
+      // A stroke's round ends reach half its thickness past its points.
+      const { thickness } = drawing;
+      drawing.strokes = drawing.strokes.flatMap((stroke) =>
+        hitsStroke(stroke, center, radius, thickness)
+          ? cutStroke(stroke, center, radius + thickness / 2)
+          : [stroke],
+      );
+      drawing.cut = true;
+      redrawSoon(app, drag);
     }
   }
 
   /**
+   * Shows the drawings a drag has cut at the next frame, rather than at
+   * every pointer event.
+   *
+   * @param {any} app
+   * @param {Gesture} drag
+   */
+  function redrawSoon(app, drag) {
+    if (drag.redrawing) return;
+    drag.redrawing = true;
+    requestAnimationFrame(() => {
+      drag.redrawing = false;
+      afterErasing(() => redraw(app, drag));
+    });
+  }
+
+  /**
+   * Replaces each drawing the drag cut since it last showed with one of what's
+   * left of its strokes, with the same colour, thickness and opacity, or
+   * removes it when nothing is left.
+   *
+   * @param {any} app
+   * @param {Gesture} drag
+   */
+  async function redraw(app, drag) {
+    const ui = uiManager(app);
+    if (!ui) return;
+    for (const drawing of drag.drawings.values()) {
+      if (!drawing?.cut) continue;
+      drawing.cut = false;
+      const { editor, data, strokes } = drawing;
+      const layer = ui.getLayer(editor.pageIndex);
+      const next =
+        layer && strokes.length > 0
+          ? await layer.deserialize({
+              annotationType: EDITOR_INK,
+              color: data.color,
+              thickness: data.thickness,
+              opacity: data.opacity,
+              paths: { points: strokes.map((stroke) => Float32Array.from(stroke)) },
+              // pdf.js replaces it with the box around the strokes.
+              rect: data.rect,
+              rotation: data.rotation,
+            })
+          : null;
+      drawing.shown?.remove();
+      if (next) {
+        addWithoutUndo(layer, next);
+        drag.replacements.set(next, drawing);
+      }
+      drawing.shown = next;
+    }
+  }
+
+  /**
+   * Adds an editor the eraser built to its page. pdf.js makes adding a new
+   * drawing a step to undo of its own (`onceAdded()` in
+   * src/display/editor/draw.js, through the layer's addUndoableEditor()), but
+   * the eraser's drag is one step, which endGesture() adds.
+   *
+   * @param {any} layer
    * @param {any} editor
-   * @returns {Drawing | null} its strokes, if it's Pencil's: not a free
+   */
+  function addWithoutUndo(layer, editor) {
+    layer.addUndoableEditor = () => {};
+    try {
+      layer.addOrRebuild(editor);
+    } finally {
+      delete layer.addUndoableEditor;
+    }
+  }
+
+  /**
+   * @param {Gesture} drag
+   * @param {any} editor
+   * @returns {Drawing | null} its drawing, if it's Pencil's: not a free
    *   highlight, nor a signature, which are drawings too
    */
-  function drawingOf(editor) {
-    const drawings = /** @type {Gesture} */ (gesture).drawings;
+  function drawingOf(drag, editor) {
+    const { drawings } = drag;
     if (!drawings.has(editor)) {
       const data = editor.editorType === "ink" ? editor.serialize(true) : null;
       drawings.set(
         editor,
         data && {
+          editor,
+          data,
           strokes: data.paths.points,
           thickness: data.thickness,
           box: boxAround(data.paths.points),
+          shown: editor,
+          cut: false,
         },
       );
     }
