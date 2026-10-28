@@ -180,6 +180,12 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     onToolSettingsChange(callback) {
       pdflion.toolSettingsListener = callback;
     },
+    /** @type {object[]} the favourites whose context menu the page asked for */
+    favouriteMenus: [],
+    /** @param {object} favourite */
+    showFavouriteMenu(favourite) {
+      pdflion.favouriteMenus.push(JSON.parse(JSON.stringify(favourite)));
+    },
   };
 
   /**
@@ -205,12 +211,31 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
         },
       };
       this.textContent = "";
-      /** @type {Record<string, string>} */
-      this.style = {};
+      /** @type {Record<string, string> & { setProperty?: Function }} */
+      this.style = {
+        /** @param {string} name @param {string} value */
+        setProperty(name, value) {
+          this[name] = value;
+        },
+      };
     }
     /** @param {Element[]} children */
     append(...children) {
       this.children.push(...children);
+    }
+    /** @param {Element[]} children */
+    replaceChildren(...children) {
+      this.children = children;
+    }
+    /**
+     * @param {unknown} other
+     * @returns {boolean} whether it's this element or in it
+     */
+    contains(other) {
+      return other === this || this.children.some((child) => child.contains?.(other));
+    }
+    focus() {
+      document.activeElement = this;
     }
     /** @param {Element} sibling */
     before(sibling) {
@@ -295,6 +320,11 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     },
   };
   const viewerContainer = Object.assign(new Element("div"), { id: "viewerContainer" });
+  /**
+   * pdf.js's drawing tools' group, which the stand-in toolbar shows as
+   * coming before them, rather than holding them.
+   */
+  const editorModeButtons = Object.assign(new Element("div"), { id: "editorModeButtons" });
   /** pdf.js's Pencil, after which the eraser goes, and its button. */
   const pencil = Object.assign(new Element("div"), { id: "editorInk" });
   const pencilButton = Object.assign(new Element("button"), { id: "editorInkButton" });
@@ -330,7 +360,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
      * The toolbar's children: the sidebar's button, then from
      * #editorModeButtons on.
      */
-    toolbar: /** @type {Element[]} */ ([sidebarButton, pencil, separator]),
+    toolbar: /** @type {Element[]} */ ([sidebarButton, editorModeButtons, pencil, separator]),
     /** The views manager header's children, from Add file on. */
     header: /** @type {Element[]} */ ([addFileButton]),
     /** @param {string} id */
@@ -707,6 +737,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     setTimeout: (/** @type {() => void} */ callback, /** @type {number} */ delay) =>
       setTimeout(callback, delay),
     clearTimeout: (/** @type {any} */ timer) => clearTimeout(timer),
+    // The stand-in toolbar has no layout to watch.
+    ResizeObserver: class {
+      observe() {}
+    },
     console: { warn: record("console.warn"), error: record("console.error") },
   };
   page.window = page;
@@ -818,6 +852,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     optionBoxes,
     params,
     document,
+    editorModeButtons,
   };
 }
 
@@ -2238,6 +2273,271 @@ describe("bridge.js Save as Favourite", () => {
     const bridge = loadBridge({ toolbar: false });
     await bridge.load();
     for (const box of Object.values(bridge.optionBoxes)) assert.deepEqual(box.children, []);
+  });
+});
+
+describe("bridge.js favourites in the toolbar", () => {
+  const pencil = { tool: "ink", color: "#1e66f5", thickness: 5, opacity: 0.35 };
+  const text = { tool: "freetext", color: "#e64553", size: 24 };
+  const highlight = { tool: "highlight", color: "#ffff98", thickness: 12 };
+
+  /** @param {unknown} value @returns {any} a copy from this realm, to compare */
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+
+  /**
+   * Loads the bridge with these favourites from main, where pdf.js's drawing
+   * tools work, with none on.
+   *
+   * @param {object[]} favourites
+   */
+  const withFavourites = async (favourites) => {
+    const bridge = loadBridge();
+    bridge.pdflion.toolSettings = { eraser: { mode: "object", size: 10 }, favourites };
+    await bridge.load();
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    await settle();
+    return bridge;
+  };
+
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const barOf = (bridge) => {
+    const group = bridge.toolbar.find((element) => element.id === "pdflionFavourites");
+    const separator = bridge.toolbar.find((element) => element.id === "pdflionFavouritesSeparator");
+    const more = group.children.at(-1);
+    const [moreButton, menu] = more.children;
+    return {
+      group,
+      separator,
+      buttons: group.children.slice(0, -1),
+      moreButton,
+      items: menu.children[0].children,
+    };
+  };
+
+  /**
+   * @param {any} button
+   * @returns {{ pressed: string, toggled: boolean }}
+   */
+  const pressed = (button) => ({
+    pressed: button.attributes["aria-pressed"],
+    toggled: button.classes.has("toggled"),
+  });
+
+  it("go before pdf.js's drawing tools, with a divider, once there are any", async () => {
+    const bridge = await withFavourites([]);
+    const { group, separator } = barOf(bridge);
+    const at = (/** @type {any} */ element) => bridge.toolbar.indexOf(element);
+    assert.deepEqual([at(group) + 1, at(separator) + 1], [at(separator), at(bridge.editorModeButtons)]);
+    assert.equal(separator.className, "verticalToolbarSeparator");
+    assert.deepEqual([group.hidden, separator.hidden], [true, true]);
+
+    bridge.pdflion.toolSettingsListener?.({ eraser: { mode: "object", size: 10 }, favourites: [pencil] });
+    assert.deepEqual([group.hidden, separator.hidden], [false, false]);
+    bridge.pdflion.toolSettingsListener?.({ eraser: { mode: "object", size: 10 }, favourites: [] });
+    assert.deepEqual([group.hidden, separator.hidden], [true, true]);
+  });
+
+  it("show each favourite's tool, colour and size, and describe it", async () => {
+    const bridge = await withFavourites([pencil, text, highlight]);
+    const { buttons, items, moreButton } = barOf(bridge);
+    assert.deepEqual(
+      buttons.map((/** @type {any} */ button) => [
+        button.title,
+        button.attributes["data-tool"],
+        button.attributes["data-size"],
+        button.style["--pdflion-favourite-color"],
+      ]),
+      [
+        ["Pencil, #1E66F5, 5 pt, 35 %", "ink", "5", "#1e66f5"],
+        ["Text, #E64553, 24 pt", "freetext", "24", "#e64553"],
+        ["Highlight, #FFFF98, 12 pt", "highlight", "12", "#ffff98"],
+      ],
+    );
+    const [icon, label] = buttons[0].children;
+    assert.equal(icon.className, "pdflionFavouriteIcon");
+    assert.equal(label.textContent, "Pencil, #1E66F5, 5 pt, 35 %");
+    assert.equal(buttons[0].className, "toolbarButton pdflionFavourite");
+
+    // The ★ menu has an item for each, which shows when its button doesn't.
+    assert.equal(moreButton.title, "More Favourites");
+    assert.equal(moreButton.attributes["aria-controls"], "pdflionFavouritesMenu");
+    assert.deepEqual(
+      items.map((/** @type {any} */ item) => [
+        item.className,
+        item.attributes.role,
+        item.tabIndex,
+        item.children[1].textContent,
+        item.title,
+      ]),
+      [
+        ["toolbarButton labeled pdflionFavourite", "menuitemradio", -1, "Pencil, #1E66F5, 5 pt, 35 %", undefined],
+        ["toolbarButton labeled pdflionFavourite", "menuitemradio", -1, "Text, #E64553, 24 pt", undefined],
+        ["toolbarButton labeled pdflionFavourite", "menuitemradio", -1, "Highlight, #FFFF98, 12 pt", undefined],
+      ],
+    );
+  });
+
+  it("turn a favourite's tool on with its settings, once the selection is clear", async () => {
+    const bridge = await withFavourites([pencil, text]);
+    const { dispatched } = bridge.app.eventBus;
+    bridge.uiManager.unselectAll = () => dispatched.push(["unselectAll", {}]);
+    const [pencilButton, textButton] = barOf(bridge).buttons;
+
+    let from = dispatched.length;
+    pencilButton.listeners.click();
+    assert.deepEqual(
+      plain(dispatched.slice(from)).filter(([name]) => name !== "annotationeditormodechanged"),
+      [
+        // Pencil's open drawing becomes a drawing, then the selection clears.
+        ["unselectAll", {}],
+        ["unselectAll", {}],
+        ["switchannotationeditormode", { source: null, mode: 15 }],
+        ["switchannotationeditorparams", { source: null, type: 21, value: "#1e66f5" }],
+        ["switchannotationeditorparams", { source: null, type: 22, value: 5 }],
+        ["switchannotationeditorparams", { source: null, type: 23, value: 0.35 }],
+        // pdf.js's option box shows them.
+        [
+          "annotationeditorparamschanged",
+          { source: null, details: [[21, "#1e66f5"], [22, 5], [23, 0.35]] },
+        ],
+      ],
+    );
+
+    // With its tool on, only the settings change.
+    from = dispatched.length;
+    pencilButton.listeners.click();
+    assert.ok(!dispatched.slice(from).some(([name]) => name === "switchannotationeditormode"));
+
+    from = dispatched.length;
+    textButton.listeners.click();
+    assert.deepEqual(
+      plain(dispatched.slice(from)).filter(([name]) => name.startsWith("switch")),
+      [
+        ["switchannotationeditormode", { source: null, mode: 3 }],
+        ["switchannotationeditorparams", { source: null, type: 12, value: "#e64553" }],
+        ["switchannotationeditorparams", { source: null, type: 11, value: 24 }],
+      ],
+    );
+  });
+
+  it("stop the eraser for a Pencil favourite, whose ink mode stays", async () => {
+    const bridge = await withFavourites([pencil]);
+    const eraser = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser");
+    eraser.children[0].listeners.click();
+    assert.ok(bridge.outerContainer.classes.has("pdflionErasing"));
+    const from = bridge.app.eventBus.dispatched.length;
+    barOf(bridge).buttons[0].listeners.click();
+    assert.ok(!bridge.outerContainer.classes.has("pdflionErasing"));
+    assert.equal(bridge.pencilButton.attributes["aria-expanded"], "true", "Pencil shows on");
+    const switches = bridge.app.eventBus.dispatched
+      .slice(from)
+      .filter(([name]) => name === "switchannotationeditormode");
+    assert.deepEqual(switches, []);
+  });
+
+  it("show as pressed while their tool is on with their settings, as its option box shows them", async () => {
+    const bridge = await withFavourites([pencil, highlight]);
+    const { eventBus } = bridge.app;
+    const [pencilButton, highlightButton] = barOf(bridge).buttons;
+    const [pencilItem] = barOf(bridge).items;
+    assert.deepEqual(pressed(pencilButton), { pressed: "false", toggled: false });
+
+    Object.assign(bridge.params, {
+      editorInkColor: { value: "#1e66f5" },
+      editorInkThickness: { valueAsNumber: 5 },
+      editorInkOpacity: { valueAsNumber: 0.35 },
+    });
+    eventBus.dispatch("switchannotationeditormode", { mode: 15 });
+    await settle();
+    assert.deepEqual(pressed(pencilButton), { pressed: "true", toggled: true });
+    assert.equal(pencilItem.attributes["aria-checked"], "true");
+    assert.ok(pencilItem.classes.has("toggled"));
+    assert.deepEqual(pressed(highlightButton), { pressed: "false", toggled: false });
+
+    // The user moves a slider, which pdf.js passes on.
+    bridge.params.editorInkThickness = { valueAsNumber: 6 };
+    eventBus.dispatch("switchannotationeditorparams", { type: 22, value: 6 });
+    await settle();
+    assert.deepEqual(pressed(pencilButton), { pressed: "false", toggled: false });
+    // A selected drawing's settings, which pdf.js shows.
+    bridge.params.editorInkThickness = { valueAsNumber: 5 };
+    eventBus.dispatch("annotationeditorparamschanged", { details: [[22, 5]] });
+    await settle();
+    assert.deepEqual(pressed(pencilButton), { pressed: "true", toggled: true });
+
+    // Not while the eraser is on, in Pencil's ink mode.
+    bridge.toolbar.find((element) => element.id === "pdflionEditorEraser").children[0].listeners.click();
+    await settle();
+    assert.deepEqual(pressed(pencilButton), { pressed: "false", toggled: false });
+
+    eventBus.dispatch("switchannotationeditormode", { mode: 9 });
+    await settle();
+    assert.deepEqual(pressed(highlightButton), { pressed: "true", toggled: true });
+    // pdf.js's colour picker marks the swatch it dispatched only afterwards.
+    eventBus.dispatch("switchannotationeditorparams", { type: 31, value: "#53FFBC" });
+    bridge.document.highlightColor = "#53FFBC";
+    await settle();
+    assert.deepEqual(pressed(highlightButton), { pressed: "false", toggled: false });
+  });
+
+  it("work only while pdf.js's drawing tools do", async () => {
+    const bridge = loadBridge();
+    bridge.pdflion.toolSettings = { eraser: { mode: "object", size: 10 }, favourites: [pencil] };
+    await bridge.load();
+    const { buttons, items, moreButton } = barOf(bridge);
+    const disabled = () => [buttons[0].disabled, items[0].disabled, moreButton.disabled];
+    assert.deepEqual(disabled(), [true, true, true]);
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    assert.deepEqual(disabled(), [false, false, false]);
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: -1 });
+    assert.deepEqual(disabled(), [true, true, true]);
+
+    // Favourites that come later too.
+    bridge.pdflion.toolSettingsListener?.({ eraser: { mode: "object", size: 10 }, favourites: [text] });
+    assert.equal(barOf(bridge).buttons[0].disabled, true);
+  });
+
+  it("open a favourite's context menu, which removes it", async () => {
+    const bridge = await withFavourites([pencil, text]);
+    const { buttons, items } = barOf(bridge);
+    for (const button of [buttons[1], items[0]]) {
+      let prevented = false;
+      button.listeners.contextmenu({ preventDefault: () => (prevented = true) });
+      assert.ok(prevented, "Chromium shows no menu of its own");
+    }
+    assert.deepEqual(bridge.pdflion.favouriteMenus, [text, pencil]);
+  });
+
+  it("follow the favourites main sends every tab", async () => {
+    const bridge = await withFavourites([pencil]);
+    bridge.pdflion.toolSettingsListener?.({
+      eraser: { mode: "object", size: 10 },
+      favourites: [text, pencil, highlight],
+    });
+    const { buttons, items } = barOf(bridge);
+    assert.deepEqual(
+      [...buttons, ...items].map((/** @type {any} */ button) => button.children[1].textContent),
+      [
+        "Text, #E64553, 24 pt",
+        "Pencil, #1E66F5, 5 pt, 35 %",
+        "Highlight, #FFFF98, 12 pt",
+        "Text, #E64553, 24 pt",
+        "Pencil, #1E66F5, 5 pt, 35 %",
+        "Highlight, #FFFF98, 12 pt",
+      ],
+    );
+    // Without a toolbar to measure, all show there.
+    assert.deepEqual(
+      [...buttons, ...items].map((/** @type {any} */ button) => button.hidden),
+      [false, false, false, true, true, true],
+    );
+  });
+
+  it("go nowhere without pdf.js's toolbar", async () => {
+    const bridge = loadBridge({ toolbar: false });
+    bridge.pdflion.toolSettings = { eraser: { mode: "object", size: 10 }, favourites: [pencil] };
+    await bridge.load();
+    assert.ok(!bridge.toolbar.some((element) => element.id === "pdflionFavourites"));
   });
 });
 

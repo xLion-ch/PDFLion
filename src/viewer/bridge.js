@@ -20,7 +20,10 @@
  * toolbar, the drawing tools' option boxes, and the views manager's header,
  * Manage menu, Add file and waiting bar); for favourites
  * web/annotation_editor_params.js and src/display/editor/color_picker.js
- * (what the option boxes show).
+ * (what the option boxes show), src/display/editor/tools.js (updateMode,
+ * updateParams), src/display/editor/draw.js (updateDefaultParams),
+ * src/shared/util.js (the editor and parameter types) and web/viewer.css (the
+ * toolbar's groups and medium view).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. The page overview shows those thumbnails across the
@@ -102,10 +105,34 @@
   const DROPPED_FROM_SEVERAL = new Set(["info", "page-labels"]);
 
   /**
-   * The drawing tools that have favourites, by pdf.js's name for each, with
-   * the name of its option box in web/viewer.html: `#editor<name>ParamsToolbar`.
+   * @typedef {object} FavouriteTool a drawing tool that has favourites
+   * @property {string} name in the ids of its button and option box in
+   *   web/viewer.html, such as `#editor<name>ParamsToolbar`
+   * @property {string} label in English, like the native menus
+   * @property {number} mode its `AnnotationEditorType` in src/shared/util.js
+   * @property {Record<string, number>} params the `AnnotationEditorParamsType`
+   *   there of each of its settings
    */
-  const FAVOURITE_TOOLS = { highlight: "Highlight", freetext: "FreeText", ink: "Ink" };
+
+  /** @type {Record<string, FavouriteTool>} by pdf.js's name for each */
+  const FAVOURITE_TOOLS = {
+    highlight: {
+      name: "Highlight",
+      label: "Highlight",
+      mode: 9,
+      params: { color: 31, thickness: 32 },
+    },
+    freetext: { name: "FreeText", label: "Text", mode: 3, params: { color: 12, size: 11 } },
+    ink: {
+      name: "Ink",
+      label: "Pencil",
+      mode: EDITOR_INK,
+      params: { color: 21, thickness: 22, opacity: 23 },
+    },
+  };
+
+  /** pdf.js's medium view, which hides some of its toolbar buttons (web/viewer.css). */
+  const MEDIUM_VIEW = "(max-width: 750px)";
 
   /** The swatch Highlight's colour picker shows as chosen (src/display/editor/color_picker.js). */
   const HIGHLIGHT_SWATCH = '#editorHighlightColorPicker [role="option"][aria-selected="true"]';
@@ -278,6 +305,29 @@
   let toolSettingsLoaded = Promise.resolve();
 
   /**
+   * @typedef {object} FavouritesBar what addFavouritesBar() adds to the toolbar
+   * @property {HTMLElement} group the favourites' buttons, then the ★ menu's
+   * @property {HTMLElement} separator after the group
+   * @property {HTMLElement} more the ★ menu's button and the menu
+   * @property {HTMLButtonElement} moreButton
+   * @property {HTMLElement} items the menu's items' container
+   * @property {() => void} closeMenu
+   */
+
+  /** @type {FavouritesBar | null} */
+  let favouritesBar = null;
+
+  /**
+   * @type {{ favourite: Favourite, button: HTMLButtonElement, item: HTMLButtonElement }[]}
+   *   each favourite, with its button in the toolbar and its item in the ★
+   *   menu, of which layoutFavourites() shows one
+   */
+  let favouriteButtons = [];
+
+  /** Whether pdf.js's drawing tools work, and the favourites with them. */
+  let toolsEnabled = false;
+
+  /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
    * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
@@ -343,8 +393,9 @@
       overviewButton = addOverviewButton(app);
       pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
       eraserTool = addEraserTool(app);
-      addFavouriteButtons();
-      toolSettingsLoaded = followToolSettings();
+      addSaveFavouriteButtons();
+      favouritesBar = addFavouritesBar();
+      toolSettingsLoaded = followToolSettings(app);
       guardPageTools(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
@@ -354,6 +405,7 @@
         followOverview(app);
         // After the overview's, whose Esc comes first.
         followEraser(app);
+        followFavourites(app);
         app.eventBus.on("documentloaded", () => {
           trackEdits(app);
           checkLocked(app);
@@ -1745,6 +1797,7 @@
     if (erasing || !ui) return;
     erasing = true;
     showErasing(true);
+    updateFavouritesPressed(app);
     if (app.pdfViewer.annotationEditorMode === EDITOR_INK) {
       commitDrawing(ui);
       hidePencil();
@@ -1766,6 +1819,7 @@
     endGesture(app);
     erasing = false;
     showErasing(false);
+    updateFavouritesPressed(app);
     if (mode === EDITOR_NONE) {
       app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
     } else if (mode === EDITOR_INK) {
@@ -1797,13 +1851,15 @@
    * Follows the tool settings main keeps for every tab, which it sends each
    * tab after every change: the eraser's, and the favourites.
    *
+   * @param {any} app
    * @returns {Promise<void>} once main has first sent them
    */
-  function followToolSettings() {
+  function followToolSettings(app) {
     /** @param {{ eraser: EraserSettings, favourites: Favourite[] }} settings */
     const show = (settings) => {
       showEraser(settings.eraser);
       favourites = settings.favourites;
+      showFavourites(app);
     };
     window.pdflion.onToolSettingsChange(show);
     return window.pdflion.getToolSettings().then((settings) => {
@@ -2201,8 +2257,8 @@
    * settings for every tab, and the button says for a moment what it did.
    * Its label is English, like the native menus.
    */
-  function addFavouriteButtons() {
-    for (const [tool, name] of Object.entries(FAVOURITE_TOOLS)) {
+  function addSaveFavouriteButtons() {
+    for (const [tool, { name }] of Object.entries(FAVOURITE_TOOLS)) {
       const container = document.querySelector(
         `#editor${name}ParamsToolbar > .editorParamsToolbarContainer`,
       );
@@ -2312,6 +2368,356 @@
   function sameFavourite(a, b) {
     const [first, second] = /** @type {Record<string, unknown>[]} */ ([a, b]);
     return Object.keys(first).every((key) => first[key] === second[key]);
+  }
+
+  /**
+   * Adds the favourites' group to the toolbar, before pdf.js's drawing tools,
+   * followed by a divider: a button for each favourite that fits, then a ★
+   * button whose menu has the rest. showFavourites() fills it, and it shows
+   * once there are any. overrides.css draws it.
+   *
+   * @returns {FavouritesBar | null}
+   */
+  function addFavouritesBar() {
+    const tools = document.getElementById("editorModeButtons");
+    if (!tools) return null;
+    const moreButton = makeButton(
+      "pdflionFavouritesMoreButton",
+      "toolbarButton",
+      "More Favourites",
+    );
+    moreButton.disabled = true;
+    moreButton.setAttribute("aria-expanded", "false");
+    moreButton.setAttribute("aria-haspopup", "true");
+    moreButton.setAttribute("aria-controls", "pdflionFavouritesMenu");
+    const items = createElement("div", { className: "menuContainer", role: "menu" });
+    // Built like pdf.js's Stamp menu, #editorStampParamsToolbar in web/viewer.html.
+    const menu = createElement(
+      "div",
+      { id: "pdflionFavouritesMenu", className: "editorParamsToolbar hidden doorHangerRight menu" },
+      items,
+    );
+    const more = createElement(
+      "div",
+      { id: "pdflionFavouritesMore", className: "toolbarButtonWithContainer", hidden: true },
+      moreButton,
+      menu,
+    );
+    const group = createElement(
+      "div",
+      { id: "pdflionFavourites", className: "toolbarHorizontalGroup", hidden: true },
+      more,
+    );
+    const separator = createElement("div", {
+      id: "pdflionFavouritesSeparator",
+      className: "verticalToolbarSeparator",
+      hidden: true,
+    });
+    tools.before(group);
+    tools.before(separator);
+    const closeMenu = followMenu(moreButton, menu, items);
+    return { group, separator, more, moreButton, items, closeMenu };
+  }
+
+  /**
+   * Makes the ★ menu work like pdf.js's menus (web/menu.js): its button opens
+   * and closes it, the arrow keys, Home, End and an item's first letter move
+   * through it, and Esc, choosing an item, or a press or the focus outside it
+   * closes it.
+   *
+   * @param {HTMLButtonElement} button
+   * @param {HTMLElement} menu
+   * @param {HTMLElement} items the menu's items' container
+   * @returns {() => void} what closes it
+   */
+  function followMenu(button, menu, items) {
+    /** @type {AbortController | null} while it's open */
+    let open = null;
+    const close = () => {
+      if (!open) return;
+      open.abort();
+      open = null;
+      menu.classList.toggle("hidden", true);
+      button.setAttribute("aria-expanded", "false");
+      if (menu.contains(document.activeElement)) button.focus();
+    };
+    const choices = () =>
+      /** @type {HTMLButtonElement[]} */ ([...items.children]).filter(
+        (item) => !item.hidden && !item.disabled,
+      );
+    /** @param {"first" | "last"} [focus] which item takes the focus */
+    const show = (focus) => {
+      if (!open) {
+        open = new AbortController();
+        const { signal } = open;
+        menu.classList.toggle("hidden", false);
+        button.setAttribute("aria-expanded", "true");
+        window.addEventListener(
+          "pointerdown",
+          ({ target }) => {
+            if (!button.contains(target) && !menu.contains(target)) close();
+          },
+          { signal },
+        );
+        window.addEventListener("blur", close, { signal });
+      }
+      if (focus) choices().at(focus === "first" ? 0 : -1)?.focus();
+    };
+    /**
+     * @param {EventTarget | null} from the item with the focus
+     * @param {1 | -1} step
+     * @param {(item: HTMLElement) => boolean} [check]
+     */
+    const moveFocus = (from, step, check = () => true) => {
+      const list = choices();
+      const start = list.indexOf(/** @type {any} */ (from));
+      for (let i = 1; i <= list.length; i++) {
+        const item = list[(((start + step * i) % list.length) + list.length) % list.length];
+        if (check(item)) {
+          item.focus();
+          return;
+        }
+      }
+    };
+    /** @param {Event} event */
+    const stop = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    button.addEventListener("click", () => (open ? close() : show()));
+    button.addEventListener("keydown", (event) => {
+      /** @type {Record<string, "first" | "last">} */
+      const opening = { " ": "first", Enter: "first", ArrowDown: "first", Home: "first" };
+      const focus = opening[event.key] ?? (["ArrowUp", "End"].includes(event.key) ? "last" : null);
+      if (focus) show(focus);
+      else if (event.key === "Escape" && open) close();
+      else return;
+      stop(event);
+    });
+    menu.addEventListener(
+      "keydown",
+      (event) => {
+        const { key, target } = event;
+        if (key === "Escape") close();
+        else if (key === "ArrowDown") moveFocus(target, 1);
+        else if (key === "ArrowUp") moveFocus(target, -1);
+        else if (key === "Home" || key === "End") show(key === "Home" ? "first" : "last");
+        else if (/^\p{L}$/u.test(key)) {
+          const letter = key.toLocaleLowerCase();
+          moveFocus(target, 1, (item) => item.textContent.toLocaleLowerCase().startsWith(letter));
+        } else return;
+        stop(event);
+      },
+      true,
+    );
+    // Before the item's own click, which uses its favourite.
+    menu.addEventListener("click", close, true);
+    for (const element of [button, menu]) {
+      element.addEventListener("focusout", (/** @type {FocusEvent} */ { relatedTarget }) => {
+        const to = /** @type {Node | null} */ (relatedTarget);
+        if (!button.contains(to) && !menu.contains(to)) close();
+      });
+    }
+    return close;
+  }
+
+  /**
+   * Fills the favourites' group with main's favourites: a button each in the
+   * toolbar and an item each in the ★ menu, of which layoutFavourites()
+   * shows one.
+   *
+   * @param {any} app
+   */
+  function showFavourites(app) {
+    if (!favouritesBar) return;
+    const { group, more, items } = favouritesBar;
+    favouriteButtons = (favourites ?? []).map((favourite) => ({
+      favourite,
+      button: favouriteButton(app, favourite, false),
+      item: favouriteButton(app, favourite, true),
+    }));
+    group.replaceChildren(...favouriteButtons.map(({ button }) => button), more);
+    items.replaceChildren(...favouriteButtons.map(({ item }) => item));
+    layoutFavourites();
+    updateFavouritesPressed(app);
+  }
+
+  /**
+   * A favourite's button: its tool's icon in its colour, which overrides.css
+   * draws, and its size. A click uses it, and its context menu removes it.
+   *
+   * @param {any} app
+   * @param {Favourite} favourite
+   * @param {boolean} inMenu whether it's an item of the ★ menu, which shows
+   *   its description, rather than a button of the toolbar
+   * @returns {HTMLButtonElement}
+   */
+  function favouriteButton(app, favourite, inMenu) {
+    const description = describeFavourite(favourite);
+    const button = createElement(
+      "button",
+      {
+        type: "button",
+        className: `toolbarButton${inMenu ? " labeled" : ""} pdflionFavourite`,
+        tabIndex: inMenu ? -1 : 0,
+        disabled: !toolsEnabled,
+      },
+      createElement("span", { className: "pdflionFavouriteIcon", ariaHidden: "true" }),
+      createElement("span", { textContent: description }),
+    );
+    if (inMenu) button.setAttribute("role", "menuitemradio");
+    else button.title = description;
+    button.setAttribute("data-tool", favourite.tool);
+    button.setAttribute("data-size", String(favourite.size ?? favourite.thickness));
+    button.style.setProperty("--pdflion-favourite-color", favourite.color);
+    button.addEventListener("click", () => useFavourite(app, favourite));
+    button.addEventListener("contextmenu", (/** @type {Event} */ event) => {
+      event.preventDefault();
+      window.pdflion.showFavouriteMenu(favourite);
+    });
+    return button;
+  }
+
+  /**
+   * @param {Favourite} favourite
+   * @returns {string} what it is, such as "Pencil, #1E66F5, 1 pt, 100 %"
+   */
+  function describeFavourite({ tool, color, thickness, size, opacity }) {
+    const parts = [FAVOURITE_TOOLS[tool].label, color.toUpperCase(), `${size ?? thickness} pt`];
+    if (opacity !== undefined) parts.push(`${Math.round(opacity * 100)} %`);
+    return parts.join(", ");
+  }
+
+  /**
+   * Turns a favourite's tool on with its settings, for what's drawn next, as
+   * pdf.js's own tool buttons and option boxes would. Pencil's open drawing
+   * is committed and the selection cleared first, or pdf.js would give them
+   * the settings too (`updateParams()` in src/display/editor/tools.js, and
+   * `updateDefaultParams()` in src/display/editor/draw.js). Switching tools
+   * clears the selection only later, and not at all for the same tool.
+   *
+   * @param {any} app
+   * @param {Favourite} favourite
+   */
+  function useFavourite(app, favourite) {
+    const ui = uiManager(app);
+    if (!ui) return;
+    const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
+    commitDrawing(ui);
+    if (erasing && mode === EDITOR_INK) stopErasing(app, EDITOR_INK);
+    if (app.pdfViewer.annotationEditorMode !== mode) {
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode });
+    }
+    const values = /** @type {Record<string, unknown>} */ (favourite);
+    const details = Object.entries(params).map(([name, type]) => [type, values[name]]);
+    for (const [type, value] of details) {
+      app.eventBus.dispatch("switchannotationeditorparams", { source: null, type, value });
+    }
+    // pdf.js updates its option boxes for a selected drawing's settings, not
+    // for settings that didn't come from them.
+    app.eventBus.dispatch("annotationeditorparamschanged", { source: null, details });
+  }
+
+  /**
+   * Shows as pressed the favourites whose tool is on with their settings,
+   * as its option box shows them, and none while the eraser is on. It reads
+   * them once pdf.js has shown a change: Highlight's colour picker marks the
+   * chosen swatch only after dispatching it (src/display/editor/color_picker.js).
+   *
+   * @param {any} app
+   */
+  function updateFavouritesPressed(app) {
+    Promise.resolve().then(() => {
+      const mode = app.pdfViewer?.annotationEditorMode;
+      const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
+      const current =
+        tool && !erasing ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
+      for (const { favourite, button, item } of favouriteButtons) {
+        const on = !!current && sameFavourite(favourite, current);
+        button.classList.toggle("toggled", on);
+        button.setAttribute("aria-pressed", String(on));
+        item.classList.toggle("toggled", on);
+        item.setAttribute("aria-checked", String(on));
+      }
+    });
+  }
+
+  /**
+   * Shows as many favourites in the toolbar as fit in the room pdf.js's own
+   * groups leave, and the rest in the ★ menu. In pdf.js's medium view, which
+   * hides some of its own buttons, they're all in the menu.
+   */
+  function layoutFavourites() {
+    if (!favouritesBar) return;
+    const { group, separator } = favouritesBar;
+    const count = favouriteButtons.length;
+    group.hidden = separator.hidden = count === 0;
+    const viewer = document.getElementById("toolbarViewer");
+    const shown = viewer && window.matchMedia(MEDIUM_VIEW).matches ? 0 : count;
+    showInToolbar(shown);
+    if (!viewer || shown === 0) return;
+    const over = toolbarOverflow(viewer);
+    if (over <= 0) return;
+    const width = favouriteButtons[0].button.getBoundingClientRect().width;
+    const step = width + parseFloat(getComputedStyle(group).columnGap);
+    // The ★ button takes a favourite's room.
+    showInToolbar(Math.max(0, count - 1 - Math.ceil(over / step)));
+  }
+
+  /** @param {number} shown how many favourites, from the first, the toolbar shows */
+  function showInToolbar(shown) {
+    if (!favouritesBar) return;
+    favouriteButtons.forEach(({ button, item }, index) => {
+      button.hidden = index >= shown;
+      item.hidden = index < shown;
+    });
+    const all = shown === favouriteButtons.length;
+    if (all) favouritesBar.closeMenu();
+    favouritesBar.more.hidden = all;
+  }
+
+  /**
+   * @param {HTMLElement} viewer #toolbarViewer, whose groups keep their width
+   *   (web/viewer.css)
+   * @returns {number} by how much its groups are wider than it, in pixels
+   */
+  function toolbarOverflow(viewer) {
+    const width = (/** @type {Element} */ element) => element.getBoundingClientRect().width;
+    const groups = [...viewer.children].reduce((sum, group) => sum + width(group), 0);
+    // Less than half a pixel is rounding.
+    return groups - width(viewer) - 0.5;
+  }
+
+  /**
+   * Keeps the favourites in step with pdf.js: they work whenever its drawing
+   * tools do, show as pressed while their tool is on with their settings,
+   * and move between the toolbar and the ★ menu as the room for them
+   * changes, with the window's width or with what pdf.js's groups show.
+   *
+   * @param {any} app
+   */
+  function followFavourites(app) {
+    app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+      toolsEnabled = mode !== EDITOR_DISABLE;
+      if (favouritesBar) favouritesBar.moreButton.disabled = !toolsEnabled;
+      for (const { button, item } of favouriteButtons) {
+        button.disabled = item.disabled = !toolsEnabled;
+      }
+      updateFavouritesPressed(app);
+    });
+    // The settings pdf.js shows change: the user's, a selected drawing's or a favourite's.
+    for (const name of ["switchannotationeditorparams", "annotationeditorparamschanged"]) {
+      app.eventBus.on(name, () => updateFavouritesPressed(app));
+    }
+    // Not #toolbarViewerRight, which holds the favourites, and changes as they move.
+    const resizing = new ResizeObserver(() => layoutFavourites());
+    for (const id of ["toolbarViewer", "toolbarViewerLeft", "toolbarViewerMiddle"]) {
+      const element = document.getElementById(id);
+      if (element) resizing.observe(element);
+    }
+    const tools = document.getElementById("editorModeButtons");
+    if (tools) resizing.observe(tools);
   }
 
   /**

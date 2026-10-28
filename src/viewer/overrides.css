@@ -266,6 +266,86 @@
   margin-block-start: 8px;
 }
 
+/*
+ * The favourites (bridge.js), before pdf.js's drawing tools: each its tool's
+ * icon, in its colour outside forced-colors mode, with its size in a corner.
+ * The icon is a child rather than ::before, so that a halo in the toolbar's
+ * icon colour, which a mask would cut off, can make pale colours show in
+ * light mode and dark ones in dark mode. The ★ menu lists those that don't
+ * fit, with their descriptions.
+ */
+#pdflionFavouritesMoreButton::before {
+  mask-image: url(/pdflion/icons/star.svg);
+}
+
+.toolbarButton.pdflionFavourite {
+  &::before {
+    content: none;
+  }
+
+  /* More specific than viewer.css's .toolbarButton > span, which hides labels. */
+  > span.pdflionFavouriteIcon {
+    display: block;
+    flex: none;
+    width: var(--icon-size);
+    height: var(--icon-size);
+    overflow: visible;
+
+    &::before {
+      content: "";
+      display: block;
+      width: 100%;
+      height: 100%;
+      background-color: var(--toolbar-icon-bg-color);
+      mask-size: cover;
+      mask-position: center;
+    }
+  }
+
+  &[data-tool="highlight"] > .pdflionFavouriteIcon::before {
+    mask-image: var(--toolbarButton-editorHighlight-icon);
+  }
+
+  &[data-tool="freetext"] > .pdflionFavouriteIcon::before {
+    mask-image: var(--toolbarButton-editorFreeText-icon);
+  }
+
+  &[data-tool="ink"] > .pdflionFavouriteIcon::before {
+    mask-image: var(--toolbarButton-editorInk-icon);
+  }
+
+  /* The size, which the description gives in the ★ menu. */
+  &:not(.labeled)::after {
+    content: attr(data-size) / "";
+    position: absolute;
+    inset-inline-end: 3px;
+    inset-block-end: 2px;
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--main-color);
+  }
+}
+
+/* As specific as the icon's rule above, which it follows. */
+@media not (forced-colors: active) {
+  .toolbarButton.pdflionFavourite > span.pdflionFavouriteIcon {
+    filter: drop-shadow(0 0 0.5px var(--toolbar-icon-bg-color));
+
+    &::before {
+      background-color: var(--pdflion-favourite-color);
+    }
+  }
+}
+
+/*
+ * Over the option box of the tool that's on, which comes later in the
+ * toolbar with the same z-index, as pdf.js's ⋮ menu is.
+ */
+#pdflionFavouritesMenu {
+  z-index: 30001;
+}
+
 /* viewer.css sets this on a selector three classes deep, hence !important. */
 .editToolbar {
   --editor-toolbar-delete-image: url(/pdflion/icons/delete.svg) !important;
