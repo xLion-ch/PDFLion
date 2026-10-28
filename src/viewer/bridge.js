@@ -15,11 +15,13 @@
  * (getStructuralChanges, #mergeFiles and the listeners guardPageTools() goes
  * before), src/display/pages_mapper.js, web/pdf_viewer.js (pagesCount,
  * onPagesEdited), web/pdf_page_view.js (updatePageNumber), web/menu.js,
- * web/views_manager.js and web/viewer.html (the toolbar, and the views
- * manager's Manage menu, Add file and waiting bar).
+ * web/views_manager.js, web/sidebar.js (onResizing) and web/viewer.html (the
+ * toolbar, and the views manager's header, Manage menu, Add file and waiting
+ * bar).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
- * pages from other files. Page changes that pdf.js can't make go through
+ * pages from other files. The page overview shows those thumbnails across the
+ * viewer area. Page changes that pdf.js can't make go through
  * @cantoo/pdf-lib, which protocol.js serves at /lib/ and this script loads the
  * first time it's needed. It changes a document as an incremental update,
  * after its bytes.
@@ -32,6 +34,10 @@
 
   /** `ViewOnLoad.INITIAL` in web/app.js. */
   const VIEW_ON_LOAD_INITIAL = 1;
+
+  /** `SidebarView.NONE` and `THUMBS` in web/ui_utils.js: no view, the thumbnails. */
+  const SIDEBAR_NONE = 0;
+  const SIDEBAR_THUMBS = 1;
 
   /** `AnnotationEditorPrefix` in src/shared/util.js: annotations made in the viewer. */
   const EDITOR_PREFIX = "pdfjs_internal_editor_";
@@ -49,7 +55,10 @@
   // web/pdf_thumbnail_viewer.js builds the thumbnails.
   const THUMBNAILS = "#thumbnailsView";
   const THUMBNAIL_IMAGE = `${THUMBNAILS} > .thumbnail > .thumbnailImageContainer`;
+  const CURRENT_THUMBNAIL = `${THUMBNAIL_IMAGE}[aria-current="page"]`;
   const CHECKED_THUMBNAIL = `${THUMBNAILS} > .thumbnail > input:checked`;
+  /** While pdf.js drags pages, which Esc cancels. */
+  const DRAGGING_PAGES = `${THUMBNAILS}.isDragging`;
   /** The Manage menu's items that change pages. Export selected doesn't. */
   const PAGE_CHANGE_ITEMS = [
     "#viewsManagerStatusActionCopy",
@@ -142,8 +151,17 @@
   /** @type {Promise<any> | null} @cantoo/pdf-lib, once loading it started */
   let pdfLib = null;
 
-  /** @type {HTMLButtonElement | null} the toolbar's Insert Blank Page button */
-  let insertButton = null;
+  /** @type {HTMLButtonElement[]} Insert Blank Page's buttons, in the toolbar and the overview */
+  let insertButtons = [];
+
+  /** Whether the page overview is open: see openOverview(). */
+  let overview = false;
+
+  /** The views manager's view before the overview opened, as a `SidebarView`. */
+  let viewBeforeOverview = SIDEBAR_NONE;
+
+  /** @type {HTMLButtonElement | null} the toolbar's Page Overview button */
+  let overviewButton = null;
 
   /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
@@ -160,6 +178,7 @@
     },
     find: (app) => app.findBar?.open(),
     toggleSidebar: (app) => app.viewsManager?.toggle(),
+    pageOverview: (app) => toggleOverview(app),
     rotateLeft: (app) => app.rotatePages(-90),
     rotateRight: (app) => app.rotatePages(90),
     presentation: (app) => app.requestPresentationMode(),
@@ -204,12 +223,15 @@
       // pdf.js hasn't bound its events yet.
       addFilesAsPageChanges(app);
       // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
-      insertButton = addInsertButton(app);
+      overviewButton = addOverviewButton(app);
+      insertButtons = [addInsertButton(app), addOverviewTools(app)].filter((button) => !!button);
       guardPageTools(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
           Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
         );
+        // After pdf.js's own listeners, which come with the views manager.
+        followOverview(app);
         app.eventBus.on("documentloaded", () => {
           trackEdits(app);
           checkLocked(app);
@@ -479,7 +501,7 @@
     if (busy) return false;
     busy = true;
     editedWhileSaving = false;
-    updateInsertButton(app);
+    updateInsertButtons(app);
     try {
       if (!(await confirmRewrite(app))) return false;
       const pageChanges = hasPageChanges(app);
@@ -511,7 +533,7 @@
       return true;
     } finally {
       busy = false;
-      updateInsertButton(app);
+      updateInsertButtons(app);
     }
   }
 
@@ -650,9 +672,10 @@
   }
 
   /**
-   * Inserts an empty page after the current one, of the size the current page
-   * is shown at, and goes to it. The page is added after the document's bytes,
-   * as an incremental update, so everything the file holds stays as it was.
+   * Inserts an empty page after the current one, of the size that page is
+   * shown at, and goes to it. In the page overview, it goes after the last
+   * checked page, if any. The page is added after the document's bytes, as
+   * an incremental update, so everything the file holds stays as it was.
    *
    * @param {any} app
    * @returns {Promise<boolean>} whether the page was inserted
@@ -660,10 +683,11 @@
   async function insertBlankPage(app) {
     if (busy || !app.pdfDocument) return false;
     busy = true;
-    updateInsertButton(app);
+    updateInsertButtons(app);
     try {
       if (!(await confirmPageChange(app))) return false;
-      const index = app.page; // right after the current page, counting from 0
+      // The page to insert after, which is also the new page's index.
+      const index = (overview && lastCheckedPage()) || app.page;
       const { view, rotate } = app.pdfViewer.getPageView(index - 1).pdfPage;
       const [width, height] = [view[2] - view[0], view[3] - view[1]];
       // A page shown on its side, by its /Rotate, is as wide as it's tall.
@@ -673,7 +697,7 @@
       );
     } finally {
       busy = false;
-      updateInsertButton(app);
+      updateInsertButtons(app);
     }
   }
 
@@ -710,7 +734,7 @@
     let added = false;
     if (!busy && app.pdfDocument) {
       busy = true;
-      updateInsertButton(app);
+      updateInsertButtons(app);
       try {
         if (await confirmPageChange(app)) {
           const { pdfDocument } = app;
@@ -730,7 +754,7 @@
         }
       } finally {
         busy = false;
-        updateInsertButton(app);
+        updateInsertButtons(app);
       }
     }
     // pdf.js waits for the new document until it's told otherwise, as its
@@ -805,8 +829,9 @@
   /**
    * Replaces the document with new bytes in the same tab, as pdf.js's own
    * onSaveAndLoad() does, and keeps the view: the zoom, the rotation, the
-   * scroll and spread modes and the sidebar, at `page`. The document keeps its
-   * URL and file name, and counts as edited until it's saved.
+   * scroll and spread modes, and the sidebar or the page overview, at `page`.
+   * The document keeps its URL and file name, and counts as edited until it's
+   * saved.
    *
    * @param {any} app
    * @param {Uint8Array} bytes
@@ -815,7 +840,9 @@
   async function reopen(app, bytes, { page, url, filename, edited: isEdited = true }) {
     const { eventBus, pdfViewer, viewsManager } = app;
     const { currentScaleValue, pagesRotation, scrollMode, spreadMode } = pdfViewer;
-    const sidebarView = viewsManager?.visibleView ?? 0; // `SidebarView.NONE`
+    // The thumbnails while the overview is open. It stays open, since
+    // followOverview() ignores pdf.js switching views while the document loads.
+    const sidebarView = viewsManager?.visibleView ?? SIDEBAR_NONE;
     // The changed document has the same fingerprint, so pdf.js would show it
     // where its browser history and its view history left the old one, rather
     // than at initialBookmark. load() reads the option before documentinit.
@@ -843,6 +870,8 @@
       pdfViewer.spreadMode = spreadMode;
       if (sidebarView) viewsManager.switchView(sidebarView, /* forceOpen = */ true);
       else viewsManager?.close();
+      // pdf.js would drag pages to where the old document's thumbnails were.
+      if (sidebarView === SIDEBAR_THUMBS) relayoutThumbnails(app);
       // open() with data forgets the URL, which save() compares against.
       showDocumentUrl(app, url);
     } finally {
@@ -926,7 +955,7 @@
   async function checkLocked(app) {
     const { pdfDocument } = app;
     locked = true;
-    updateInsertButton(app);
+    updateInsertButtons(app);
     try {
       const { info } = await pdfDocument.getMetadata();
       if (app.pdfDocument !== pdfDocument) return;
@@ -936,7 +965,7 @@
       console.warn("Couldn't read the document's metadata:", error);
     }
     document.getElementById("outerContainer")?.classList.toggle("pdflionPagesLocked", locked);
-    updateInsertButton(app);
+    updateInsertButtons(app);
   }
 
   /**
@@ -1157,9 +1186,7 @@
   }
 
   /**
-   * Adds Insert Blank Page to the toolbar, at the end of the editing tools,
-   * built like pdf.js's own buttons. overrides.css draws its icon. Its label
-   * is English, like the native menus.
+   * Adds Insert Blank Page to the toolbar, at the end of the editing tools.
    *
    * @param {any} app
    * @returns {HTMLButtonElement | null}
@@ -1167,29 +1194,205 @@
   function addInsertButton(app) {
     const separator = document.getElementById("editorModeSeparator");
     if (!separator) return null;
-    const button = document.createElement("button");
-    button.id = "pdflionInsertBlankPage";
-    button.className = "toolbarButton";
-    button.type = "button";
-    button.tabIndex = 0;
-    button.title = "Insert Blank Page";
+    const button = makeButton("pdflionInsertBlankPage", "toolbarButton", "Insert Blank Page");
     button.disabled = true;
-    const label = document.createElement("span");
-    label.textContent = "Insert Blank Page";
-    button.append(label);
     button.addEventListener("click", () => insertBlankPage(app));
     separator.before(button);
     return button;
   }
 
   /**
-   * The button works once a document has loaded, while nothing else runs,
-   * and for documents that aren't locked.
+   * Adds Page Overview to the toolbar, right of the sidebar's button.
+   *
+   * @param {any} app
+   * @returns {HTMLButtonElement | null}
+   */
+  function addOverviewButton(app) {
+    const sidebarButton = document.getElementById("viewsManagerToggleButton");
+    if (!sidebarButton) return null;
+    const button = makeButton("pdflionPageOverview", "toolbarButton", "Page Overview");
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => toggleOverview(app));
+    sidebarButton.after(button);
+    return button;
+  }
+
+  /**
+   * Adds the overview's own page tools to the views manager's header, before
+   * pdf.js's Add file: Rotate Pages Left and Right, and Insert Blank Page.
+   * overrides.css shows them in the overview only, and not for a locked
+   * document.
+   *
+   * @param {any} app
+   * @returns {HTMLButtonElement | null} the overview's Insert Blank Page button
+   */
+  function addOverviewTools(app) {
+    const addFile = document.getElementById("viewsManagerAddFileButton");
+    if (!addFile) return null;
+    const tools = document.createElement("div");
+    tools.id = "pdflionPageTools";
+    const className = "toolbarButton viewsManagerButton";
+    // PDFLion can't rotate pages yet.
+    const rotateLeft = makeButton("pdflionRotatePagesLeft", className, "Rotate Pages Left");
+    const rotateRight = makeButton("pdflionRotatePagesRight", className, "Rotate Pages Right");
+    rotateLeft.disabled = rotateRight.disabled = true;
+    const insert = makeButton("pdflionOverviewInsertBlankPage", className, "Insert Blank Page");
+    insert.disabled = true;
+    insert.addEventListener("click", () => insertBlankPage(app));
+    tools.append(rotateLeft, rotateRight, insert);
+    addFile.before(tools);
+    return insert;
+  }
+
+  /**
+   * A button built like pdf.js's own. overrides.css draws its icon. Its label
+   * is English, like the native menus.
+   *
+   * @param {string} id
+   * @param {string} className
+   * @param {string} label
+   * @returns {HTMLButtonElement}
+   */
+  function makeButton(id, className, label) {
+    const button = document.createElement("button");
+    button.id = id;
+    button.className = className;
+    button.type = "button";
+    button.tabIndex = 0;
+    button.title = label;
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.append(text);
+    return button;
+  }
+
+  /**
+   * Insert Blank Page's buttons work once a document has loaded, while nothing
+   * else runs, and for documents that aren't locked.
    *
    * @param {any} app
    */
-  function updateInsertButton(app) {
-    if (insertButton) insertButton.disabled = busy || locked || !app.pdfDocument;
+  function updateInsertButtons(app) {
+    for (const button of insertButtons) button.disabled = busy || locked || !app.pdfDocument;
+  }
+
+  /**
+   * The page overview shows the document's pages as a grid of thumbnails
+   * across the viewer area, with pdf.js's page tools. It's pdf.js's views
+   * manager on its thumbnails, which overrides.css spreads out while
+   * #outerContainer has `pdflionPageOverview`. Closing it shows the sidebar
+   * as it was.
+   *
+   * @param {any} app
+   * @returns {boolean} whether the overview is open now
+   */
+  function toggleOverview(app) {
+    if (overview) closeOverview(app);
+    else openOverview(app);
+    return overview;
+  }
+
+  /** @param {any} app */
+  function openOverview(app) {
+    const { viewsManager } = app;
+    if (overview || !viewsManager) return;
+    viewBeforeOverview = viewsManager.visibleView;
+    showOverview(true);
+    viewsManager.switchView(SIDEBAR_THUMBS, /* forceOpen = */ true);
+    relayoutThumbnails(app);
+    // The arrow keys then go from page to page.
+    document.querySelector(CURRENT_THUMBNAIL)?.focus();
+  }
+
+  /**
+   * Closes the overview, and shows the sidebar as it was before, unless pdf.js
+   * has closed the views manager meanwhile.
+   *
+   * @param {any} app
+   */
+  function closeOverview(app) {
+    const { viewsManager, pdfViewer } = app;
+    if (!overview) return;
+    const focused = document.getElementById("viewsManager")?.contains(document.activeElement);
+    showOverview(false);
+    if (viewsManager.visibleView === SIDEBAR_THUMBS) {
+      // While the thumbnails still show, in the sidebar.
+      relayoutThumbnails(app);
+      if (viewBeforeOverview === SIDEBAR_NONE) viewsManager.close();
+      else viewsManager.switchView(viewBeforeOverview);
+    }
+    if (focused) pdfViewer.focus();
+  }
+
+  /**
+   * Shows whether the overview is open: on #outerContainer, for
+   * overrides.css, and on its toolbar button.
+   *
+   * @param {boolean} open
+   */
+  function showOverview(open) {
+    overview = open;
+    document.getElementById("outerContainer")?.classList.toggle("pdflionPageOverview", open);
+    overviewButton?.classList.toggle("toggled", open);
+    overviewButton?.setAttribute("aria-pressed", String(open));
+  }
+
+  /**
+   * Keeps the overview in step with pdf.js and the window:
+   * - pdf.js's sidebar button and F4 close the views manager, and the
+   *   overview with it. reopen() leaves the overview open.
+   * - the document stays where it was behind the overview
+   * - Esc closes it, unless pdf.js's own Esc did something: closing a menu
+   *   or the find bar, or cancelling a drag of pages
+   * - a double-click on a page closes it, showing that page
+   * - the window resizing moves the thumbnails
+   *
+   * @param {any} app
+   */
+  function followOverview(app) {
+    const { eventBus, viewsManager } = app;
+    if (!viewsManager) return;
+    eventBus.on("sidebarviewchanged", (/** @type {{ view: number }} */ { view }) => {
+      if (overview && !reopening && view !== SIDEBAR_THUMBS) showOverview(false);
+    });
+    // pdf.js moves the document aside by the views manager's width, which
+    // onResizing() sets as the views manager resizes. The overview covers it
+    // instead, so the document keeps its place and its zoom.
+    const { onResizing } = viewsManager;
+    viewsManager.onResizing = function (/** @type {number} */ width) {
+      if (!overview) onResizing.call(this, width);
+    };
+    // After pdf.js's own listener, which prevents the default of what it handles.
+    window.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !overview || event.defaultPrevented) return;
+      if (!document.querySelector(DRAGGING_PAGES)) closeOverview(app);
+    });
+    window.addEventListener("dblclick", (event) => {
+      // The first click went to the page.
+      if (overview && targetIn(event, THUMBNAIL_IMAGE)) closeOverview(app);
+    });
+    window.addEventListener("resize", () => {
+      if (overview) relayoutThumbnails(app);
+    });
+  }
+
+  /**
+   * pdf.js works out where the thumbnails are, for dragging pages, when the
+   * views manager says it has resized (web/pdf_thumbnail_viewer.js). They move
+   * when the overview opens or closes, or the window resizes while it's open.
+   *
+   * @param {any} app
+   */
+  function relayoutThumbnails(app) {
+    app.eventBus.dispatch("resize", { source: app.viewsManager });
+  }
+
+  /** @returns {number} the last page checked in the thumbnails, or 0 */
+  function lastCheckedPage() {
+    const pages = [...document.querySelectorAll(CHECKED_THUMBNAIL)].map((checkbox) =>
+      Number(checkbox.parentElement?.getAttribute("page-number")),
+    );
+    return Math.max(0, ...pages.filter(Number.isInteger));
   }
 
   /**

@@ -162,8 +162,20 @@
 
 /* PDFLion's own toolbar buttons, which bridge.js adds. viewer.css draws the
    icon of every .toolbarButton as a mask, like pdf.js's own. */
-#pdflionInsertBlankPage::before {
+#pdflionPageOverview::before {
+  mask-image: url(/pdflion/icons/grid_view.svg);
+}
+
+:is(#pdflionInsertBlankPage, #pdflionOverviewInsertBlankPage)::before {
   mask-image: url(/pdflion/icons/note_add.svg);
+}
+
+#pdflionRotatePagesLeft::before {
+  mask-image: url(/pdflion/icons/rotate_left.svg);
+}
+
+#pdflionRotatePagesRight::before {
+  mask-image: url(/pdflion/icons/rotate_right.svg);
 }
 
 /* viewer.css sets this on a selector three classes deep, hence !important. */
@@ -491,12 +503,81 @@
   }
 }
 
+/*
+ * The page overview (bridge.js): the views manager fills the viewer area, and
+ * its thumbnails wrap into a grid. It shows the pages only, without the view
+ * selector and the resizer, and opens at once, rather than sliding in.
+ * PDFLion's page tools join pdf.js's in its header. The document stays where
+ * it was, hidden, so it doesn't show around the overview or take the focus.
+ */
+#outerContainer.pdflionPageOverview {
+  #viewerContainer {
+    visibility: hidden;
+  }
+
+  #viewsManager {
+    /* Over the width the resizer leaves on the element. */
+    width: calc(100% - 16px) !important;
+    max-width: none;
+    transition: none;
+
+    /* As deep as views_manager.css sets it. */
+    #viewsManagerTitle #viewsManagerSelector,
+    #viewsManagerResizer {
+      display: none;
+    }
+
+    #viewsManagerHeader .viewsManagerLabel {
+      padding-inline-start: 8px;
+      text-align: start;
+    }
+
+    /* Columns as wide as each thumbnail with its checkbox, so that the last
+       row's pages line up with those above, rather than spread out. */
+    #thumbnailsView {
+      display: grid;
+      grid-template-columns: repeat(
+        auto-fill,
+        calc(var(--thumbnail-width) + 2 * (16px + var(--gap-between-input-and-thumbnail)))
+      );
+      justify-content: center;
+    }
+  }
+}
+
+#pdflionPageTools {
+  display: none;
+  gap: 4px;
+
+  #outerContainer.pdflionPageOverview & {
+    display: flex;
+  }
+
+  /* As pdf.js's Add file. */
+  #viewsManager & > button {
+    width: 32px;
+    height: 32px;
+    background: var(--button-no-bg);
+
+    &:focus-visible {
+      background-color: var(--button-focus-no-bg);
+    }
+
+    &::before {
+      mask-repeat: no-repeat;
+      background-color: var(--button-fg);
+    }
+  }
+}
+
 /* A document whose pages can't change (bridge.js): its thumbnails only go to
-   pages, without pdf.js's checkboxes, Manage menu and Add file. */
+   pages, without pdf.js's checkboxes, Manage menu and Add file, nor
+   PDFLion's page tools. */
 #outerContainer.pdflionPagesLocked #viewsManager {
   #thumbnailsView > .thumbnail > input,
   #viewsManagerStatus,
-  #viewsManagerAddFileButton {
+  #viewsManagerAddFileButton,
+  #pdflionPageTools {
     display: none;
   }
 }

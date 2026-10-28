@@ -175,7 +175,7 @@ function template() {
         { type: "separator" },
         commandItem("&Find…", "find", "CmdOrCtrl+F"),
         { type: "separator" },
-        // No shortcut yet: it gets one together with the page overview and the eraser.
+        // No shortcut yet: it gets one together with Page Overview and the eraser.
         commandItem("Insert &Blank Page", "insertBlankPage"),
         ...onMac(
           { type: "separator" },
@@ -193,6 +193,8 @@ function template() {
         // Not Ctrl+Alt+S on Windows, which is AltGr+S, a character on many
         // keyboards. F4 is pdf.js's own shortcut for it, and Acrobat's.
         commandItem("Toggle &Sidebar", "toggleSidebar", isMac ? "Alt+Cmd+S" : "F4"),
+        // No shortcut yet: it gets one together with Insert Blank Page and the eraser.
+        commandItem("Pag&e Overview", "pageOverview"),
         { type: "separator" },
         commandItem("&Actual Size", "actualSize", "CmdOrCtrl+0"),
         commandItem("Zoom &In", "zoomIn", "CmdOrCtrl+Plus"),

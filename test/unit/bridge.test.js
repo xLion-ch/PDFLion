@@ -21,7 +21,9 @@ const named = (calls, name) => calls.filter(([other]) => other === name);
 // What bridge.js looks for in pdf.js's page tools.
 const THUMBNAILS = "#thumbnailsView";
 const THUMBNAIL_IMAGE = "#thumbnailsView > .thumbnail > .thumbnailImageContainer";
+const CURRENT_THUMBNAIL = `${THUMBNAIL_IMAGE}[aria-current="page"]`;
 const CHECKED_THUMBNAIL = "#thumbnailsView > .thumbnail > input:checked";
+const DRAGGING_PAGES = "#thumbnailsView.isDragging";
 const TAKING_FILES = "#thumbnailsView.isDraggingFile";
 const PAGE_CHANGE_ITEMS =
   "#viewsManagerStatusActionCopy, #viewsManagerStatusActionCut, #viewsManagerStatusActionDelete";
@@ -160,7 +162,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     },
   };
 
-  /** A stand-in DOM element, enough for the toolbar button and the script tag. */
+  /**
+   * A stand-in DOM element, enough for the toolbar's buttons, the views
+   * manager's header and the script tag.
+   */
   class Element {
     /** @param {string} tagName */
     constructor(tagName) {
@@ -169,6 +174,16 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       this.children = [];
       /** @type {Record<string, Function>} */
       this.listeners = {};
+      /** @type {Record<string, string>} */
+      this.attributes = {};
+      this.classes = new Set();
+      this.classList = {
+        /** @param {string} name @param {boolean} force */
+        toggle: (name, force) => {
+          if (force) this.classes.add(name);
+          else this.classes.delete(name);
+        },
+      };
       this.textContent = "";
     }
     /** @param {Element[]} children */
@@ -177,14 +192,39 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     }
     /** @param {Element} sibling */
     before(sibling) {
-      document.toolbar.splice(document.toolbar.indexOf(this), 0, sibling);
+      const siblings = this.siblings();
+      siblings.splice(siblings.indexOf(this), 0, sibling);
+    }
+    /** @param {Element} sibling */
+    after(sibling) {
+      const siblings = this.siblings();
+      siblings.splice(siblings.indexOf(this) + 1, 0, sibling);
+    }
+    /** @returns {Element[]} the list this element is in: the toolbar or the header */
+    siblings() {
+      return [document.toolbar, document.header].find((list) => list.includes(this)) ?? [];
+    }
+    /** @param {string} name @param {string} value */
+    setAttribute(name, value) {
+      this.attributes[name] = value;
     }
     addEventListener(type, listener) {
       this.listeners[type] = listener;
     }
   }
 
+  const sidebarButton = Object.assign(new Element("button"), { id: "viewsManagerToggleButton" });
   const separator = Object.assign(new Element("div"), { id: "editorModeSeparator" });
+  /** The current page's thumbnail, which takes the focus. */
+  const currentThumbnail = { focus: record("thumbnail.focus") };
+  const addFileButton = Object.assign(new Element("button"), { id: "viewsManagerAddFileButton" });
+  /** The views manager, which has the focus while `activeElement` is `inside`. */
+  const viewsManagerElement = {
+    id: "viewsManager",
+    /** @param {unknown} element */
+    contains: (element) => element === viewsManagerElement.inside,
+    inside: {},
+  };
   /**
    * The close button of the views manager's waiting bar, which ends pdf.js's
    * wait for added files.
@@ -214,19 +254,42 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     addEventListener(type, listener) {
       this.listeners[type] = listener;
     },
-    /** The toolbar's children, from #editorModeButtons on. */
-    toolbar: /** @type {Element[]} */ ([new Element("div"), separator]),
+    /**
+     * The toolbar's children: the sidebar's button, then from
+     * #editorModeButtons on.
+     */
+    toolbar: /** @type {Element[]} */ ([sidebarButton, new Element("div"), separator]),
+    /** The views manager header's children, from Add file on. */
+    header: /** @type {Element[]} */ ([addFileButton]),
     /** @param {string} id */
     getElementById(id) {
       if (id === stopWaiting.id) return stopWaiting;
       if (id === outerContainer.id) return outerContainer;
-      return toolbar ? (this.toolbar.find((element) => element.id === id) ?? null) : null;
+      if (id === viewsManagerElement.id) return viewsManagerElement;
+      if (!toolbar) return null;
+      return [...this.toolbar, ...this.header].find((element) => element.id === id) ?? null;
     },
+    /** @type {unknown} */
+    activeElement: null,
     /** Whether a thumbnail's checkbox is checked. */
     checked: false,
+    /** The numbers of the thumbnails whose checkboxes are checked, for querySelectorAll(). */
+    checkedPages: /** @type {number[]} */ ([]),
+    /** Whether pdf.js is dragging pages in the thumbnails. */
+    dragging: false,
     /** @param {string} selector */
     querySelector(selector) {
-      return selector === CHECKED_THUMBNAIL && this.checked ? {} : null;
+      if (selector === CHECKED_THUMBNAIL && this.checked) return {};
+      if (selector === DRAGGING_PAGES && this.dragging) return {};
+      if (selector === CURRENT_THUMBNAIL) return currentThumbnail;
+      return null;
+    },
+    /** @param {string} selector */
+    querySelectorAll(selector) {
+      if (selector !== CHECKED_THUMBNAIL) return [];
+      return this.checkedPages.map((number) => ({
+        parentElement: { getAttribute: (name) => (name === "page-number" ? String(number) : null) },
+      }));
     },
     /** @param {string} tagName */
     createElement: (tagName) => new Element(tagName),
@@ -269,17 +332,48 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   const eventBus = {
     /** @type {{ name: string, listener: Function, once: boolean }[]} */
     listeners: [],
+    /** @type {[string, any][]} each event dispatched, with its data */
+    dispatched: [],
     on(name, listener, options) {
       this.listeners.push({ name, listener, once: options?.once ?? false });
     },
-    /** @param {string} name */
-    dispatch(name) {
+    /** @param {string} name @param {object} [data] */
+    dispatch(name, data = {}) {
+      this.dispatched.push([name, data]);
       for (const entry of [...this.listeners]) {
         if (entry.name !== name) continue;
         if (entry.once) this.listeners.splice(this.listeners.indexOf(entry), 1);
-        entry.listener();
+        entry.listener(data);
       }
     },
+  };
+
+  /**
+   * A stand-in for pdf.js's ViewsManager, which tells what it shows with
+   * sidebarviewchanged, as web/views_manager.js does.
+   */
+  const viewsManager = {
+    /** What it shows, as a `SidebarView`: 0 while it's closed, 1 for the thumbnails. */
+    visibleView: 0,
+    toggle: record("viewsManager.toggle"),
+    /** @param {[number, boolean?]} args the view, and whether to open */
+    switchView(...args) {
+      calls.push(["viewsManager.switchView", ...args]);
+      const [view, forceOpen] = args;
+      if (forceOpen || this.visibleView !== 0) this.show(view);
+    },
+    close() {
+      calls.push(["viewsManager.close"]);
+      this.show(0);
+    },
+    /** @param {number} view */
+    show(view) {
+      if (view === this.visibleView) return;
+      this.visibleView = view;
+      eventBus.dispatch("sidebarviewchanged", { view });
+    },
+    /** Sets `--viewsManager-width`, by which pdf.js moves the document aside. */
+    onResizing: record("viewsManager.onResizing"),
   };
 
   /**
@@ -371,16 +465,12 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       getPageView(index) {
         return { pdfPage: this.pages[index] };
       },
+      focus: record("pdfViewer.focus"),
     },
     /** @type {any} */
     pdfThumbnailViewer: null,
     findBar: { open: record("findBar.open") },
-    viewsManager: {
-      visibleView: 0,
-      toggle: record("viewsManager.toggle"),
-      switchView: record("viewsManager.switchView"),
-      close: record("viewsManager.close"),
-    },
+    viewsManager,
     pdfScriptingManager: {
       dispatchWillSave: async () => calls.push(["willSave"]),
       dispatchDidSave: async () => calls.push(["didSave"]),
@@ -509,6 +599,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     get toolbar() {
       return document.toolbar;
     },
+    /** The views manager header's elements, in order. */
+    get header() {
+      return document.header;
+    },
     /**
      * Pretends pdf.js has loaded a document.
      * @param {DocumentOptions} [options]
@@ -587,6 +681,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       return event;
     },
     outerContainer,
+    viewsManagerElement,
   };
 }
 
@@ -1126,6 +1221,229 @@ describe("bridge.js Insert Blank Page", () => {
     await bridge.run("insertBlankPage");
     await bridge.run("insertBlankPage");
     assert.deepEqual(named(bridge.calls, "script"), [["script", "/lib/pdf-lib.min.js"]]);
+  });
+});
+
+describe("bridge.js page overview", () => {
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @returns {number} how often the views manager said it resized, as pdf.js
+   *   needs to work out where the thumbnails are
+   */
+  const relayouts = (bridge) =>
+    bridge.app.eventBus.dispatched.filter(
+      ([name, data]) => name === "resize" && data.source === bridge.app.viewsManager,
+    ).length;
+
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const isOpen = (bridge) => bridge.outerContainer.classes.has("pdflionPageOverview");
+
+  it("adds a toolbar button right of the sidebar's, and page tools to the views manager", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const [sidebar, button] = bridge.toolbar;
+    assert.equal(sidebar.id, "viewsManagerToggleButton");
+    assert.equal(button.id, "pdflionPageOverview");
+    assert.equal(button.className, "toolbarButton");
+    assert.equal(button.title, "Page Overview");
+    assert.equal(button.attributes["aria-pressed"], "false");
+
+    const [tools, addFile] = bridge.header;
+    assert.equal(tools.id, "pdflionPageTools");
+    assert.equal(addFile.id, "viewsManagerAddFileButton");
+    assert.deepEqual(
+      tools.children.map(({ id, title, disabled }) => [id, title, disabled]),
+      [
+        ["pdflionRotatePagesLeft", "Rotate Pages Left", true],
+        ["pdflionRotatePagesRight", "Rotate Pages Right", true],
+        ["pdflionOverviewInsertBlankPage", "Insert Blank Page", true],
+      ],
+    );
+    for (const tool of tools.children) {
+      assert.equal(tool.className, "toolbarButton viewsManagerButton");
+    }
+    bridge.openDocument();
+    await settle();
+    const [rotateLeft, rotateRight, insert] = tools.children;
+    assert.equal(insert.disabled, false);
+    // Rotating pages isn't in yet.
+    assert.equal(rotateLeft.disabled, true);
+    assert.equal(rotateRight.disabled, true);
+  });
+
+  for (const [before, description] of [
+    [0, "closed"],
+    [1, "on the thumbnails"],
+    [2, "on the outline"],
+  ]) {
+    it(`opens on the thumbnails, and leaves the sidebar ${description} as it was`, async () => {
+      const bridge = loadBridge();
+      await bridge.load();
+      bridge.openDocument();
+      const { viewsManager } = bridge.app;
+      viewsManager.visibleView = before;
+      const button = bridge.toolbar[1];
+
+      assert.equal(bridge.run("pageOverview"), true);
+      assert.ok(isOpen(bridge));
+      assert.equal(viewsManager.visibleView, 1);
+      assert.deepEqual(named(bridge.calls, "viewsManager.switchView")[0], ["viewsManager.switchView", 1, true]);
+      assert.ok(button.classes.has("toggled"));
+      assert.equal(button.attributes["aria-pressed"], "true");
+      assert.equal(relayouts(bridge), 1);
+      // So that the arrow keys go from page to page.
+      assert.equal(named(bridge.calls, "thumbnail.focus").length, 1);
+
+      assert.equal(bridge.run("pageOverview"), false);
+      assert.ok(!isOpen(bridge));
+      assert.equal(viewsManager.visibleView, before);
+      assert.ok(!button.classes.has("toggled"));
+      assert.equal(button.attributes["aria-pressed"], "false");
+      // Laid out again in the sidebar, before it closes or switches views.
+      assert.equal(relayouts(bridge), 2);
+    });
+  }
+
+  it("opens and closes with its toolbar button", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const button = bridge.toolbar[1];
+    button.listeners.click();
+    assert.ok(isOpen(bridge));
+    button.listeners.click();
+    assert.ok(!isOpen(bridge));
+  });
+
+  it("keeps the document where it was while it's open", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { viewsManager } = bridge.app;
+    viewsManager.onResizing(250);
+    bridge.run("pageOverview");
+    viewsManager.onResizing(1200);
+    bridge.run("pageOverview");
+    viewsManager.onResizing(250);
+    assert.deepEqual(named(bridge.calls, "viewsManager.onResizing"), [
+      ["viewsManager.onResizing", 250],
+      ["viewsManager.onResizing", 250],
+    ]);
+  });
+
+  it("closes with Esc, unless pdf.js used it, or it cancels a drag of pages", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.run("pageOverview");
+    bridge.fire("keydown", { key: "Escape", defaultPrevented: true });
+    assert.ok(isOpen(bridge), "pdf.js closed something with it");
+    bridge.page.document.dragging = true;
+    bridge.fire("keydown", { key: "Escape" });
+    assert.ok(isOpen(bridge), "pdf.js cancelled the drag with it");
+    bridge.page.document.dragging = false;
+    bridge.fire("keydown", { key: "Enter" });
+    assert.ok(isOpen(bridge));
+    bridge.fire("keydown", { key: "Escape" });
+    assert.ok(!isOpen(bridge));
+  });
+
+  it("closes with a double-click on a page, which went to the page", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.run("pageOverview");
+    bridge.fire("dblclick", { target: element(THUMBNAILS) });
+    assert.ok(isOpen(bridge));
+    bridge.fire("dblclick", { target: element(THUMBNAIL_IMAGE) });
+    assert.ok(!isOpen(bridge));
+    // Closed, a double-click on a thumbnail in the sidebar leaves it open.
+    bridge.app.viewsManager.visibleView = 1;
+    bridge.fire("dblclick", { target: element(THUMBNAIL_IMAGE) });
+    assert.equal(bridge.app.viewsManager.visibleView, 1);
+  });
+
+  it("gives the focus to the document when it closes with the focus inside", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.run("pageOverview");
+    bridge.run("pageOverview");
+    assert.deepEqual(named(bridge.calls, "pdfViewer.focus"), []);
+
+    bridge.run("pageOverview");
+    bridge.page.document.activeElement = bridge.viewsManagerElement.inside;
+    bridge.fire("keydown", { key: "Escape" });
+    assert.equal(named(bridge.calls, "pdfViewer.focus").length, 1);
+  });
+
+  it("closes when pdf.js closes the views manager, as with its sidebar button", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.run("pageOverview");
+    bridge.app.viewsManager.close();
+    assert.ok(!isOpen(bridge));
+    assert.ok(!bridge.toolbar[1].classes.has("toggled"));
+    // The next toggle opens it again.
+    assert.equal(bridge.run("pageOverview"), true);
+  });
+
+  it("lays the thumbnails out again when the window resizes while it's open", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.fire("resize");
+    assert.equal(relayouts(bridge), 0);
+    bridge.run("pageOverview");
+    bridge.fire("resize");
+    assert.equal(relayouts(bridge), 2);
+  });
+
+  it("stays open while a page change reopens the document", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    bridge.run("pageOverview");
+    // pdf.js opens the views manager on the document's page mode, such as its outline.
+    const { open } = bridge.app;
+    bridge.app.open = async (args) => {
+      await open(args);
+      bridge.app.viewsManager.switchView(2, true);
+    };
+    const before = relayouts(bridge);
+    assert.equal(await bridge.run("insertBlankPage"), true);
+    assert.ok(isOpen(bridge));
+    assert.equal(bridge.app.viewsManager.visibleView, 1);
+    // The new document's thumbnails are laid out.
+    assert.equal(relayouts(bridge), before + 1);
+  });
+
+  it("inserts a blank page after the last checked page", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 3 });
+    bridge.app.pdfViewer.pages = [
+      { view: [0, 0, 612, 792], rotate: 0 },
+      { view: [0, 0, 612, 792], rotate: 0 },
+      { view: [0, 0, 300, 400], rotate: 0 },
+    ];
+    bridge.page.document.checkedPages = [1, 3];
+    bridge.run("pageOverview");
+    await bridge.header[0].children[2].listeners.click();
+    assert.deepEqual(named(bridge.calls, "PDFLib.insertPage"), [["PDFLib.insertPage", 3, [300, 400]]]);
+    assert.equal(bridge.app.initialBookmark, "page=4&zoom=auto");
+  });
+
+  it("inserts after the current page with no page checked, or outside the overview", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 3 });
+    bridge.app.pdfViewer.pages = Array(3).fill({ view: [0, 0, 612, 792], rotate: 0 });
+    bridge.app.page = 2;
+    bridge.run("pageOverview");
+    await bridge.run("insertBlankPage");
+    bridge.run("pageOverview");
+    bridge.page.document.checkedPages = [3];
+    bridge.app.page = 2;
+    await bridge.run("insertBlankPage");
+    assert.deepEqual(
+      named(bridge.calls, "PDFLib.insertPage").map(([, index]) => index),
+      [2, 2],
+    );
   });
 });
 

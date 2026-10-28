@@ -81,17 +81,58 @@ async function showThumbnails(page) {
  * @param {Page} page
  * @param {number} from
  * @param {number} after
+ * @param {object} [options]
+ * @param {boolean} [options.grid] whether the thumbnails are in the page
+ *   overview's grid, rather than in a column
  */
-async function dragThumbnail(page, from, after) {
+async function dragThumbnail(page, from, after, { grid = false } = {}) {
   const start = await thumbnail(page, from).locator(".thumbnailImageContainer").boundingBox();
   const end = await thumbnail(page, after).locator(".thumbnailImageContainer").boundingBox();
   if (!start || !end) throw new Error("No thumbnail to drag");
   await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
   await page.mouse.down();
-  // pdf.js drops it after the thumbnail whose middle the dragged one's is below.
-  await page.mouse.move(end.x + end.width / 2, end.y + end.height * 0.75, { steps: 20 });
+  // pdf.js drops it after the thumbnail whose middle the dragged one's is
+  // below, in a column, or right of, in a grid. Coming from the row above,
+  // it takes the grid's next row once below that row's middle.
+  const x = grid ? 0.9 : 0.5;
+  await page.mouse.move(end.x + end.width * x, end.y + end.height * 0.75, { steps: 20 });
   await page.mouse.up();
 }
+
+/**
+ * @param {Page} page
+ * @returns {Promise<boolean>} whether the page overview is open
+ */
+const overviewOpen = (page) =>
+  page.evaluate(() =>
+    /** @type {HTMLElement} */ (document.getElementById("outerContainer")).classList.contains(
+      "pdflionPageOverview",
+    ),
+  );
+
+/**
+ * @param {Page} page
+ * @returns {Promise<boolean>} whether pdf.js's views manager, the sidebar, is open
+ */
+const sidebarOpen = (page) => page.evaluate(() => PDFViewerApplication.viewsManager.isOpen);
+
+/**
+ * @param {Page} page
+ * @returns {Promise<void>} once nothing moves, such as the sidebar sliding in
+ */
+const settled = (page) =>
+  expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBe(0);
+
+/**
+ * @param {Page} page
+ * @param {string} selector
+ * @returns {Promise<DOMRect>} where the element is
+ */
+const boundsOf = (page, selector) =>
+  page.evaluate(
+    (selector) => /** @type {Element} */ (document.querySelector(selector)).getBoundingClientRect().toJSON(),
+    selector,
+  );
 
 test("Insert Blank Page adds a page after the current one, and Save appends it", async ({
   pdflion,
@@ -359,6 +400,146 @@ test("a typed form value survives moving pages and saving", async ({ pdflion }) 
   await expect(page.locator(".annotationLayer input")).toHaveValue("Ada Lovelace");
 });
 
+test("the page overview opens and closes with its button, the menu, Esc and a double-click", async ({
+  pdflion,
+}) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  const button = page.locator("#pdflionPageOverview");
+
+  await test.step("its button", async () => {
+    await button.click();
+    await expect.poll(() => overviewOpen(page)).toBe(true);
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(14);
+    // The document is hidden behind it.
+    await expect(page.locator("#viewerContainer")).toBeHidden();
+    // The default window, 1000 pixels wide, has room for several columns.
+    const tops = await page.evaluate(() =>
+      [...document.querySelectorAll("#thumbnailsView > .thumbnail")].map(
+        (thumbnail) => /** @type {HTMLElement} */ (thumbnail).offsetTop,
+      ),
+    );
+    expect(tops.filter((top) => top === tops[0]).length).toBeGreaterThanOrEqual(3);
+    expect(new Set(tops).size).toBeGreaterThan(1);
+
+    await button.click();
+    await expect.poll(() => overviewOpen(page)).toBe(false);
+    await expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(await sidebarOpen(page)).toBe(false);
+    await expect(page.locator("#viewerContainer")).toBeVisible();
+  });
+
+  await test.step("the menu and Esc", async () => {
+    await clickMenu(app, page, "pageOverview");
+    await expect.poll(() => overviewOpen(page)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect.poll(() => overviewOpen(page)).toBe(false);
+    expect(await sidebarOpen(page)).toBe(false);
+  });
+
+  await test.step("a double-click on a page, which shows that page", async () => {
+    await clickMenu(app, page, "pageOverview");
+    await expect.poll(() => overviewOpen(page)).toBe(true);
+    await thumbnail(page, 5).locator(".thumbnailImageContainer").dblclick();
+    await expect.poll(() => overviewOpen(page)).toBe(false);
+    expect(await currentPage(page)).toBe(5);
+    expect(await sidebarOpen(page)).toBe(false);
+  });
+});
+
+test("the page overview leaves the sidebar as it was, and the document in its place", async ({
+  pdflion,
+}) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  await showThumbnails(page);
+  await settled(page);
+  const sidebar = await boundsOf(page, "#viewsManager");
+  const documentArea = await boundsOf(page, "#viewerContainer");
+  const scale = await page.evaluate(() => PDFViewerApplication.pdfViewer.currentScale);
+
+  await clickMenu(app, page, "pageOverview");
+  await expect.poll(async () => (await boundsOf(page, "#viewsManager")).width).toBeGreaterThan(
+    sidebar.width * 2,
+  );
+  expect(await boundsOf(page, "#viewerContainer")).toEqual(documentArea);
+
+  await clickMenu(app, page, "pageOverview");
+  await expect.poll(() => overviewOpen(page)).toBe(false);
+  expect(await sidebarOpen(page)).toBe(true);
+  expect(await page.evaluate(() => PDFViewerApplication.viewsManager.visibleView)).toBe(1);
+  expect(await boundsOf(page, "#viewsManager")).toEqual(sidebar);
+  expect(await boundsOf(page, "#viewerContainer")).toEqual(documentArea);
+  expect(await page.evaluate(() => PDFViewerApplication.pdfViewer.currentScale)).toBe(scale);
+});
+
+test("pages moved and deleted in the page overview's grid are saved", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 6);
+  let { app, page } = await pdflion([file]);
+  // pdf.js works out where the thumbnails are in the sidebar's column first,
+  // once it has slid in.
+  await showThumbnails(page);
+  await settled(page);
+  await page.locator("#pdflionPageOverview").click();
+  await expect.poll(() => overviewOpen(page)).toBe(true);
+
+  await dragThumbnail(page, 1, 3, { grid: true });
+  await expect
+    .poll(() => pageTexts(page))
+    .toEqual(["Page 2", "Page 3", "Page 1", "Page 4", "Page 5", "Page 6"]);
+  // From the first row to the second.
+  await dragThumbnail(page, 2, 5, { grid: true });
+  await expect
+    .poll(() => pageTexts(page))
+    .toEqual(["Page 2", "Page 1", "Page 4", "Page 5", "Page 3", "Page 6"]);
+  await thumbnail(page, 6).locator("input").check();
+  await page.locator("#viewsManagerStatusActionButton").click();
+  await page.locator("#viewsManagerStatusActionDelete").click();
+  const changed = ["Page 2", "Page 1", "Page 4", "Page 5", "Page 3"];
+  await expect.poll(() => pageTexts(page)).toEqual(changed);
+
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  // Reopened as saved, still in the overview.
+  expect(await overviewOpen(page)).toBe(true);
+  await app.close();
+
+  ({ app, page } = await pdflion([file]));
+  expect(await pageTexts(page)).toEqual(changed);
+});
+
+test("Insert Blank Page in the page overview goes after the last checked page", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const { page } = await pdflion([file]);
+  await page.locator("#pdflionPageOverview").click();
+  await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(3);
+  const insert = page.locator("#pdflionOverviewInsertBlankPage");
+  await expect(insert).toBeEnabled();
+  // Rotating pages isn't in yet.
+  await expect(page.locator("#pdflionRotatePagesLeft")).toBeDisabled();
+  await expect(page.locator("#pdflionRotatePagesRight")).toBeDisabled();
+
+  await thumbnail(page, 1).locator("input").check();
+  await thumbnail(page, 2).locator("input").check();
+  await insert.click();
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "", "Page 3"]);
+  expect(await currentPage(page)).toBe(3);
+  expect(await overviewOpen(page)).toBe(true);
+  await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(4);
+
+  // With no page checked, after the current one.
+  await expect(page.locator("#thumbnailsView input:checked")).toHaveCount(0);
+  await page.evaluate(() => {
+    PDFViewerApplication.page = 1;
+  });
+  await insert.click();
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "", "Page 2", "", "Page 3"]);
+  expect(await overviewOpen(page)).toBe(true);
+});
+
 test("a document with a password shows its pages, but no page tools", async ({ pdflion }) => {
   const dir = await tempDir();
   const file = path.join(dir, "protected.pdf");
@@ -388,6 +569,15 @@ test("a document with a password shows its pages, but no page tools", async ({ p
   // The thumbnails still go to their pages.
   await thumbnail(page, 3).locator(".thumbnailImageContainer").click();
   await expect.poll(() => currentPage(page)).toBe(3);
+
+  // So does the page overview, without PDFLion's page tools either.
+  await page.locator("#pdflionPageOverview").click();
+  await expect.poll(() => overviewOpen(page)).toBe(true);
+  await expect(thumbnail(page, 1).locator(".thumbnailImageContainer")).toBeVisible();
+  await expect(page.locator("#pdflionPageTools")).toBeHidden();
+  await thumbnail(page, 1).locator(".thumbnailImageContainer").dblclick();
+  await expect.poll(() => currentPage(page)).toBe(1);
+  expect(await overviewOpen(page)).toBe(false);
 });
 
 test("a signed document asks before its first drag of pages only", async ({ pdflion }) => {
