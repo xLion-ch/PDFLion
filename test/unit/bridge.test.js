@@ -29,6 +29,8 @@ const TAKING_FILES = "#thumbnailsView.isDraggingFile";
 const PAGE_CHANGE_ITEMS =
   "#viewsManagerStatusActionCopy, #viewsManagerStatusActionCut, #viewsManagerStatusActionDelete";
 const ADD_FILE_PICKER = "#viewsManagerAddFilePicker";
+/** The swatch Highlight's colour picker shows as chosen. */
+const HIGHLIGHT_SWATCH = '#editorHighlightColorPicker [role="option"][aria-selected="true"]';
 
 /**
  * What pdf.js answers about a document that holds nothing a new file of its
@@ -296,6 +298,28 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   /** pdf.js's Pencil, after which the eraser goes, and its button. */
   const pencil = Object.assign(new Element("div"), { id: "editorInk" });
   const pencilButton = Object.assign(new Element("button"), { id: "editorInkButton" });
+  /**
+   * What the option boxes of Highlight, Text and Pencil hold, by the name in
+   * their ids, where Save as Favourite goes.
+   */
+  const optionBoxes = {
+    Highlight: new Element("div"),
+    FreeText: new Element("div"),
+    Ink: new Element("div"),
+  };
+  /**
+   * The inputs of the option boxes, by id, with the settings pdf.js shows in
+   * them: its defaults.
+   * @type {Record<string, { value?: string, valueAsNumber?: number }>}
+   */
+  const params = {
+    editorFreeHighlightThickness: { valueAsNumber: 12 },
+    editorFreeTextColor: { value: "#000000" },
+    editorFreeTextFontSize: { valueAsNumber: 10 },
+    editorInkColor: { value: "#000000" },
+    editorInkThickness: { valueAsNumber: 1 },
+    editorInkOpacity: { valueAsNumber: 1 },
+  };
   const document = {
     title: "",
     listeners: /** @type {Record<string, Function>} */ ({}),
@@ -316,6 +340,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       if (id === viewsManagerElement.id) return viewsManagerElement;
       if (id === pencilButton.id) return pencilButton;
       if (id === viewerContainer.id) return viewerContainer;
+      if (Object.hasOwn(params, id)) return params[id];
       if (!toolbar) return null;
       return [...this.toolbar, ...this.header].find((element) => element.id === id) ?? null;
     },
@@ -327,11 +352,24 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     checkedPages: /** @type {number[]} */ ([]),
     /** Whether pdf.js is dragging pages in the thumbnails. */
     dragging: false,
+    /**
+     * The `data-color` of the swatch Highlight's colour picker shows as
+     * chosen, or null for none.
+     * @type {string | null}
+     */
+    highlightColor: "#FFFF98",
     /** @param {string} selector */
     querySelector(selector) {
       if (selector === CHECKED_THUMBNAIL && this.checked) return {};
       if (selector === DRAGGING_PAGES && this.dragging) return {};
       if (selector === CURRENT_THUMBNAIL) return currentThumbnail;
+      if (selector === HIGHLIGHT_SWATCH && this.highlightColor) {
+        const color = this.highlightColor;
+        return { getAttribute: (/** @type {string} */ name) => (name === "data-color" ? color : null) };
+      }
+      const [, box] =
+        /^#editor(\w+)ParamsToolbar > \.editorParamsToolbarContainer$/.exec(selector) ?? [];
+      if (box) return (toolbar && optionBoxes[box]) || null;
       const [, number] =
         /^#thumbnailsView > \.thumbnail\[page-number="(\d+)"\] > input$/.exec(selector) ?? [];
       return number ? checkbox(Number(number)) : null;
@@ -665,6 +703,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     URL,
     AbortController,
     requestAnimationFrame: (/** @type {() => void} */ callback) => setImmediate(callback),
+    // Node's own, looked up as they're called, which mock.timers replaces.
+    setTimeout: (/** @type {() => void} */ callback, /** @type {number} */ delay) =>
+      setTimeout(callback, delay),
+    clearTimeout: (/** @type {any} */ timer) => clearTimeout(timer),
     console: { warn: record("console.warn"), error: record("console.error") },
   };
   page.window = page;
@@ -773,6 +815,9 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     pencilButton,
     uiManager,
     viewerContainer,
+    optionBoxes,
+    params,
+    document,
   };
 }
 
@@ -2029,6 +2074,170 @@ describe("bridge.js eraser", () => {
     eraserOf(bridge).button.listeners.click();
     assert.ok(!isErasing(bridge));
     assert.equal(mode(bridge), 0);
+  });
+});
+
+describe("bridge.js Save as Favourite", () => {
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @param {"Highlight" | "FreeText" | "Ink"} name the tool's, in its option box's id
+   */
+  const buttonOf = (bridge, name) => bridge.optionBoxes[name].children.at(-1);
+
+  /**
+   * Clicks a tool's Save as Favourite.
+   *
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @param {"Highlight" | "FreeText" | "Ink"} name
+   * @returns {Promise<string>} what the button says then
+   */
+  const save = async (bridge, name) => {
+    const button = buttonOf(bridge, name);
+    button.listeners.click();
+    await settle();
+    return button.children[0].textContent;
+  };
+
+  const pencil = { tool: "ink", color: "#1e66f5", thickness: 5, opacity: 0.35 };
+
+  it("goes at the end of the option boxes of Highlight, Text and Pencil, outlined", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    for (const name of /** @type {const} */ (["Highlight", "FreeText", "Ink"])) {
+      const button = buttonOf(bridge, name);
+      assert.equal(button.id, `pdflionSave${name}Favourite`);
+      assert.equal(button.type, "button");
+      assert.equal(button.className, "secondaryButton pdflionSaveFavourite");
+      const [label] = button.children;
+      assert.equal(label.textContent, "Save as Favourite");
+      assert.equal(label.ariaLive, "polite", "says what a click did");
+    }
+  });
+
+  it("adds each tool's settings, as its option box shows them, to main's favourites", async () => {
+    const bridge = loadBridge();
+    const kept = { tool: "freetext", color: "#000000", size: 30 };
+    bridge.pdflion.toolSettings = { eraser: { mode: "object", size: 10 }, favourites: [kept] };
+    await bridge.load();
+    Object.assign(bridge.params, {
+      editorInkColor: { value: "#1e66f5" },
+      editorInkThickness: { valueAsNumber: 5 },
+      editorInkOpacity: { valueAsNumber: 0.35 },
+      editorFreeTextColor: { value: "#e64553" },
+      editorFreeTextFontSize: { valueAsNumber: 24 },
+      editorFreeHighlightThickness: { valueAsNumber: 16 },
+    });
+    bridge.document.highlightColor = "#53FFBC";
+
+    assert.equal(await save(bridge, "Ink"), "Saved");
+    const text = { tool: "freetext", color: "#e64553", size: 24 };
+    assert.equal(await save(bridge, "FreeText"), "Saved");
+    // pdf.js's swatches have upper-case colours.
+    const highlight = { tool: "highlight", color: "#53ffbc", thickness: 16 };
+    assert.equal(await save(bridge, "Highlight"), "Saved");
+    assert.deepEqual(bridge.pdflion.storedToolSettings, [
+      { favourites: [kept, pencil] },
+      { favourites: [kept, pencil, text] },
+      { favourites: [kept, pencil, text, highlight] },
+    ]);
+
+    // Main sends every tab the favourites after each change, from any tab.
+    bridge.pdflion.toolSettingsListener?.({ eraser: { mode: "object", size: 10 }, favourites: [] });
+    assert.equal(await save(bridge, "Ink"), "Saved");
+    assert.deepEqual(bridge.pdflion.storedToolSettings.at(-1), { favourites: [pencil] });
+  });
+
+  it("adds nothing that's a favourite already, and says so", async () => {
+    const bridge = loadBridge();
+    const highlight = { tool: "highlight", color: "#ffff98", thickness: 12 };
+    bridge.pdflion.toolSettings = {
+      eraser: { mode: "object", size: 10 },
+      favourites: [highlight, { ...pencil, opacity: 1 }],
+    };
+    await bridge.load();
+    assert.equal(await save(bridge, "Highlight"), "Already a Favourite");
+    Object.assign(bridge.params, {
+      editorInkColor: { value: "#1e66f5" },
+      editorInkThickness: { valueAsNumber: 5 },
+      editorInkOpacity: { valueAsNumber: 0.35 },
+    });
+    assert.equal(await save(bridge, "Ink"), "Saved", "another opacity");
+    assert.equal(await save(bridge, "Ink"), "Already a Favourite", "before main sends it back");
+    assert.equal(bridge.pdflion.storedToolSettings.length, 1);
+  });
+
+  it("asks for a colour while Highlight shows none chosen", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    // As for a selected highlight from the file, in a colour of its own.
+    bridge.document.highlightColor = null;
+    assert.equal(await save(bridge, "Highlight"), "Choose a Colour First");
+    assert.deepEqual(bridge.pdflion.storedToolSettings, []);
+  });
+
+  it("reads Pencil's opacity from its colour where pdf.js shows it there", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    // pdf.js removes the slider where the colour input takes an alpha channel.
+    delete bridge.params.editorInkOpacity;
+    const opacities = [];
+    for (const value of ["#1E66F580", "#1e66f5", "#1e66f500", "#1e66f5f3"]) {
+      bridge.params.editorInkColor = { value };
+      await save(bridge, "Ink");
+      const { color, opacity } = bridge.pdflion.storedToolSettings.at(-1).favourites.at(-1);
+      assert.equal(color, "#1e66f5");
+      opacities.push(opacity);
+    }
+    // In the slider's steps, from its least.
+    assert.deepEqual(opacities, [0.5, 1, 0.05, 0.95]);
+
+    bridge.params.editorInkColor = { value: "rgb(30, 102, 245)" };
+    assert.equal(await save(bridge, "Ink"), "Choose a Colour First");
+  });
+
+  it("says what it did for two seconds, then its label again", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.equal(await save(bridge, "Ink"), "Saved");
+    t.mock.timers.tick(1500);
+    assert.equal(await save(bridge, "Ink"), "Already a Favourite");
+    t.mock.timers.tick(1999);
+    assert.equal(buttonOf(bridge, "Ink").children[0].textContent, "Already a Favourite");
+    t.mock.timers.tick(1);
+    assert.equal(buttonOf(bridge, "Ink").children[0].textContent, "Save as Favourite");
+  });
+
+  it("waits for main's favourites, and adds none without them", async () => {
+    const bridge = loadBridge();
+    const kept = { tool: "freetext", color: "#000000", size: 30 };
+    /** @type {(settings: object | null) => void} */
+    let answer = () => {};
+    bridge.pdflion.getToolSettings = () => new Promise((resolve) => (answer = resolve));
+    await bridge.load();
+    const button = buttonOf(bridge, "Ink");
+    button.listeners.click();
+    await settle();
+    assert.deepEqual(bridge.pdflion.storedToolSettings, []);
+    assert.equal(button.children[0].textContent, "Save as Favourite");
+    answer({ eraser: { mode: "object", size: 10 }, favourites: [kept] });
+    await settle();
+    assert.equal(button.children[0].textContent, "Saved");
+    assert.deepEqual(bridge.pdflion.storedToolSettings, [
+      { favourites: [kept, { tool: "ink", color: "#000000", thickness: 1, opacity: 1 }] },
+    ]);
+
+    const refused = loadBridge();
+    refused.pdflion.getToolSettings = async () => null;
+    await refused.load();
+    assert.equal(await save(refused, "Ink"), "Couldn't Save");
+    assert.deepEqual(refused.pdflion.storedToolSettings, []);
+  });
+
+  it("goes nowhere without pdf.js's option boxes", async () => {
+    const bridge = loadBridge({ toolbar: false });
+    await bridge.load();
+    for (const box of Object.values(bridge.optionBoxes)) assert.deepEqual(box.children, []);
   });
 });
 

@@ -17,8 +17,10 @@
  * src/display/pages_mapper.js, web/pdf_viewer.js (pagesCount,
  * onPagesEdited), web/pdf_page_view.js (updatePageNumber), web/menu.js,
  * web/views_manager.js, web/sidebar.js (onResizing) and web/viewer.html (the
- * toolbar, and the views manager's header, Manage menu, Add file and waiting
- * bar).
+ * toolbar, the drawing tools' option boxes, and the views manager's header,
+ * Manage menu, Add file and waiting bar); for favourites
+ * web/annotation_editor_params.js and src/display/editor/color_picker.js
+ * (what the option boxes show).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. The page overview shows those thumbnails across the
@@ -98,6 +100,19 @@
    * in src/core/editor/pdf_editor.js).
    */
   const DROPPED_FROM_SEVERAL = new Set(["info", "page-labels"]);
+
+  /**
+   * The drawing tools that have favourites, by pdf.js's name for each, with
+   * the name of its option box in web/viewer.html: `#editor<name>ParamsToolbar`.
+   */
+  const FAVOURITE_TOOLS = { highlight: "Highlight", freetext: "FreeText", ink: "Ink" };
+
+  /** The swatch Highlight's colour picker shows as chosen (src/display/editor/color_picker.js). */
+  const HIGHLIGHT_SWATCH = '#editorHighlightColorPicker [role="option"][aria-selected="true"]';
+
+  /** Save as Favourite's label, and for how long it says what a click did instead, in ms. */
+  const SAVE_FAVOURITE = "Save as Favourite";
+  const FAVOURITE_NOTE_TIME = 2000;
 
   /** Whether shortcuts use ⌘, as on macOS, rather than Ctrl, as on Windows. */
   const isMac = window.pdflion.platform === "darwin";
@@ -247,6 +262,22 @@
   let erasingDone = Promise.resolve();
 
   /**
+   * @typedef {object} Favourite a drawing tool with its settings, as main
+   *   keeps them for every tab (src/main/tools.js)
+   * @property {"highlight" | "freetext" | "ink"} tool pdf.js's name for it
+   * @property {string} color `#rrggbb`, in lower case
+   * @property {number} [thickness] for highlight and ink
+   * @property {number} [opacity] for ink
+   * @property {number} [size] for freetext
+   */
+
+  /** @type {Favourite[] | null} as main last sent them, or null until it has */
+  let favourites = null;
+
+  /** Settles once main has first sent the tool settings: see followToolSettings(). */
+  let toolSettingsLoaded = Promise.resolve();
+
+  /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
    * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
@@ -312,6 +343,8 @@
       overviewButton = addOverviewButton(app);
       pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
       eraserTool = addEraserTool(app);
+      addFavouriteButtons();
+      toolSettingsLoaded = followToolSettings();
       guardPageTools(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
@@ -1666,8 +1699,9 @@
    * - another tool turns it off. Pencil's button would turn ink mode off,
    *   since the eraser leaves pdf.js showing Pencil on, so it just stops
    *   erasing. Esc turns it off, unless pdf.js or the page overview used it.
-   * - its settings are main's, the same in every tab
    * - a press on a page starts erasing, and the circle follows the pointer
+   *
+   * Its settings are main's, the same in every tab: see followToolSettings().
    *
    * @param {any} app
    */
@@ -1678,10 +1712,6 @@
       if (mode === EDITOR_INK) hidePencil();
       else stopErasing(app);
     });
-    window.pdflion.getToolSettings().then((settings) => {
-      if (settings) showEraser(settings.eraser);
-    });
-    window.pdflion.onToolSettingsChange((settings) => showEraser(settings.eraser));
     window.addEventListener(
       "click",
       (event) => {
@@ -1761,6 +1791,24 @@
    */
   function hidePencil() {
     document.getElementById("editorInkButton")?.setAttribute("aria-expanded", "false");
+  }
+
+  /**
+   * Follows the tool settings main keeps for every tab, which it sends each
+   * tab after every change: the eraser's, and the favourites.
+   *
+   * @returns {Promise<void>} once main has first sent them
+   */
+  function followToolSettings() {
+    /** @param {{ eraser: EraserSettings, favourites: Favourite[] }} settings */
+    const show = (settings) => {
+      showEraser(settings.eraser);
+      favourites = settings.favourites;
+    };
+    window.pdflion.onToolSettingsChange(show);
+    return window.pdflion.getToolSettings().then((settings) => {
+      if (settings) show(settings);
+    });
   }
 
   /**
@@ -2145,6 +2193,125 @@
   function commitDrawing(ui) {
     ui.unselectAll();
     ui.unselectAll();
+  }
+
+  /**
+   * Adds Save as Favourite to the end of the option boxes of Highlight, Text
+   * and Pencil, as an outlined button. A click has main keep the tool's
+   * settings for every tab, and the button says for a moment what it did.
+   * Its label is English, like the native menus.
+   */
+  function addFavouriteButtons() {
+    for (const [tool, name] of Object.entries(FAVOURITE_TOOLS)) {
+      const container = document.querySelector(
+        `#editor${name}ParamsToolbar > .editorParamsToolbarContainer`,
+      );
+      if (!container) continue;
+      const label = createElement("span", { textContent: SAVE_FAVOURITE, ariaLive: "polite" });
+      const button = createElement(
+        "button",
+        {
+          type: "button",
+          id: `pdflionSave${name}Favourite`,
+          className: "secondaryButton pdflionSaveFavourite",
+        },
+        label,
+      );
+      let timer = 0;
+      button.addEventListener("click", async () => {
+        label.textContent = await saveFavourite(/** @type {Favourite["tool"]} */ (tool));
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          label.textContent = SAVE_FAVOURITE;
+        }, FAVOURITE_NOTE_TIME);
+      });
+      container.append(button);
+    }
+  }
+
+  /**
+   * Has main keep a tool's settings, as its option box shows them, as a
+   * favourite, unless they're one already. Main drops repeats too.
+   *
+   * @param {Favourite["tool"]} tool
+   * @returns {Promise<string>} what happened, for the button to say
+   */
+  async function saveFavourite(tool) {
+    const favourite = readFavourite(tool);
+    if (!favourite) return "Choose a Colour First";
+    await toolSettingsLoaded;
+    if (!favourites) return "Couldn't Save";
+    if (favourites.some((other) => sameFavourite(other, favourite))) return "Already a Favourite";
+    favourites = [...favourites, favourite];
+    window.pdflion.setToolSettings({ favourites });
+    return "Saved";
+  }
+
+  /**
+   * Reads a tool's settings from its option box, where pdf.js shows those it
+   * draws with, or the selected drawing's (`annotationeditorparamschanged`
+   * in web/annotation_editor_params.js). Highlight's colour is the swatch its
+   * colour picker shows as chosen.
+   *
+   * @param {Favourite["tool"]} tool
+   * @returns {Favourite | null} null if the box shows no colour, as for a
+   *   selected highlight whose colour none of the swatches has
+   */
+  function readFavourite(tool) {
+    const input = (/** @type {string} */ id) =>
+      /** @type {HTMLInputElement} */ (document.getElementById(id));
+    if (tool === "highlight") {
+      const color = document.querySelector(HIGHLIGHT_SWATCH)?.getAttribute("data-color");
+      if (!color) return null;
+      return {
+        tool,
+        color: color.toLowerCase(),
+        thickness: input("editorFreeHighlightThickness").valueAsNumber,
+      };
+    }
+    if (tool === "freetext") {
+      return {
+        tool,
+        color: input("editorFreeTextColor").value,
+        size: input("editorFreeTextFontSize").valueAsNumber,
+      };
+    }
+    const ink = inkColor(input("editorInkColor").value, input("editorInkOpacity"));
+    if (!ink) return null;
+    return {
+      tool,
+      color: ink.color,
+      thickness: input("editorInkThickness").valueAsNumber,
+      opacity: ink.opacity,
+    };
+  }
+
+  /**
+   * Pencil's colour and opacity. pdf.js shows the opacity in a slider of its
+   * own, or where the colour input takes an alpha channel, in the colour, as
+   * `#rrggbbaa`, and removes the slider (web/annotation_editor_params.js).
+   *
+   * @param {string} value the colour input's
+   * @param {HTMLInputElement | null} slider the opacity's, if there is one
+   * @returns {{ color: string, opacity: number } | null}
+   */
+  function inkColor(value, slider) {
+    const [, color, alpha = "ff"] = /^(#[0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value) ?? [];
+    if (!color) return null;
+    // As the slider would have it: in steps of 0.05, from 0.05.
+    const steps = Math.max(1, Math.round((parseInt(alpha, 16) / 255) * 20));
+    return { color: color.toLowerCase(), opacity: slider?.valueAsNumber ?? steps / 20 };
+  }
+
+  /**
+   * @param {Favourite} a
+   * @param {Favourite} b
+   * @returns {boolean} whether they're the same tool with the same settings.
+   *   Favourites of one tool have the same fields.
+   */
+  function sameFavourite(a, b) {
+    const [first, second] = /** @type {Record<string, unknown>[]} */ ([a, b]);
+    return Object.keys(first).every((key) => first[key] === second[key]);
   }
 
   /**

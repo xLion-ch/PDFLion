@@ -256,6 +256,16 @@
   }
 }
 
+/*
+ * Save as Favourite (bridge.js), at the end of the option boxes of Highlight,
+ * Text and Pencil: an outlined button, pdf.js's .secondaryButton, across the
+ * box. Highlight's box has gaps of its own between its parts, the others
+ * don't.
+ */
+.editorParamsSetter + .pdflionSaveFavourite {
+  margin-block-start: 8px;
+}
+
 /* viewer.css sets this on a selector three classes deep, hence !important. */
 .editToolbar {
   --editor-toolbar-delete-image: url(/pdflion/icons/delete.svg) !important;

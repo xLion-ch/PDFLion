@@ -78,6 +78,67 @@ test("tool settings reach every tab, and last until the next launch", async ({ p
   expect(await toolSettings(relaunched)).toEqual({ ...settings, favourites: [text] });
 });
 
+test("Save as Favourite keeps each drawing tool's settings, once, for every tab", async ({
+  pdflion,
+}) => {
+  const dir = await tempDir();
+  const [first, second] = [await tracemonkey(dir, "first.pdf"), await tracemonkey(dir, "second.pdf")];
+  const { app, page } = await pdflion([first]);
+  await rendered(page);
+
+  await page.locator("#editorInkButton").click();
+  await page.locator("#editorInkColor").fill("#1e66f5");
+  await page.locator("#editorInkThickness").fill("5");
+  await page.locator("#editorInkOpacity").fill("0.35");
+  const saveInk = page.locator("#pdflionSaveInkFavourite");
+  await expect(saveInk).toHaveText("Save as Favourite");
+  await saveInk.click();
+  await expect(saveInk).toHaveText("Saved");
+  await saveInk.click();
+  await expect(saveInk).toHaveText("Already a Favourite");
+
+  await page.locator("#editorFreeTextButton").click();
+  await page.locator("#editorFreeTextColor").fill("#e64553");
+  await page.locator("#editorFreeTextFontSize").fill("24");
+  await page.locator("#pdflionSaveFreeTextFavourite").click();
+
+  await page.locator("#editorHighlightButton").click();
+  await page.locator('#editorHighlightColorPicker [data-color="#53FFBC"]').click();
+  await page.locator("#editorFreeHighlightThickness").fill("16");
+  await page.locator("#pdflionSaveHighlightFavourite").click();
+
+  await expect
+    .poll(async () => (await toolSettings(page)).favourites)
+    .toEqual([
+      { tool: "ink", color: "#1e66f5", thickness: 5, opacity: 0.35 },
+      { tool: "freetext", color: "#e64553", size: 24 },
+      { tool: "highlight", color: "#53ffbc", thickness: 16 },
+    ]);
+  await expect(saveInk).toHaveText("Save as Favourite");
+
+  // A tab opened later knows them, and one open already hears of new ones.
+  await openFile(app, second);
+  const other = await documentPage(app, "second.pdf");
+  await rendered(other);
+  await other.locator("#editorFreeTextButton").click();
+  await other.locator("#editorFreeTextColor").fill("#e64553");
+  await other.locator("#editorFreeTextFontSize").fill("24");
+  const otherSaveText = other.locator("#pdflionSaveFreeTextFavourite");
+  await otherSaveText.click();
+  await expect(otherSaveText).toHaveText("Already a Favourite");
+  await other.locator("#editorFreeTextFontSize").fill("48");
+  await otherSaveText.click();
+  await expect(otherSaveText).toHaveText("Saved");
+
+  await clickMenu(app, other, "previousTab");
+  await page.locator("#editorFreeTextButton").click();
+  await page.locator("#editorFreeTextFontSize").fill("48");
+  const saveText = page.locator("#pdflionSaveFreeTextFavourite");
+  await saveText.click();
+  await expect(saveText).toHaveText("Already a Favourite");
+  expect((await toolSettings(page)).favourites).toHaveLength(4);
+});
+
 test("a favourite's context menu removes it", async ({ pdflion }) => {
   const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
   await app.evaluate(({ Menu }) => {
