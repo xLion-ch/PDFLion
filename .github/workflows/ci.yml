@@ -1,7 +1,7 @@
-# Tests PDFLion on macOS, Windows and Linux, for every pull request into main
-# and every push to main. A push that changes only Markdown runs nothing, but
-# a pull request always runs, since a required check that never runs blocks
-# the merge.
+# Tests and builds PDFLion on macOS, Windows and Linux, for every pull request
+# into main and every push to main, and keeps the installers for 14 days. A
+# push that changes only Markdown runs nothing, but a pull request always
+# runs, since a required check that never runs blocks the merge.
 #
 # Only GitHub's own actions, each pinned to the commit of its release.
 name: CI
@@ -73,7 +73,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  test:
+  build:
     name: ${{ matrix.platform }}
     needs: pdfjs
     runs-on: ${{ matrix.runner }}
@@ -83,19 +83,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Both Mac architectures, as on a Mac.
           - platform: mac
             runner: macos-26 # Apple silicon
+            builder: --mac
           - platform: windows
             runner: windows-2025
+            builder: --win
           - platform: linux
             runner: ubuntu-24.04
+            builder: --linux
     steps:
-      # pdf.js only for its test/pdfs, which some tests read. Its build comes
-      # from the pdfjs job.
+      # The whole history, since the version counts its commits.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: recursive
+          fetch-depth: 0
           persist-credentials: false
+
+      # Without its history, only for its test/pdfs, which some tests read.
+      # Its build comes from the pdfjs job.
+      - name: Check out pdf.js
+        run: git submodule update --init --depth 1 vendor/pdf.js
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -133,6 +141,35 @@ jobs:
       - name: End-to-end tests, on a virtual display
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm run test:e2e
+
+      # A pull request's build is <version>-pr.<number>, which sorts before
+      # the release with the same commit count.
+      - name: Work out the version
+        id: version
+        shell: bash
+        env:
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: echo "version=$(node scripts/version.js ${PULL_REQUEST:+--pr "$PULL_REQUEST"})" >> "$GITHUB_OUTPUT"
+
+      # The update files too, since electron-builder.yml has a publish
+      # section, but nothing is published.
+      - name: Build the installers
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: npm run dist -- ${{ matrix.builder }} --publish never "-c.extraMetadata.version=$VERSION"
+
+      # The installers and their .blockmap files, by their names
+      # (artifactName in electron-builder.yml), and the update files.
+      - name: Upload the installers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: PDFLion-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: |
+            dist/PDFLion-${{ steps.version.outputs.version }}-*
+            dist/latest*.yml
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Playwright's report
         if: failure()

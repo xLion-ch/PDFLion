@@ -22,6 +22,14 @@ extraResources:
     filter: ["**/*", "!**/*.map", "!web/debugger.*", "!web/compressed.tracemonkey-pldi-09.pdf"]
   - from: vendor/pdf.js/build/version.json
     to: pdfjs/version.json
+# Where the releases are. With it, every build writes the update files next to
+# its installers (latest-mac.yml, latest.yml, latest-linux.yml, and a .blockmap
+# for each but the .deb), and app-update.yml into the app's resources, which
+# tells the updater where to look. CI builds with --publish never.
+publish:
+  provider: github
+  owner: xLion-ch
+  repo: PDFLion
 fileAssociations:
   - ext: pdf
     name: PDF Document

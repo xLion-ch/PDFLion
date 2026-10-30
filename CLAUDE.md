@@ -32,7 +32,7 @@ A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and 
 - [@cantoo/pdf-lib](https://github.com/cantoo-scribe/pdf-lib), an MIT fork of pdf-lib, the one production dependency, pinned to an exact version. It runs only in the sandboxed viewer, never in main, since it parses the documents. `bridge.js` loads its browser build, `dist/pdf-lib.min.js`, from `/lib/` the first time a page change needs it. That build bundles its own dependencies. When updating it, check what it bundles against the "@cantoo/pdf-lib includes" group in `credits.js` and README's Credits.
 - electron-builder for packaging: a `.dmg` and `.zip` for each Mac architecture (arm64, x64), an NSIS installer for Windows (x64), and a `.deb` for Linux (x64). Nothing is signed with a certificate or notarized, by choice. Mac builds are signed ad hoc, because Apple silicon runs only signed code.
 - Node 24 LTS (`.nvmrc`). The pdf.js build requires Node `>=22.22.3 || >=24.15.0 || >=26.0`.
-- GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux (`.github/workflows/ci.yml`). It builds nothing yet.
+- GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux, then builds each platform's installers (`.github/workflows/ci.yml`). It publishes nothing yet.
 
 ## Layout
 
@@ -76,11 +76,12 @@ resources/       icon, entitlements (electron-builder buildResources); about-ico
 scripts/
   update-pdfjs.js  plain Node, so it runs on Windows too
   build.js         tests, then every app version this machine can build, into dist/
+  version.js       the version CI builds: package.json's major and minor, and the commit count (formatVersion() unit tested)
 test/unit/       node --test, files named *.test.js
 test/e2e/        Playwright against the dev app, each launch with its own --user-data-dir
 vendor/pdf.js/   submodule, never edit
 electron-builder.yml  packaging: targets, file associations, Electron fuses
-.github/workflows/ci.yml  CI: the tests on macOS, Windows and Linux, for pull requests into main and pushes to it
+.github/workflows/ci.yml  CI: the tests and the installers on macOS, Windows and Linux, for pull requests into main and pushes to it
 ```
 
 ## Commands
@@ -92,9 +93,10 @@ npm run pdfjs:build      # build the pinned pdf.js viewer (once per clone and af
 npm start                # run in dev; npm start -- path/to/file.pdf opens a file
 npm test                 # unit tests
 npm run test:e2e         # end-to-end tests: they open windows and take focus while they run
-npm run build            # tests, then every version this machine can build, in dist/ (CI only tests: run it on a Mac, on Windows and on Linux)
+npm run build            # tests, then every version this machine can build, in dist/, as package.json's version
 npm run dist             # installers for this platform in dist/: Mac .dmg/.zip (arm64 and x64), the Windows .exe, or the Linux .deb
 npm run dist -- --dir    # just the apps in dist/, without installers
+node scripts/version.js  # the version CI builds this commit as; --pr <n> for pull request n
 ```
 
 ## pdf.js
@@ -257,6 +259,8 @@ Reviewed in October 2026, for Electron 45, against the [checklist](https://www.e
 - The pdf.js build doesn't depend on the platform, so every build ships the same `pdfjs/` folder, license files included.
 - Of @cantoo/pdf-lib, `app.asar` holds only `dist/pdf-lib.min.js`, its licence and its `package.json`. The `files` patterns in `electron-builder.yml` leave out its other builds and its dependencies, which that build bundles, about 30 MB.
 - electron-builder's `makensis` for macOS is an Intel binary, so building the Windows installer on Apple silicon needs Rosetta.
+- `publish` in `electron-builder.yml` names the GitHub releases, `xLion-ch/PDFLion`. With it, every build writes the update files next to its installers: `latest-mac.yml`, which lists both Mac zips and DMGs, `latest.yml` and `latest-linux.yml`, and a `.blockmap` for each zip, DMG and Windows installer, though none for the `.deb`. It also writes `app-update.yml` into the app's resources, and `resources/package-type` into the `.deb`. A build that fails on any target writes none of the `.yml` files. Nothing reads them yet.
+- CI builds each platform on its own runner, after its tests, with `--publish never`. Its version comes from `scripts/version.js`: `package.json`'s major and minor version, and the number of commits as the patch version, so that the same commit always gets the same version and every push to `main` a higher one, without CI committing. A pull request builds `<version>-pr.<number>`, which sorts before the release of the same count. `-c.extraMetadata.version` puts the version into `app.getVersion()`, the file names and the update files alike. `package.json` keeps `x.y.0`, which local builds use, and raising the major or minor version is a hand edit there. `version.js` refuses a shallow history, which would count too few commits, so CI checks out all of it. The run keeps the installers and update files for 14 days, so a pull request can be tried before it's merged.
 - On Linux, the `.deb` installs into `/opt/PDFLion`, with `pdflion` in `/usr/bin`. Its `.desktop` file is named after `desktopName` in `package.json`, which Electron also uses as the Wayland app ID and X11 WM_CLASS, so the dock groups the windows with their launcher. `Exec` ends in `%F`, so file managers pass paths rather than URIs.
 - `linux.mimeTypes` lists PDFLion for `application/pdf`, so it appears under Open With in Files and Nemo without becoming the default. It isn't a `mimeType` in `fileAssociations`, because electron-builder would then also install a MIME definition for `application/pdf`, whose icon replaces the PDF icon in file managers.
 - The sandbox stays on under Linux. The `.deb`'s post-install script makes `chrome-sandbox` setuid where user namespaces don't work. On Ubuntu 24.04 and later, which restrict them, it installs an AppArmor profile that allows them for `/opt/PDFLion/pdflion`.
@@ -272,7 +276,7 @@ Reviewed in October 2026, for Electron 45, against the [checklist](https://www.e
 - `npm run test:e2e` drives the dev app with Playwright. Each launch gets its own `--user-data-dir`. `test/e2e/pdfs.js` writes the test PDFs, so no binary fixtures are committed. The few that would be hard to write, the tracemonkey paper and an encrypted document (`empty_protected.pdf`), come from the pdf.js submodule, and `writeProtected()` encrypts one with @cantoo/pdf-lib. The suite is the safety net for pdf.js updates, so it must cover every bridge command. `windows-linux.spec.js` runs only on Windows and Linux.
 - Playwright lists each tab's viewer and each window's strip as pages, and `app.firstWindow()` is a strip. The helpers in `test/e2e/pdflion.js` find a document's page by its URL (`documentPage`), a page's strip by its window (`stripOf`, since every strip has the same URL), and count windows in main. `app.browserWindow(page)` works for a tab's page and gives its window. A tab that isn't shown doesn't render, so tests open tabs one at a time and wait for each. `setWidth()` sets a window's width and waits until the page has laid itself out, toolbar included, and `launch()` takes a `lang`, such as `de`, for pdf.js's labels.
 - Playwright can't drag between windows. `tabs.spec.js` sends the strip's `dragStarted`, `drop` and `dragEnded` itself, and stubs `screen.getCursorScreenPoint()` for tearing off. It catches the tab context menu by replacing `Menu.prototype.popup`.
-- CI runs `npm test` and `npm run test:e2e` on `macos-26` (Apple silicon), `windows-2025` and `ubuntu-24.04`, as the jobs `mac`, `windows` and `linux`, with Node from `.nvmrc`. A `pdfjs` job builds pdf.js once, cached by the submodule's commit, and the others download that build and check it with `update-pdfjs.js --check-build`. They check out pdf.js shallowly, for its `test/pdfs`. On Linux the end-to-end tests run under `xvfb-run`, on a 1920 × 1080 screen, since its own is 640 × 480, and `chrome-sandbox` is made setuid root, because Ubuntu 24.04 restricts the user namespaces Chromium's sandbox needs. Nothing passes `--no-sandbox`. With `CI` set, Playwright also writes an HTML report, which the job keeps for 14 days when a test fails, and `test.only` fails the run.
+- CI runs `npm test` and `npm run test:e2e` on `macos-26` (Apple silicon), `windows-2025` and `ubuntu-24.04`, as the jobs `mac`, `windows` and `linux`, with Node from `.nvmrc`, and then builds (see Packaging). A `pdfjs` job builds pdf.js once, cached by the submodule's commit, and the others download that build and check it with `update-pdfjs.js --check-build`. They check out pdf.js shallowly, for its `test/pdfs`. On Linux the end-to-end tests run under `xvfb-run`, on a 1920 × 1080 screen, since its own is 640 × 480, and `chrome-sandbox` is made setuid root, because Ubuntu 24.04 restricts the user namespaces Chromium's sandbox needs. Nothing passes `--no-sandbox`. With `CI` set, Playwright also writes an HTML report, which the job keeps for 14 days when a test fails, and `test.only` fails the run.
 - On macOS, a key sent with `webContents.sendInputEvent()` reaches the page but never the native menu. `shortcuts.spec.js` presses each of PDFLion's own shortcuts that way, checks that the page leaves it unhandled and acts on nothing, and then clicks the one menu item with that accelerator, as Electron would.
 - In end-to-end tests, `page.evaluate()` counts as a user gesture. Where user activation matters, read the page from main with `readFromMain()`, which runs `webContents.executeJavaScript()` on the tab's page.
 
@@ -286,7 +290,7 @@ These were settled on purpose. Change them only on purpose.
 - Linux gets a `.deb` for x64, for Ubuntu 22.04 and Linux Mint 21 and later, and nothing else. AppImage would lose the sandbox on Ubuntu 24.04, and Flatpak and Snap bring their own confinement, which Electron's sandbox would have to fit into, and their own stores.
 - File > New makes an untitled document in memory, with one blank page: US Letter in the regions CLDR lists for it, from `app.getLocaleCountryCode()`, and A4 everywhere else, including where the region is unknown. The first save asks where to put it, suggesting Documents. It counts as edited only once it changes, so closing it untouched asks nothing, as in TextEdit.
 - Launching without a file shows the Open panel, like Preview. On Windows the app then quits if the panel is cancelled, because a Windows app without windows has nothing to show. The alternative is an empty viewer window.
-- No code signing, no notarization and no auto-updates. CI only runs the tests, and releases are built by hand, as the README describes. On macOS, auto-updates would need a Developer ID signature anyway: Electron's updater accepts only an update signed like the running app, and an ad-hoc signature differs with every build.
+- No code signing, no notarization and no auto-updates. CI tests and builds every platform but publishes nothing, and releases are built by hand, as the README describes. On macOS, auto-updates would need a Developer ID signature anyway: Electron's updater accepts only an update signed like the running app, and an ad-hoc signature differs with every build.
 - The viewer follows Material Design 3, as CSS on top of pdf.js's own UI rather than a UI library. The colour scheme is Material's monochrome one: near-white in light mode, near-black in dark mode. Text uses the system font, not Roboto. Colours apply only outside forced-colors mode, which keeps pdf.js's high contrast styles.
 - Page changes pdf.js can't make go through @cantoo/pdf-lib, as incremental updates, in the viewer renderer. pdf.js's own `extractPages()` writes a whole new file instead, which drops the title, page labels and password, among others. Upstream pdf-lib hasn't changed since 2022 and can't append increments. A library in main would parse untrusted documents outside the sandbox.
 - Documents with a password and pure XFA forms are locked against page changes, and a signed document asks once before its first one.

@@ -101,7 +101,9 @@ npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
-GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). When a test fails, the run keeps Playwright's report for 14 days.
+GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). Then it builds the installers, which the run keeps for 14 days, so a pull request can be tried before it's merged. When a test fails, the run keeps Playwright's report instead.
+
+CI numbers its builds `<major>.<minor>.<commits>`: the major and minor version from `package.json`, and the number of commits, such as `0.1.31`. A pull request's are `0.1.31-pr.7`, which sorts before the release of the same count. `node scripts/version.js` prints the version of the commit checked out.
 
 PDFLion keeps the Electron side thin. pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. The app adds to it from outside:
 
@@ -113,10 +115,10 @@ The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLA
 
 ## Releasing
 
-CI only runs the tests, and there's no auto-update. A release is built by hand:
+CI builds the installers but publishes nothing, and there's no auto-update. A release is built by hand:
 
 1. Check for a newer pdf.js with `npm run pdfjs:check`, and update as [CLAUDE.md](CLAUDE.md) describes.
-2. Raise `version` in `package.json`.
+2. Raise the minor or major version in `package.json`. Its patch version stays 0, since CI counts commits there.
 3. Run `npm run build` on a Mac, on a Windows PC and on a Linux PC. Between them, they build both Mac versions, the Windows installer and the Linux package.
 4. Go through the checks below, which the automated tests can't do. The Windows and Linux checks haven't been done for any release yet.
 5. Publish the `.dmg`, `.zip`, `.exe` and `.deb` files from `dist/`.
