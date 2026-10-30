@@ -101,6 +101,8 @@ npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
+GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). When a test fails, the run keeps Playwright's report for 14 days.
+
 PDFLion keeps the Electron side thin. pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. The app adds to it from outside:
 
 - `src/viewer/bridge.js` connects the menus to pdf.js.
@@ -111,7 +113,7 @@ The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLA
 
 ## Releasing
 
-There's no CI and no auto-update. A release is built by hand:
+CI only runs the tests, and there's no auto-update. A release is built by hand:
 
 1. Check for a newer pdf.js with `npm run pdfjs:check`, and update as [CLAUDE.md](CLAUDE.md) describes.
 2. Raise `version` in `package.json`.
@@ -236,5 +238,7 @@ PDFLion is built and tested with:
 - [NSIS](https://nsis.sourceforge.io), which electron-builder uses for the Windows installer (Zlib)
 - [fpm](https://github.com/jordansissel/fpm) by Jordan Sissel, which electron-builder uses for the Linux package (MIT)
 - [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
+- [actions/checkout, setup-node, cache, upload-artifact and download-artifact](https://github.com/actions) by GitHub, which run the tests on GitHub Actions (MIT)
+- [Xvfb](https://gitlab.freedesktop.org/xorg/xserver) by X.Org, the virtual display the Linux tests run on there (MIT)
 
 The license texts ship with the app: pdf.js's and its components' in `pdfjs/`, Electron's in `LICENSE.electron.txt`, and Chromium's in `LICENSES.chromium.html`. The About panel lists the same projects, with the versions of pdf.js, Electron, Chromium and Node.js.

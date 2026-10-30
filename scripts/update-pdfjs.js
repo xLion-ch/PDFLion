@@ -14,7 +14,8 @@ const USAGE = `Usage:
   node scripts/update-pdfjs.js v6.4.299            switch to a specific release (the "v" is optional)
   node scripts/update-pdfjs.js --build             rebuild the currently pinned release
   node scripts/update-pdfjs.js --build-if-missing  build the pinned release unless it is built
-  node scripts/update-pdfjs.js --check             print the pinned and latest releases, change nothing`;
+  node scripts/update-pdfjs.js --check             print the pinned and latest releases, change nothing
+  node scripts/update-pdfjs.js --check-build       fail unless the build is of the pinned commit`;
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const PDFJS_DIR = "vendor/pdf.js";
@@ -98,6 +99,21 @@ function build() {
   console.log(`==> Built ${PDFJS_DIR}/build/generic`);
 }
 
+/**
+ * Fails unless the build is of the pinned commit, as CI checks the build it
+ * downloads. build/version.json names the commit pdf.js was built from.
+ */
+function checkBuild() {
+  const head = git(["-C", PDFJS, "rev-parse", "HEAD"]);
+  const versionFile = path.join(PDFJS, "build", "version.json");
+  if (!fs.existsSync(versionFile) || !fs.existsSync(VIEWER_HTML)) die("pdf.js isn't built");
+  const { version, commit } = JSON.parse(fs.readFileSync(versionFile, "utf8"));
+  if (typeof commit !== "string" || commit === "" || !head.startsWith(commit)) {
+    die(`pdf.js was built from ${commit}, but ${head.slice(0, 9)} is pinned`);
+  }
+  console.log(`==> pdf.js ${version} is built from the pinned ${commit}`);
+}
+
 /** @param {string | undefined} requested a release tag, or undefined for the latest */
 function update(requested) {
   let tag = requested ?? latestTag();
@@ -149,6 +165,9 @@ try {
     case "--check":
       console.log(`pinned: ${currentTag()}`);
       console.log(`latest: ${latestTag()}`);
+      break;
+    case "--check-build":
+      checkBuild();
       break;
     default:
       update(arg);

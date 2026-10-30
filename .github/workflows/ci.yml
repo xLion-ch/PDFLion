@@ -1,0 +1,146 @@
+# Tests PDFLion on macOS, Windows and Linux, for every pull request into main
+# and every push to main. A push that changes only Markdown runs nothing, but
+# a pull request always runs, since a required check that never runs blocks
+# the merge.
+#
+# Only GitHub's own actions, each pinned to the commit of its release.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md"]
+
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+
+# A new run of a pull request cancels its previous one. Runs on main share one
+# group and never cancel a running one. GitHub drops all but the newest of
+# those waiting.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The pdf.js build doesn't depend on the platform, so it's built once, and
+  # only again when the submodule moves.
+  pdfjs:
+    name: pdf.js
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned pdf.js commit
+        id: pin
+        run: echo "commit=$(git rev-parse HEAD:vendor/pdf.js)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pdf.js build
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            vendor/pdf.js/build/generic
+            vendor/pdf.js/build/version.json
+          key: pdfjs-${{ steps.pin.outputs.commit }}
+
+      # With its full history, since pdf.js counts its commits for its version.
+      - name: Check out pdf.js
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: git submodule update --init vendor/pdf.js
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build pdf.js
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: node scripts/update-pdfjs.js --build
+
+      - name: Upload the pdf.js build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pdfjs
+          path: |
+            vendor/pdf.js/build/generic
+            vendor/pdf.js/build/version.json
+          if-no-files-found: error
+          retention-days: 14
+
+  test:
+    name: ${{ matrix.platform }}
+    needs: pdfjs
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      # A failure on one platform doesn't stop the others.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            runner: macos-26 # Apple silicon
+          - platform: windows
+            runner: windows-2025
+          - platform: linux
+            runner: ubuntu-24.04
+    steps:
+      # pdf.js only for its test/pdfs, which some tests read. Its build comes
+      # from the pdfjs job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download the pdf.js build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pdfjs
+          path: vendor/pdf.js/build
+
+      - name: Check the pdf.js build against the pinned commit
+        run: node scripts/update-pdfjs.js --check-build
+
+      - name: Unit tests
+        run: npm test
+
+      # Ubuntu 24.04 restricts the user namespaces Chromium's sandbox needs.
+      # Its setuid helper works without them, as the .deb sets it up where it
+      # has to, so the tests never need --no-sandbox.
+      - name: Make Chromium's sandbox helper setuid
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+
+      - name: End-to-end tests
+        if: runner.os != 'Linux'
+        run: npm run test:e2e
+
+      # xvfb-run's own screen is 640 × 480, smaller than the tests' windows.
+      - name: End-to-end tests, on a virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm run test:e2e
+
+      - name: Upload Playwright's report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-${{ matrix.platform }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14

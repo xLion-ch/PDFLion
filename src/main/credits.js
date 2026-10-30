@@ -187,6 +187,20 @@ export const CREDITS = [
         url: "https://github.com/jordansissel/fpm",
       },
       { name: "Playwright", by: "Microsoft", license: "Apache-2.0", url: "https://playwright.dev" },
+      // The steps of .github/workflows/ci.yml that aren't commands.
+      {
+        name: "actions/checkout, setup-node, cache, upload-artifact and download-artifact",
+        by: "GitHub",
+        license: "MIT",
+        url: "https://github.com/actions",
+      },
+      // The virtual display CI's Linux end-to-end tests run on.
+      {
+        name: "Xvfb",
+        by: "X.Org",
+        license: "MIT",
+        url: "https://gitlab.freedesktop.org/xorg/xserver",
+      },
     ],
   },
 ];
