@@ -392,6 +392,8 @@
     save: (app) => !edited || save(app, window.pdflion.save),
     saveAs: (app) => save(app, window.pdflion.saveAs),
     insertBlankPage: (app) => insertBlankPage(app),
+    // As its button, which works only while pdf.js's tools do.
+    eraser: (app) => (eraserTool && !eraserTool.button.disabled ? toggleEraser(app) : false),
     // Edit > Undo and Redo. False leaves them to Chromium, which main asks next.
     undo: (app) => editingAction(app, "undo"),
     redo: (app) => editingAction(app, "redo"),
@@ -1758,10 +1760,7 @@
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-haspopup", "true");
     button.setAttribute("aria-controls", "pdflionEditorEraserParamsToolbar");
-    button.addEventListener("click", () => {
-      if (erasing) stopErasing(app, EDITOR_NONE);
-      else startErasing(app);
-    });
+    button.addEventListener("click", () => toggleEraser(app));
 
     /**
      * @param {"line" | "object"} mode
@@ -1867,6 +1866,18 @@
     container?.addEventListener("pointerleave", () => {
       if (eraserTool) eraserTool.cursor.hidden = true;
     });
+  }
+
+  /**
+   * Turns the eraser on, or off to no tool: its button, and Edit > Eraser.
+   *
+   * @param {any} app
+   * @returns {boolean} whether it's on now
+   */
+  function toggleEraser(app) {
+    if (erasing) stopErasing(app, EDITOR_NONE);
+    else startErasing(app);
+    return erasing;
   }
 
   /**

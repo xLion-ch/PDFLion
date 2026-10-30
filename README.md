@@ -12,7 +12,7 @@ A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://githu
 - Edit > Insert Blank Page, or its toolbar button, adds an empty page after the current one, the size of the current page. It's saved as an addition to the end of the file, so everything else in the file stays as it was. Documents with a password can't have pages added, and signed documents ask first.
 - In the sidebar's page thumbnails, pages can be dragged into another order, and the Manage menu copies, cuts, deletes and exports the checked ones. The add button there, or dropping PDFs or images on the thumbnails, adds their pages. These changes are saved as a new file, which leaves out some of what the old one held, such as XMP metadata, layers and document scripts, and signatures no longer validate. PDFLion asks before the first such save of a document that holds any of it. Documents with a password show their pages there but can't change them, and signed documents ask before their first change.
 - View > Page Overview, or the button next to the sidebar's, shows the pages as a grid across the window, with the same page tools as the thumbnails, plus Insert Blank Page after the checked pages, and Rotate Pages Left and Right, which turn the checked pages, or the current one. Rotations are saved like an inserted page, as an addition to the end of the file. View > Rotate Left and Right turn only the view, which isn't saved. Esc or a double-click on a page closes it, and the sidebar is back as it was. The sidebar's button, which shows off while the overview is open, closes it and shows the sidebar.
-- The Eraser, after Pencil in the toolbar, erases drawings, also those another app's pen left in the file. In Line mode it erases the parts of lines under it, and in Object mode a drawing it touches goes whole: everything drawn with Pencil in one go, until Esc or another tool. Its size can be set in its options, and Edit > Undo brings back what a drag erased.
+- The Eraser, after Pencil in the toolbar or as Edit > Eraser, erases drawings, also those another app's pen left in the file. In Line mode it erases the parts of lines under it, and in Object mode a drawing it touches goes whole: everything drawn with Pencil in one go, until Esc or another tool. Its size can be set in its options, and Edit > Undo brings back what a drag erased.
 - Save as Favourite, at the end of the options of Highlight, Text and Pencil, keeps the tool's settings, such as a blue pencil 1 point wide. Favourites show in the toolbar of every window, before the drawing tools, each as its tool's icon in its colour, with its size. A click picks that tool with those settings, without opening its options, a drag onto another favourite moves it there, and a right-click removes it. Those that don't fit are in the ★ menu at their end.
 - File > New opens an untitled document with one blank page, US Letter or A4, whichever your region uses. The first save asks where to put it.
 - Saves form data and annotations into the file in place, or to a new file with Save As. Unsaved changes show in the title, or on the tab when a window has several, and PDFLion asks about them before closing or quitting.
@@ -55,7 +55,10 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 | Show Next Tab | ⌃Tab or ⇧⌘] | Ctrl+Tab or Ctrl+Page Down | Ctrl+Tab or Ctrl+Page Down |
 | Show Previous Tab | ⌃⇧Tab or ⇧⌘[ | Ctrl+Shift+Tab or Ctrl+Page Up | Ctrl+Shift+Tab or Ctrl+Page Up |
 | Find… | ⌘F | Ctrl+F | Ctrl+F |
+| Insert Blank Page | ⇧⌘N | Ctrl+Shift+N | Ctrl+Shift+N |
+| Eraser | ⇧⌘E | Ctrl+Shift+E | Ctrl+Shift+E |
 | Toggle Sidebar | ⌥⌘S | F4 | F4 |
+| Page Overview | ⌥⌘6 | Ctrl+Shift+O | Ctrl+Shift+O |
 | Zoom In / Zoom Out | ⌘+ / ⌘− | Ctrl++ / Ctrl+− | Ctrl++ / Ctrl+− |
 | Actual Size | ⌘0 | Ctrl+0 | Ctrl+0 |
 | Rotate Left / Right | ⌘L / ⌘R | Ctrl+L / Ctrl+R | Ctrl+L / Ctrl+R |
@@ -122,7 +125,7 @@ On a Mac with Apple silicon:
 
 - The DMG installs on a Mac that has never run PDFLion, and the app starts once allowed under Privacy & Security.
 - PDFLion is listed in Finder's Open With for PDFs. Once it's the default, double-clicking a PDF opens it.
-- The shortcuts work from the keyboard, and pdf.js doesn't also act on them: ⌘S saves without a download, and ⇧⌘F starts Presentation Mode rather than Find.
+- The shortcuts work from the keyboard, and pdf.js doesn't also act on them: ⌘S saves without a download, ⇧⌘F starts Presentation Mode rather than Find, ⇧⌘N inserts one page, ⌥⌘6 opens and closes the page overview, and ⇧⌘E turns the eraser on and off, also with the overview open or Pencil on. ⌥⌘6 works with the keyboard layout set to Swiss German and to French as well.
 - The title bar's proxy icon works and follows the selected tab, and opened files appear in the Dock menu's recent documents.
 - With "Prefer tabs when opening documents" set to Always in System Settings > Desktop & Dock, windows still don't become macOS's own tabs.
 - The viewer switches when the appearance changes in System Settings.
@@ -138,7 +141,7 @@ On a Windows PC:
 - `npm run build` passes in PowerShell, including the two end-to-end tests for Windows and Linux.
 - The installer runs without administrator rights after SmartScreen's More info > Run anyway, and the app starts.
 - PDFLion is listed under Open with for PDFs. Once it's the default, double-clicking a PDF opens it. Uninstalling removes the app and its file association.
-- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down and Ctrl+Page Up each do one thing, and pdf.js doesn't also act on them. AltGr characters can still be typed into form fields, and Alt+F opens the File menu.
+- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down, Ctrl+Page Up, Ctrl+Shift+N, Ctrl+Shift+O and Ctrl+Shift+E each do one thing, and pdf.js doesn't also act on them. AltGr characters can still be typed into form fields, and Alt+F opens the File menu.
 - Editing a form puts `*` before the title. Closing the window, Exit, and closing the last window each ask about the changes.
 - A PDF opened from Explorer while PDFLion runs opens as a tab of the running app's front window, in front of other windows. A file that's already open gets its tab selected.
 - Cancelling the Open dialog at launch quits the app, and so does a launch with a file that can't be read.
@@ -156,7 +159,7 @@ On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, w
 - The app menu and the dock show PDFLion's icon, and the dock groups its windows with the launcher.
 - PDFLion is listed under Open With for PDFs in Files (Ubuntu) and Nemo (Mint), and PDFs keep their own icon. Once PDFLion is the default, double-clicking a PDF opens it. `sudo apt remove pdflion` removes the app and its Open With entry.
 - A PDF opened from the file manager while PDFLion runs opens as a tab of the running app's front window. A file that's already open gets its tab selected.
-- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+Q, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down and Ctrl+Page Up each do one thing, and pdf.js doesn't also act on them. Alt+F opens the File menu.
+- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+Q, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down, Ctrl+Page Up, Ctrl+Shift+N, Ctrl+Shift+O and Ctrl+Shift+E each do one thing, and pdf.js doesn't also act on them, also with a text field focused while an input method such as IBus runs. Alt+F opens the File menu.
 - Editing a form puts `*` before the title. Closing the window, File > Quit, and closing the last window each ask about the changes, with Save as the rightmost button.
 - Shutting down with unsaved changes shows the save prompt for as long as systemd waits.
 - Cancelling the Open dialog at launch quits the app.

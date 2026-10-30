@@ -1932,6 +1932,23 @@ describe("bridge.js eraser", () => {
     assert.ok(box.classes.has("hidden"));
   });
 
+  it("turns on and off with Edit > Eraser, while its button works", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.equal(bridge.run("eraser"), false);
+    assert.ok(!isErasing(bridge), "not before pdf.js's tools work");
+
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    assert.equal(bridge.run("eraser"), true);
+    assert.ok(isErasing(bridge));
+    assert.equal(mode(bridge), 15);
+    assert.ok(eraserOf(bridge).button.classes.has("toggled"));
+
+    assert.equal(bridge.run("eraser"), false);
+    assert.ok(!isErasing(bridge));
+    assert.equal(mode(bridge), 0);
+  });
+
   it("makes Pencil's strokes a drawing first, when Pencil is on", async () => {
     const bridge = loadBridge();
     await bridge.load();

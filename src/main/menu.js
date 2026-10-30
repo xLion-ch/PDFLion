@@ -176,8 +176,10 @@ function template() {
         { type: "separator" },
         commandItem("&Find…", "find", "CmdOrCtrl+F"),
         { type: "separator" },
-        // No shortcut yet: it gets one together with Page Overview and the eraser.
-        commandItem("Insert &Blank Page", "insertBlankPage"),
+        // A new page, as ⌘N is a new document. Preview's has no shortcut.
+        commandItem("Insert &Blank Page", "insertBlankPage", "Shift+CmdOrCtrl+N"),
+        // Turns the eraser on and off, as its button does.
+        commandItem("&Eraser", "eraser", "Shift+CmdOrCtrl+E"),
         ...onMac(
           { type: "separator" },
           {
@@ -194,8 +196,9 @@ function template() {
         // Not Ctrl+Alt+S on Windows, which is AltGr+S, a character on many
         // keyboards. F4 is pdf.js's own shortcut for it, and Acrobat's.
         commandItem("Toggle &Sidebar", "toggleSidebar", isMac ? "Alt+Cmd+S" : "F4"),
-        // No shortcut yet: it gets one together with Insert Blank Page and the eraser.
-        commandItem("Pag&e Overview", "pageOverview"),
+        // ⌥⌘6 is Preview's Contact Sheet. Not Ctrl+Alt+6 on Windows, which is
+        // AltGr+6, a character on many keyboards, so O for Overview there.
+        commandItem("Pag&e Overview", "pageOverview", isMac ? "Alt+Cmd+6" : "Shift+Ctrl+O"),
         { type: "separator" },
         commandItem("&Actual Size", "actualSize", "CmdOrCtrl+0"),
         commandItem("Zoom &In", "zoomIn", "CmdOrCtrl+Plus"),
@@ -432,7 +435,7 @@ function onWindowsAndLinux(...items) {
  *
  * @param {string} label
  * @param {string} command a key of COMMANDS in bridge.js
- * @param {string} [accelerator]
+ * @param {string} accelerator
  * @param {string} [id] defaults to `command`; ids must be unique
  * @returns {Electron.MenuItemConstructorOptions}
  */
