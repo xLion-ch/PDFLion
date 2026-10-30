@@ -23,7 +23,7 @@
  * (what the option boxes show), src/display/editor/tools.js (updateMode,
  * updateParams), src/display/editor/draw.js (updateDefaultParams),
  * src/shared/util.js (the editor and parameter types) and web/viewer.css (the
- * toolbar's groups and medium view).
+ * toolbar's groups, and the steps it takes as a window narrows).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. The page overview shows those thumbnails across the
@@ -131,8 +131,36 @@
     },
   };
 
-  /** pdf.js's medium view, which hides some of its toolbar buttons (web/viewer.css). */
-  const MEDIUM_VIEW = "(max-width: 750px)";
+  /** The drag data type of a favourite dragged to another place among them. */
+  const FAVOURITE_DRAG_TYPE = "application/x-pdflion-favourite";
+
+  /**
+   * The toolbar's steps for narrower windows, as classes of #toolbarContainer
+   * that overrides.css styles: 32 px buttons, then pdf.js's medium view,
+   * which hides Print, its small view, which hides the previous and next page
+   * buttons, and its hidden zoom menu. Each step keeps those before it.
+   * layoutToolbar() takes the first at which the toolbar fits.
+   */
+  const TOOLBAR_STEPS = [
+    "pdflionToolbarCompact",
+    "pdflionToolbarMedium",
+    "pdflionToolbarSmall",
+    "pdflionToolbarNarrow",
+  ];
+
+  /**
+   * pdf.js's own steps, by the widths at which web/viewer.css takes them, as
+   * how many of TOOLBAR_STEPS they amount to, the narrowest first.
+   * @type {[string, number][]}
+   */
+  const PDFJS_STEPS = [
+    ["(max-width: 560px)", 4],
+    ["(max-width: 690px)", 3],
+    ["(max-width: 750px)", 2],
+  ];
+
+  /** The step of pdf.js's medium view, from which all favourites are in the ★ menu. */
+  const MEDIUM_STEP = 2;
 
   /** The swatch Highlight's colour picker shows as chosen (src/display/editor/color_picker.js). */
   const HIGHLIGHT_SWATCH = '#editorHighlightColorPicker [role="option"][aria-selected="true"]';
@@ -320,12 +348,26 @@
   /**
    * @type {{ favourite: Favourite, button: HTMLButtonElement, item: HTMLButtonElement }[]}
    *   each favourite, with its button in the toolbar and its item in the ★
-   *   menu, of which layoutFavourites() shows one
+   *   menu, of which layoutToolbar() shows one
    */
   let favouriteButtons = [];
 
   /** Whether pdf.js's drawing tools work, and the favourites with them. */
   let toolsEnabled = false;
+
+  /**
+   * The tool a favourite turned on, as an `AnnotationEditorType`, until
+   * pdf.js has switched to it: its option box stays closed (useFavourite()).
+   * @type {number | null}
+   */
+  let favouriteMode = null;
+
+  /**
+   * The favourite being dragged to another place among them, and where it
+   * would go: before or after the favourite it's over.
+   * @type {{ favourite: Favourite, over: HTMLElement | null, after: boolean } | null}
+   */
+  let favouriteDrag = null;
 
   /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
@@ -396,6 +438,7 @@
       addSaveFavouriteButtons();
       favouritesBar = addFavouritesBar();
       toolSettingsLoaded = followToolSettings(app);
+      followToolbarWidth();
       guardPageTools(app);
       app.initializedPromise.then(() => {
         window.pdflion.onCommand((command) =>
@@ -1536,6 +1579,7 @@
     viewBeforeOverview = viewsManager.visibleView;
     showOverview(true);
     viewsManager.switchView(SIDEBAR_THUMBS, /* forceOpen = */ true);
+    showSidebarButton(app);
     relayoutThumbnails(app);
     // The arrow keys then go from page to page.
     document.querySelector(CURRENT_THUMBNAIL)?.focus();
@@ -1546,8 +1590,11 @@
    * has closed the views manager meanwhile.
    *
    * @param {any} app
+   * @param {{ toSidebar?: boolean }} [options] toSidebar: to show the sidebar,
+   *   as toggling it does, which then shows the thumbnails if it was closed
+   *   before
    */
-  function closeOverview(app) {
+  function closeOverview(app, { toSidebar = false } = {}) {
     const { viewsManager, pdfViewer } = app;
     if (!overview) return;
     const focused = document.getElementById("viewsManager")?.contains(document.activeElement);
@@ -1555,9 +1602,10 @@
     if (viewsManager.visibleView === SIDEBAR_THUMBS) {
       // While the thumbnails still show, in the sidebar.
       relayoutThumbnails(app);
-      if (viewBeforeOverview === SIDEBAR_NONE) viewsManager.close();
-      else viewsManager.switchView(viewBeforeOverview);
+      if (viewBeforeOverview !== SIDEBAR_NONE) viewsManager.switchView(viewBeforeOverview);
+      else if (!toSidebar) viewsManager.close();
     }
+    showSidebarButton(app);
     if (focused) pdfViewer.focus();
   }
 
@@ -1575,9 +1623,25 @@
   }
 
   /**
+   * pdf.js shows its sidebar button on while the views manager is open
+   * (`toggleExpandedBtn()` in web/ui_utils.js), as it is for the overview.
+   * While the overview is open, only the overview's own button shows on.
+   *
+   * @param {any} app
+   */
+  function showSidebarButton(app) {
+    const button = document.getElementById("viewsManagerToggleButton");
+    const open = !overview && !!app.viewsManager?.isOpen;
+    button?.classList.toggle("toggled", open);
+    button?.setAttribute("aria-expanded", String(open));
+  }
+
+  /**
    * Keeps the overview in step with pdf.js and the window:
-   * - pdf.js's sidebar button and F4 close the views manager, and the
-   *   overview with it. reopen() leaves the overview open.
+   * - pdf.js's sidebar button shows off while it's open, so toggling the
+   *   sidebar, with that button, F4 or View > Toggle Sidebar, closes the
+   *   overview and shows the sidebar
+   * - pdf.js closing the views manager closes it too. reopen() leaves it open.
    * - the document stays where it was behind the overview
    * - Esc closes it, unless pdf.js's own Esc did something: closing a menu
    *   or the find bar, or cancelling a drag of pages
@@ -1591,7 +1655,26 @@
     if (!viewsManager) return;
     eventBus.on("sidebarviewchanged", (/** @type {{ view: number }} */ { view }) => {
       if (overview && !reopening && view !== SIDEBAR_THUMBS) showOverview(false);
+      // pdf.js has shown its sidebar button as the views manager is.
+      showSidebarButton(app);
     });
+    // F4 and View > Toggle Sidebar call toggle(). pdf.js's sidebar button had
+    // it bound before this replaced it (web/sidebar.js), so its clicks come
+    // here first.
+    const { toggle } = viewsManager;
+    viewsManager.toggle = function (/** @type {unknown[]} */ ...args) {
+      if (overview) closeOverview(app, { toSidebar: true });
+      else toggle.apply(this, args);
+    };
+    window.addEventListener(
+      "click",
+      (event) => {
+        if (!overview || !targetIn(event, "#viewsManagerToggleButton")) return;
+        event.stopImmediatePropagation();
+        viewsManager.toggle();
+      },
+      true,
+    );
     // pdf.js moves the document aside by the views manager's width, which
     // onResizing() sets as the views manager resizes. The overview covers it
     // instead, so the document keeps its place and its zoom.
@@ -2524,7 +2607,7 @@
 
   /**
    * Fills the favourites' group with main's favourites: a button each in the
-   * toolbar and an item each in the ★ menu, of which layoutFavourites()
+   * toolbar and an item each in the ★ menu, of which layoutToolbar()
    * shows one.
    *
    * @param {any} app
@@ -2539,13 +2622,14 @@
     }));
     group.replaceChildren(...favouriteButtons.map(({ button }) => button), more);
     items.replaceChildren(...favouriteButtons.map(({ item }) => item));
-    layoutFavourites();
+    layoutToolbar();
     updateFavouritesPressed(app);
   }
 
   /**
    * A favourite's button: its tool's icon in its colour, which overrides.css
-   * draws, and its size. A click uses it, and its context menu removes it.
+   * draws, and its size. A click uses it, a drag onto another favourite moves
+   * it there, and its context menu removes it.
    *
    * @param {any} app
    * @param {Favourite} favourite
@@ -2576,7 +2660,82 @@
       event.preventDefault();
       window.pdflion.showFavouriteMenu(favourite);
     });
+    button.draggable = true;
+    button.addEventListener("dragstart", (/** @type {DragEvent} */ event) => {
+      favouriteDrag = { favourite, over: null, after: false };
+      const { dataTransfer } = event;
+      if (dataTransfer) {
+        dataTransfer.effectAllowed = "move";
+        dataTransfer.setData(FAVOURITE_DRAG_TYPE, "");
+      }
+      button.classList.toggle("pdflionDragged", true);
+    });
+    button.addEventListener("dragover", (/** @type {DragEvent} */ event) => {
+      if (!favouriteDrag || !event.dataTransfer?.types.includes(FAVOURITE_DRAG_TYPE)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      // Across the toolbar, which pdf.js lays out right to left for some
+      // languages, or down the ★ menu.
+      const box = button.getBoundingClientRect();
+      const after = inMenu
+        ? event.clientY > box.top + box.height / 2
+        : (event.clientX > box.left + box.width / 2) !== (document.documentElement.dir === "rtl");
+      showFavouriteDrop(button, after);
+    });
+    button.addEventListener("dragleave", (/** @type {DragEvent} */ event) => {
+      const to = /** @type {Node | null} */ (event.relatedTarget);
+      if (favouriteDrag?.over === button && !button.contains(to)) showFavouriteDrop(null, false);
+    });
+    button.addEventListener("drop", (/** @type {DragEvent} */ event) => {
+      if (!favouriteDrag?.over) return;
+      event.preventDefault();
+      const { favourite: moved, after } = favouriteDrag;
+      // The moved favourite's button goes, and with it maybe its dragend.
+      showFavouriteDrop(null, false);
+      favouriteDrag = null;
+      moveFavourite(app, moved, favourite, after);
+    });
+    button.addEventListener("dragend", () => {
+      button.classList.toggle("pdflionDragged", false);
+      showFavouriteDrop(null, false);
+      favouriteDrag = null;
+    });
     return button;
+  }
+
+  /**
+   * Shows where a dragged favourite would go, before or after another, which
+   * overrides.css marks.
+   *
+   * @param {HTMLElement | null} over the favourite it's over, or none
+   * @param {boolean} after
+   */
+  function showFavouriteDrop(over, after) {
+    if (!favouriteDrag) return;
+    favouriteDrag.over?.classList.toggle("pdflionDropBefore", false);
+    favouriteDrag.over?.classList.toggle("pdflionDropAfter", false);
+    over?.classList.toggle(after ? "pdflionDropAfter" : "pdflionDropBefore", true);
+    Object.assign(favouriteDrag, { over, after });
+  }
+
+  /**
+   * Moves a favourite before or after another, and has main keep the new
+   * order, which it sends every tab.
+   *
+   * @param {any} app
+   * @param {Favourite} moved
+   * @param {Favourite} target
+   * @param {boolean} after
+   */
+  function moveFavourite(app, moved, target, after) {
+    if (!favourites || moved === target) return;
+    const order = favourites.filter((favourite) => favourite !== moved);
+    const index = order.indexOf(target);
+    if (index === -1 || order.length !== favourites.length - 1) return;
+    order.splice(index + (after ? 1 : 0), 0, moved);
+    favourites = order;
+    window.pdflion.setToolSettings({ favourites });
+    showFavourites(app);
   }
 
   /**
@@ -2597,6 +2756,10 @@
    * `updateDefaultParams()` in src/display/editor/draw.js). Switching tools
    * clears the selection only later, and not at all for the same tool.
    *
+   * The tool's option box stays closed, since the favourite chose its
+   * settings. pdf.js opens it as it switches tools, which followFavourites()
+   * undoes then.
+   *
    * @param {any} app
    * @param {Favourite} favourite
    */
@@ -2607,7 +2770,10 @@
     commitDrawing(ui);
     if (erasing && mode === EDITOR_INK) stopErasing(app, EDITOR_INK);
     if (app.pdfViewer.annotationEditorMode !== mode) {
+      favouriteMode = mode;
       app.eventBus.dispatch("switchannotationeditormode", { source: null, mode });
+    } else {
+      closeOptionBox(favourite.tool);
     }
     const values = /** @type {Record<string, unknown>} */ (favourite);
     const details = Object.entries(params).map(([name, type]) => [type, values[name]]);
@@ -2644,25 +2810,63 @@
   }
 
   /**
-   * Shows as many favourites in the toolbar as fit in the room pdf.js's own
-   * groups leave, and the rest in the ★ menu. In pdf.js's medium view, which
-   * hides some of its own buttons, they're all in the menu.
+   * Fits the toolbar into the window, giving up as little as it can, in this
+   * order: the 32 px buttons, then favourites, which move into the ★ menu
+   * from the last, then pdf.js's own steps, from whose medium view on all
+   * favourites are in the menu. It takes none of them before pdf.js does at
+   * the window's width. As the window narrows, the toolbar only ever loses
+   * more.
    */
-  function layoutFavourites() {
-    if (!favouritesBar) return;
-    const { group, separator } = favouritesBar;
+  function layoutToolbar() {
     const count = favouriteButtons.length;
-    group.hidden = separator.hidden = count === 0;
+    if (favouritesBar) {
+      const { group, separator } = favouritesBar;
+      group.hidden = separator.hidden = count === 0;
+    }
+    const container = document.getElementById("toolbarContainer");
     const viewer = document.getElementById("toolbarViewer");
-    const shown = viewer && window.matchMedia(MEDIUM_VIEW).matches ? 0 : count;
-    showInToolbar(shown);
-    if (!viewer || shown === 0) return;
+    if (!container || !viewer) {
+      // Nothing to measure: the favourites all show in the toolbar.
+      showInToolbar(count);
+      return;
+    }
+    const fits = () => toolbarOverflow(viewer) <= 0;
+    let step = PDFJS_STEPS.find(([query]) => window.matchMedia(query).matches)?.[1] ?? 0;
+    showToolbarStep(container, step);
+    if (step < MEDIUM_STEP) {
+      showInToolbar(count);
+      while (step < MEDIUM_STEP - 1 && !fits()) showToolbarStep(container, ++step);
+      if (fits() || fitFavourites(viewer)) return;
+      step = MEDIUM_STEP;
+      showToolbarStep(container, step);
+    }
+    showInToolbar(0);
+    while (step < TOOLBAR_STEPS.length && !fits()) showToolbarStep(container, ++step);
+  }
+
+  /**
+   * Moves favourites into the ★ menu, from the last, until the rest fit.
+   *
+   * @param {HTMLElement} viewer #toolbarViewer
+   * @returns {boolean} whether the toolbar fits, with the ★ button at least
+   */
+  function fitFavourites(viewer) {
+    const count = favouriteButtons.length;
+    if (!favouritesBar || count === 0) return false;
     const over = toolbarOverflow(viewer);
-    if (over <= 0) return;
     const width = favouriteButtons[0].button.getBoundingClientRect().width;
-    const step = width + parseFloat(getComputedStyle(group).columnGap);
+    const room = width + parseFloat(getComputedStyle(favouritesBar.group).columnGap);
     // The ★ button takes a favourite's room.
-    showInToolbar(Math.max(0, count - 1 - Math.ceil(over / step)));
+    showInToolbar(Math.max(0, count - 1 - Math.ceil(over / room)));
+    return toolbarOverflow(viewer) <= 0;
+  }
+
+  /**
+   * @param {HTMLElement} container #toolbarContainer
+   * @param {number} step how many of TOOLBAR_STEPS it takes
+   */
+  function showToolbarStep(container, step) {
+    TOOLBAR_STEPS.forEach((name, index) => container.classList.toggle(name, index < step));
   }
 
   /** @param {number} shown how many favourites, from the first, the toolbar shows */
@@ -2690,10 +2894,41 @@
   }
 
   /**
+   * Fits the toolbar into the window again whenever the room in it changes:
+   * with the window's width, or with what pdf.js's groups show, such as the
+   * number of pages, the zoom menu's labels, or a signed document's button.
+   * The first time is before the toolbar is first shown.
+   */
+  function followToolbarWidth() {
+    // Not #toolbarViewerRight, which holds the favourites, and changes as they move.
+    const resizing = new ResizeObserver(() => layoutToolbar());
+    for (const id of ["toolbarViewer", "toolbarViewerLeft", "toolbarViewerMiddle"]) {
+      const element = document.getElementById(id);
+      if (element) resizing.observe(element);
+    }
+    const tools = document.getElementById("editorModeButtons");
+    if (tools) resizing.observe(tools);
+  }
+
+  /**
+   * Closes a drawing tool's option box, which pdf.js opens with its tool
+   * (`toggleExpandedBtn()` in web/toolbar.js). The tool's button still shows
+   * the tool on.
+   *
+   * @param {Favourite["tool"]} tool
+   */
+  function closeOptionBox(tool) {
+    const { name } = FAVOURITE_TOOLS[tool];
+    document.getElementById(`editor${name}Button`)?.setAttribute("aria-expanded", "false");
+    document.getElementById(`editor${name}ParamsToolbar`)?.classList.toggle("hidden", true);
+  }
+
+  /**
    * Keeps the favourites in step with pdf.js: they work whenever its drawing
-   * tools do, show as pressed while their tool is on with their settings,
-   * and move between the toolbar and the ★ menu as the room for them
-   * changes, with the window's width or with what pdf.js's groups show.
+   * tools do, and show as pressed while their tool is on with their settings.
+   * A tool a favourite turned on keeps its option box closed, which pdf.js
+   * opened just before, since its event bus calls other listeners after its
+   * own (web/event_utils.js).
    *
    * @param {any} app
    */
@@ -2704,20 +2939,15 @@
       for (const { button, item } of favouriteButtons) {
         button.disabled = item.disabled = !toolsEnabled;
       }
+      const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
+      if (tool && mode === favouriteMode) closeOptionBox(/** @type {Favourite["tool"]} */ (tool));
+      favouriteMode = null;
       updateFavouritesPressed(app);
     });
     // The settings pdf.js shows change: the user's, a selected drawing's or a favourite's.
     for (const name of ["switchannotationeditorparams", "annotationeditorparamschanged"]) {
       app.eventBus.on(name, () => updateFavouritesPressed(app));
     }
-    // Not #toolbarViewerRight, which holds the favourites, and changes as they move.
-    const resizing = new ResizeObserver(() => layoutFavourites());
-    for (const id of ["toolbarViewer", "toolbarViewerLeft", "toolbarViewerMiddle"]) {
-      const element = document.getElementById(id);
-      if (element) resizing.observe(element);
-    }
-    const tools = document.getElementById("editorModeButtons");
-    if (tools) resizing.observe(tools);
   }
 
   /**

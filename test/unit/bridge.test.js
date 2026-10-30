@@ -338,6 +338,20 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     Ink: new Element("div"),
   };
   /**
+   * The drawing tools' buttons and option boxes, by the name in their ids,
+   * which pdf.js's toolbar shows open with their tool.
+   */
+  const toolButtons = {
+    Highlight: Object.assign(new Element("button"), { id: "editorHighlightButton" }),
+    FreeText: Object.assign(new Element("button"), { id: "editorFreeTextButton" }),
+    Ink: pencilButton,
+  };
+  const toolBoxes = {
+    Highlight: new Element("div"),
+    FreeText: new Element("div"),
+    Ink: new Element("div"),
+  };
+  /**
    * The inputs of the option boxes, by id, with the settings pdf.js shows in
    * them: its defaults.
    * @type {Record<string, { value?: string, valueAsNumber?: number }>}
@@ -352,6 +366,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   };
   const document = {
     title: "",
+    /** pdf.js sets `dir` to the language's direction. */
+    documentElement: { dir: "ltr" },
     listeners: /** @type {Record<string, Function>} */ ({}),
     addEventListener(type, listener) {
       this.listeners[type] = listener;
@@ -371,6 +387,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       if (id === pencilButton.id) return pencilButton;
       if (id === viewerContainer.id) return viewerContainer;
       if (Object.hasOwn(params, id)) return params[id];
+      const [, name, part] = /^editor(Highlight|FreeText|Ink)(Button|ParamsToolbar)$/.exec(id) ?? [];
+      if (name) return (part === "Button" ? toolButtons : toolBoxes)[name];
       if (!toolbar) return null;
       return [...this.toolbar, ...this.header].find((element) => element.id === id) ?? null;
     },
@@ -485,7 +503,16 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
   const viewsManager = {
     /** What it shows, as a `SidebarView`: 0 while it's closed, 1 for the thumbnails. */
     visibleView: 0,
-    toggle: record("viewsManager.toggle"),
+    /** The view it last showed, which it shows when it opens. */
+    active: 1,
+    get isOpen() {
+      return this.visibleView !== 0;
+    },
+    /** What its sidebar button, F4 and View > Toggle Sidebar call. */
+    toggle() {
+      calls.push(["viewsManager.toggle"]);
+      this.show(this.isOpen ? 0 : this.active);
+    },
     /** @param {[number, boolean?]} args the view, and whether to open */
     switchView(...args) {
       calls.push(["viewsManager.switchView", ...args]);
@@ -500,6 +527,10 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     show(view) {
       if (view === this.visibleView) return;
       this.visibleView = view;
+      if (view !== 0) this.active = view;
+      // As open() and close() show the sidebar button, before they say so.
+      sidebarButton.classList.toggle("toggled", view !== 0);
+      sidebarButton.setAttribute("aria-expanded", String(view !== 0));
       eventBus.dispatch("sidebarviewchanged", { view });
     },
     /** Sets `--viewsManager-width`, by which pdf.js moves the document aside. */
@@ -685,6 +716,16 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     app.pdfViewer.annotationEditorMode = mode;
     eventBus.dispatch("annotationeditormodechanged", { mode });
   });
+  // pdf.js's toolbar shows each tool on, with its option box open, while its
+  // mode is, before the bridge hears of it (#editorModeChanged in
+  // web/toolbar.js).
+  eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+    for (const [name, type] of /** @type {const} */ ([["FreeText", 3], ["Highlight", 9], ["Ink", 15]])) {
+      toolButtons[name].classList.toggle("toggled", mode === type);
+      toolButtons[name].setAttribute("aria-expanded", String(mode === type));
+      toolBoxes[name].classList.toggle("hidden", mode !== type);
+    }
+  });
 
   const page = {
     pdflion,
@@ -853,6 +894,8 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     params,
     document,
     editorModeButtons,
+    toolButtons,
+    toolBoxes,
   };
 }
 
@@ -1409,6 +1452,16 @@ describe("bridge.js page overview", () => {
   /** @param {ReturnType<typeof loadBridge>} bridge */
   const isOpen = (bridge) => bridge.outerContainer.classes.has("pdflionPageOverview");
 
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @returns {[boolean, string]} whether pdf.js's sidebar button shows on, by
+   *   its class and by its `aria-expanded`
+   */
+  const sidebarShown = (bridge) => {
+    const [button] = bridge.toolbar;
+    return [button.classes.has("toggled"), button.attributes["aria-expanded"]];
+  };
+
   it("adds a toolbar button right of the sidebar's, and page tools to the views manager", async () => {
     const bridge = loadBridge();
     await bridge.load();
@@ -1457,6 +1510,7 @@ describe("bridge.js page overview", () => {
       assert.deepEqual(named(bridge.calls, "viewsManager.switchView")[0], ["viewsManager.switchView", 1, true]);
       assert.ok(button.classes.has("toggled"));
       assert.equal(button.attributes["aria-pressed"], "true");
+      assert.deepEqual(sidebarShown(bridge), [false, "false"], "only the overview's button is on");
       assert.equal(relayouts(bridge), 1);
       // So that the arrow keys go from page to page.
       assert.equal(named(bridge.calls, "thumbnail.focus").length, 1);
@@ -1466,6 +1520,7 @@ describe("bridge.js page overview", () => {
       assert.equal(viewsManager.visibleView, before);
       assert.ok(!button.classes.has("toggled"));
       assert.equal(button.attributes["aria-pressed"], "false");
+      assert.deepEqual(sidebarShown(bridge), [before !== 0, String(before !== 0)]);
       // Laid out again in the sidebar, before it closes or switches views.
       assert.equal(relayouts(bridge), 2);
     });
@@ -1539,7 +1594,7 @@ describe("bridge.js page overview", () => {
     assert.equal(named(bridge.calls, "pdfViewer.focus").length, 1);
   });
 
-  it("closes when pdf.js closes the views manager, as with its sidebar button", async () => {
+  it("closes when pdf.js closes the views manager", async () => {
     const bridge = loadBridge();
     await bridge.load();
     bridge.run("pageOverview");
@@ -1548,6 +1603,55 @@ describe("bridge.js page overview", () => {
     assert.ok(!bridge.toolbar[1].classes.has("toggled"));
     // The next toggle opens it again.
     assert.equal(bridge.run("pageOverview"), true);
+  });
+
+  it("shows the sidebar instead when the sidebar is toggled while it's open", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { viewsManager } = bridge.app;
+    const toggleButton = element("#viewsManagerToggleButton");
+
+    // pdf.js's sidebar button, whose own listener mustn't toggle it as well.
+    bridge.run("pageOverview");
+    assert.ok(bridge.fire("click", { target: toggleButton }).stopped);
+    assert.ok(!isOpen(bridge));
+    assert.equal(viewsManager.visibleView, 1, "the thumbnails, in the sidebar");
+    assert.deepEqual(sidebarShown(bridge), [true, "true"]);
+
+    // View > Toggle Sidebar, and F4 in pdf.js, which call toggle(), with the
+    // outline in the sidebar before.
+    viewsManager.switchView(2);
+    bridge.run("pageOverview");
+    bridge.run("toggleSidebar");
+    assert.ok(!isOpen(bridge));
+    assert.equal(viewsManager.visibleView, 2);
+    assert.deepEqual(sidebarShown(bridge), [true, "true"]);
+
+    // Without the overview, as pdf.js toggles it.
+    bridge.run("toggleSidebar");
+    assert.equal(viewsManager.visibleView, 0);
+    assert.ok(!bridge.fire("click", { target: toggleButton }).stopped);
+  });
+
+  it("keeps pdf.js's sidebar button off while reopen() shows a changed document", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument({ numPages: 3 });
+    const { app } = bridge;
+    app.pdfViewer.pages = Array(3).fill({ view: [0, 0, 612, 792], rotate: 0 });
+    // Say pdf.js closes the views manager as it loads it: reopen() opens it again.
+    const { open } = app;
+    app.open = async (/** @type {any} */ args) => {
+      if (args?.data) app.viewsManager.close();
+      return open(args);
+    };
+    bridge.run("pageOverview");
+    await bridge.run("insertBlankPage");
+    await settle();
+    assert.equal(named(bridge.calls, "PDFLib.insertPage").length, 1);
+    assert.ok(isOpen(bridge));
+    assert.equal(app.viewsManager.visibleView, 1);
+    assert.deepEqual(sidebarShown(bridge), [false, "false"]);
   });
 
   it("lays the thumbnails out again when the window resizes while it's open", async () => {
@@ -2428,11 +2532,132 @@ describe("bridge.js favourites in the toolbar", () => {
     const from = bridge.app.eventBus.dispatched.length;
     barOf(bridge).buttons[0].listeners.click();
     assert.ok(!bridge.outerContainer.classes.has("pdflionErasing"));
-    assert.equal(bridge.pencilButton.attributes["aria-expanded"], "true", "Pencil shows on");
+    assert.ok(bridge.pencilButton.classes.has("toggled"), "Pencil shows on");
+    assert.equal(bridge.pencilButton.attributes["aria-expanded"], "false", "with its box closed");
+    assert.ok(bridge.toolBoxes.Ink.classes.has("hidden"));
     const switches = bridge.app.eventBus.dispatched
       .slice(from)
       .filter(([name]) => name === "switchannotationeditormode");
     assert.deepEqual(switches, []);
+  });
+
+  it("keep the tool's option box closed, unlike pdf.js's own tool buttons", async () => {
+    const bridge = await withFavourites([pencil, text]);
+    const { toolButtons, toolBoxes } = bridge;
+    const [pencilButton, textButton] = barOf(bridge).buttons;
+    /** @param {"Ink" | "FreeText"} name */
+    const shown = (name) => ({
+      on: toolButtons[name].classes.has("toggled"),
+      expanded: toolButtons[name].attributes["aria-expanded"],
+      open: !toolBoxes[name].classes.has("hidden"),
+    });
+
+    pencilButton.listeners.click();
+    assert.deepEqual(shown("Ink"), { on: true, expanded: "false", open: false });
+    // Opened by hand, then the same tool's favourite again.
+    toolBoxes.Ink.classList.toggle("hidden", false);
+    pencilButton.listeners.click();
+    assert.deepEqual(shown("Ink"), { on: true, expanded: "false", open: false });
+
+    textButton.listeners.click();
+    assert.deepEqual(shown("FreeText"), { on: true, expanded: "false", open: false });
+    assert.deepEqual(shown("Ink"), { on: false, expanded: "false", open: false });
+
+    // pdf.js's own tool buttons still open it, also the last favourite's tool.
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 15 });
+    assert.deepEqual(shown("Ink"), { on: true, expanded: "true", open: true });
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 3 });
+    assert.deepEqual(shown("FreeText"), { on: true, expanded: "true", open: true });
+  });
+
+  /**
+   * Drags one favourite's button onto another's, and drops it there.
+   *
+   * @param {any} from
+   * @param {any} to
+   * @param {object} [options]
+   * @param {boolean} [options.after] onto the far half of `to`, rather than the near one
+   * @param {"x" | "y"} [options.axis] across, or down
+   * @returns {{ marked: string[], dropped: boolean }} how `to` showed the
+   *   drop, and whether it took it
+   */
+  const drag = (from, to, { after = false, axis = "x" } = {}) => {
+    /** @type {string[]} */
+    const types = [];
+    const dataTransfer = {
+      types,
+      effectAllowed: "",
+      dropEffect: "",
+      setData: (/** @type {string} */ type) => types.push(type),
+    };
+    from.listeners.dragstart({ dataTransfer });
+    to.getBoundingClientRect = () => ({ left: 100, top: 100, width: 40, height: 40 });
+    const near = 110;
+    const far = 130;
+    let dropped = false;
+    const event = {
+      dataTransfer,
+      clientX: axis === "x" && after ? far : near,
+      clientY: axis === "y" && after ? far : near,
+      preventDefault: () => (dropped = true),
+    };
+    to.listeners.dragover(event);
+    const marked = [...to.classes].filter((name) => name.startsWith("pdflionDrop"));
+    to.listeners.drop(event);
+    from.listeners.dragend?.();
+    return { marked, dropped };
+  };
+
+  it("move when dragged onto another, before or after it, for every tab", async () => {
+    const bridge = await withFavourites([pencil, text, highlight]);
+    const stored = () => bridge.pdflion.storedToolSettings.at(-1)?.favourites;
+    const [first, , third] = barOf(bridge).buttons;
+    assert.ok(first.draggable);
+
+    assert.deepEqual(drag(first, third, { after: true }), { marked: ["pdflionDropAfter"], dropped: true });
+    assert.deepEqual(stored(), [text, highlight, pencil]);
+    assert.ok(!third.classes.has("pdflionDropAfter"), "no mark once dropped");
+    assert.deepEqual(
+      barOf(bridge).buttons.map((/** @type {any} */ button) => button.title),
+      ["Text, #E64553, 24 pt", "Highlight, #FFFF98, 12 pt", "Pencil, #1E66F5, 5 pt, 35 %"],
+    );
+
+    const [textButton, , pencilButton] = barOf(bridge).buttons;
+    assert.deepEqual(drag(pencilButton, textButton), { marked: ["pdflionDropBefore"], dropped: true });
+    assert.deepEqual(stored(), [pencil, text, highlight]);
+
+    // Down the ★ menu.
+    const [pencilItem, textItem] = barOf(bridge).items;
+    drag(pencilItem, textItem, { after: true, axis: "y" });
+    assert.deepEqual(stored(), [text, pencil, highlight]);
+  });
+
+  it("move the other way across a toolbar laid out right to left", async () => {
+    const bridge = await withFavourites([pencil, text]);
+    bridge.document.documentElement.dir = "rtl";
+    const [first, second] = barOf(bridge).buttons;
+    // The near half, on the left, is after it there.
+    assert.deepEqual(drag(first, second).marked, ["pdflionDropAfter"]);
+    assert.deepEqual(bridge.pdflion.storedToolSettings.at(-1)?.favourites, [text, pencil]);
+  });
+
+  it("stay as they are when dropped onto themselves, and leave other drags alone", async () => {
+    const bridge = await withFavourites([pencil, text]);
+    const [first, second] = barOf(bridge).buttons;
+    drag(first, first, { after: true });
+    assert.deepEqual(bridge.pdflion.storedToolSettings, []);
+
+    // A file dragged over them, also after a favourite's drag whose end
+    // never came, as when its button went.
+    first.listeners.dragstart({ dataTransfer: { types: [], setData() {} } });
+    let taken = false;
+    second.listeners.dragover({
+      dataTransfer: { types: ["Files"] },
+      clientX: 110,
+      clientY: 110,
+      preventDefault: () => (taken = true),
+    });
+    assert.equal(taken, false);
   });
 
   it("show as pressed while their tool is on with their settings, as its option box shows them", async () => {

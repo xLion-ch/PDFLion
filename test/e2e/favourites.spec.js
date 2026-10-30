@@ -6,6 +6,7 @@ import {
   expect,
   openFile,
   rendered,
+  setWidth,
   tempDir,
   test,
   tracemonkey,
@@ -189,9 +190,7 @@ test("a favourite shows in every window's toolbar, draws with its settings, and 
   await clickMenu(app, other, "moveTabToNewWindow");
   await expect.poll(() => windowCount(app)).toBe(2);
   // Wide enough for the favourite's button.
-  for (const each of [page, other]) {
-    await (await app.browserWindow(each)).evaluate((w) => w.setSize(1400, 800));
-  }
+  for (const each of [page, other]) await setWidth(app, each, 1400);
   await expect(page.locator("#pdflionFavourites")).toBeHidden();
   await expect(page.locator("#pdflionFavouritesSeparator")).toBeHidden();
 
@@ -209,19 +208,25 @@ test("a favourite shows in every window's toolbar, draws with its settings, and 
   await expect(favourite).toHaveAttribute("title", "Pencil, #1E66F5, 5 pt, 35 %");
   await expect(favourite).toHaveAttribute("aria-pressed", "false");
   await favourite.click();
-  await expect(other.locator("#editorInkButton")).toHaveAttribute("aria-expanded", "true");
+  // Pencil is on, with its option box closed, since the favourite chose its settings.
+  await expect(other.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await expect(other.locator("#editorInkParamsToolbar")).toBeHidden();
   await expect(other.locator("#editorInkColor")).toHaveValue("#1e66f5");
   await expect(other.locator("#editorInkThickness")).toHaveValue("5");
   await expect(other.locator("#editorInkOpacity")).toHaveValue("0.35");
   await expect(favourite).toHaveAttribute("aria-pressed", "true");
   await drawLine(other);
   expect(await inkDrawings(other)).toEqual([{ color: [30, 102, 245], thickness: 5, opacity: 0.35 }]);
+  // Pencil off and on again opens its box, with the favourite's settings.
+  await other.locator("#editorInkButton").click();
+  await other.locator("#editorInkButton").click();
+  await expect(other.locator("#editorInkThickness")).toHaveValue("5");
   await other.locator("#editorInkThickness").fill("6");
   await expect(favourite).toHaveAttribute("aria-pressed", "false");
   await app.close();
 
   const { app: relaunched, page: again } = await pdflion([first], { userData });
-  await (await relaunched.browserWindow(again)).evaluate((w) => w.setSize(1400, 800));
+  await setWidth(relaunched, again, 1400);
   const kept = toolbarFavourites(again);
   await expect(kept).toHaveCount(1);
   await relaunched.evaluate(({ Menu }) => {
@@ -242,7 +247,6 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   pdflion,
 }) => {
   const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
-  const win = await app.browserWindow(page);
   const black = { ...pencil, color: "#000000" };
   const red = { tool: "freetext", color: "#e64553", size: 24 };
   const highlight = { tool: "highlight", color: "#53ffbc", thickness: 16 };
@@ -251,9 +255,9 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   const items = page.locator("#pdflionFavouritesMenu .pdflionFavourite");
 
   /**
-   * @returns {Promise<{ inToolbar: boolean[], inMenu: boolean[], more: boolean, room: number }>}
+   * @returns {Promise<{ inToolbar: boolean[], inMenu: boolean[], more: boolean, compact: boolean }>}
    *   which favourites show in the toolbar and the menu, whether the ★ button
-   *   does, and how much room the toolbar has left, in pixels
+   *   does, and whether the toolbar has its 32 px buttons
    */
   const layout = () =>
     page.evaluate(() => {
@@ -261,53 +265,53 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
         [...document.querySelectorAll(selector)].map(
           (element) => !(/** @type {HTMLElement} */ (element).hidden),
         );
-      const viewer = /** @type {HTMLElement} */ (document.getElementById("toolbarViewer"));
-      const groups = [...viewer.children].reduce(
-        (sum, group) => sum + group.getBoundingClientRect().width,
-        0,
-      );
+      const container = /** @type {HTMLElement} */ (document.getElementById("toolbarContainer"));
       return {
         inToolbar: shown("#pdflionFavourites > .pdflionFavourite"),
         inMenu: shown("#pdflionFavouritesMenu .pdflionFavourite"),
         more: !(/** @type {HTMLElement} */ (document.getElementById("pdflionFavouritesMore")).hidden),
-        room: Math.floor(viewer.getBoundingClientRect().width - groups),
+        compact: container.classList.contains("pdflionToolbarCompact"),
       };
     });
 
-  // Wide, all fit, and so does the rest of the toolbar.
-  await win.evaluate((w) => w.setSize(1400, 800));
-  await expect.poll(async () => (await layout()).inToolbar).toEqual([true, true, true, true]);
-  const wide = await layout();
-  expect(wide).toMatchObject({ inMenu: [false, false, false, false], more: false });
-  expect(wide.room).toBeGreaterThanOrEqual(0);
+  // Wide, all fit.
+  await setWidth(app, page, 1400);
+  expect(await layout()).toEqual({
+    inToolbar: [true, true, true, true],
+    inMenu: [false, false, false, false],
+    more: false,
+    compact: false,
+  });
 
-  // 50 pixels short of room for all, the first ones that fit stay, and the
-  // others are in the menu. Whatever the system language makes pdf.js's
-  // labels, that's above 900 pixels, where the buttons are 40 wide.
-  await win.evaluate((w, width) => w.setSize(width, 800), 1400 - wide.room - 50);
-  await expect.poll(async () => (await layout()).more).toBe(true);
-  const { inToolbar, inMenu, room } = await layout();
-  const kept = inToolbar.indexOf(false);
+  // Narrower, the toolbar gives up its 40 px buttons first, then the last
+  // favourites, which go into the menu. toolbar.spec.js checks that it fits.
+  let width = 1400;
+  let narrower = await layout();
+  while (!narrower.more && width > 760) {
+    await setWidth(app, page, (width -= 10));
+    narrower = await layout();
+  }
+  const kept = narrower.inToolbar.indexOf(false);
   expect(kept).toBeGreaterThan(0);
-  expect(inToolbar.slice(kept)).toEqual(inToolbar.slice(kept).map(() => false));
-  expect(inMenu).toEqual(inToolbar.map((shown) => !shown));
-  expect(room).toBeGreaterThanOrEqual(0);
+  expect(narrower.inToolbar.slice(kept)).toEqual(narrower.inToolbar.slice(kept).map(() => false));
+  expect(narrower.inMenu).toEqual(narrower.inToolbar.map((shown) => !shown));
+  expect(narrower.compact).toBe(true);
 
   // In pdf.js's medium view, all are in the menu.
-  await win.evaluate((w) => w.setSize(700, 800));
-  await expect
-    .poll(async () => {
-      const { inToolbar, inMenu, more } = await layout();
-      return { inToolbar, inMenu, more };
-    })
-    .toEqual({ inToolbar: [false, false, false, false], inMenu: [true, true, true, true], more: true });
+  await setWidth(app, page, 700);
+  expect(await layout()).toMatchObject({
+    inToolbar: [false, false, false, false],
+    inMenu: [true, true, true, true],
+    more: true,
+  });
 
   await more.click();
   await expect(page.locator("#pdflionFavouritesMenu")).toBeVisible();
   await expect(more).toHaveAttribute("aria-expanded", "true");
   await items.nth(1).click();
   await expect(page.locator("#pdflionFavouritesMenu")).toBeHidden();
-  await expect(page.locator("#editorFreeTextButton")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#editorFreeTextButton")).toHaveClass(/toggled/);
+  await expect(page.locator("#editorFreeTextParamsToolbar")).toBeHidden();
   await expect(page.locator("#editorFreeTextColor")).toHaveValue("#e64553");
   await expect(page.locator("#editorFreeTextFontSize")).toHaveValue("24");
   await expect(items.nth(1)).toHaveAttribute("aria-checked", "true");
@@ -329,7 +333,7 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   await page.keyboard.press("Enter");
   await expect(page.locator("#pdflionFavouritesMenu")).toBeHidden();
   await expect(more).toBeFocused();
-  await expect(page.locator("#editorInkButton")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#editorInkButton")).toHaveClass(/toggled/);
   await expect(page.locator("#editorInkColor")).toHaveValue("#000000");
 
   await page.keyboard.press("Enter");
@@ -345,8 +349,40 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   await expect(page.locator("#pdflionFavouritesMenu")).toBeHidden();
 
   // Wide again, they're back in the toolbar.
-  await win.evaluate((w) => w.setSize(1400, 800));
+  await setWidth(app, page, 1400);
   await expect.poll(async () => (await layout()).more).toBe(false);
+});
+
+test("favourites move when dragged onto another, in the toolbar and in the ★ menu", async ({
+  pdflion,
+}) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  const red = { tool: "freetext", color: "#e64553", size: 24 };
+  const highlight = { tool: "highlight", color: "#53ffbc", thickness: 16 };
+  await setToolSettings(page, { favourites: [pencil, red, highlight] });
+  await setWidth(app, page, 1400);
+  const buttons = toolbarFavourites(page);
+  await expect(buttons).toHaveCount(3);
+  const favourites = async () => (await toolSettings(page)).favourites;
+
+  // Onto the far half of the third: after it.
+  await buttons.nth(0).dragTo(buttons.nth(2), { targetPosition: { x: 30, y: 20 } });
+  await expect.poll(favourites).toEqual([red, highlight, pencil]);
+  await expect(buttons.nth(2)).toHaveAttribute("title", "Pencil, #1E66F5, 1 pt, 100 %");
+  // Onto the near half of the first: before it.
+  await buttons.nth(2).dragTo(buttons.nth(0), { targetPosition: { x: 10, y: 20 } });
+  await expect.poll(favourites).toEqual([pencil, red, highlight]);
+  await expect(page.locator(".pdflionDropBefore, .pdflionDropAfter, .pdflionDragged")).toHaveCount(0);
+
+  // Down the ★ menu, in pdf.js's medium view, where all are in it.
+  await setWidth(app, page, 700);
+  await page.locator("#pdflionFavouritesMoreButton").click();
+  const items = page.locator("#pdflionFavouritesMenu .pdflionFavourite");
+  await expect(items.nth(2)).toBeVisible();
+  const { height } = /** @type {{ height: number }} */ (await items.nth(0).boundingBox());
+  await items.nth(2).dragTo(items.nth(0), { targetPosition: { x: 20, y: height / 4 } });
+  await expect.poll(favourites).toEqual([highlight, pencil, red]);
+  await expect(items.nth(0)).toContainText("Highlight, #53FFBC, 16 pt");
 });
 
 test("a favourite's context menu removes it", async ({ pdflion }) => {

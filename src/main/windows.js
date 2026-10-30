@@ -23,6 +23,14 @@ const PLACEMENT_KEY = "window";
 const DEFAULT_SIZE = { width: 1000, height: 800 };
 
 /**
+ * The narrowest a document window's content gets: its toolbar fits down to
+ * this width once it has taken every step it has (`layoutToolbar()` in
+ * bridge.js). Measured in English and German, for a document of 1000 pages,
+ * with favourites, on 29 October 2026, when German needed 555 px.
+ */
+const MIN_WIDTH = 560;
+
+/**
  * Document windows, the most recently focused first.
  * @type {BrowserWindow[]}
  */
@@ -183,6 +191,9 @@ function createWindow(bounds) {
       preload: tabsPreloadPath,
     },
   });
+  // A minimum size counts the window's frame, which on Windows and Linux
+  // takes some of the width from the content, and the toolbar.
+  win.setMinimumSize(MIN_WIDTH + win.getSize()[0] - win.getContentSize()[0], 0);
   if (placement.maximized) win.maximize();
   // A new window opens in front of the others.
   windows.unshift(win);

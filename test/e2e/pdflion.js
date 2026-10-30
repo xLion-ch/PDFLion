@@ -76,13 +76,15 @@ export async function tracemonkey(dir, name = "tracemonkey.pdf") {
  * of them shows its first page.
  *
  * @param {string[]} files
- * @param {{ userData?: string }} [options] userData: reuse a folder
+ * @param {{ userData?: string, lang?: string }} [options] userData: reuse a
+ *   folder. lang: the language, such as `de`, for pdf.js's labels, rather
+ *   than the system's
  * @returns {Promise<{ app: ElectronApplication, page: Page, userData: string }>}
  */
-export async function launch(files, { userData } = {}) {
+export async function launch(files, { userData, lang } = {}) {
   userData ??= await tempDir();
   const app = await electron.launch({
-    args: [ROOT, `--user-data-dir=${userData}`, ...files],
+    args: [ROOT, `--user-data-dir=${userData}`, ...(lang ? [`--lang=${lang}`] : []), ...files],
     cwd: ROOT,
   });
   const page = await documentPage(app, path.basename(files[0]));
@@ -229,6 +231,29 @@ export async function rendered(page) {
       window.PDFViewerApplication?.pdfViewer?.getPageView(0)?.renderingState === finished,
     RENDERING_FINISHED,
   );
+}
+
+/**
+ * Sets the width of a page's window, as far as its minimum width lets it,
+ * and waits until the page has laid itself out at that width.
+ *
+ * @param {ElectronApplication} app
+ * @param {Page} page
+ * @param {number} width of the window's content, in pixels
+ * @returns {Promise<number>} the width it got
+ */
+export async function setWidth(app, page, width) {
+  const win = await app.browserWindow(page);
+  const got = await win.evaluate((w, width) => {
+    w.setContentSize(width, w.getContentSize()[1]);
+    return w.getContentSize()[0];
+  }, width);
+  await page.waitForFunction((got) => innerWidth === got, got);
+  // ResizeObservers, such as the toolbar's, run in the frame after a resize.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  return got;
 }
 
 /**

@@ -20,12 +20,14 @@
 /*
  * Without Open, the separator below it would top the menu whenever the Print
  * and Save group above it is hidden. That group only shows in pdf.js's medium
- * view, at 750px and below (viewer.css).
+ * view: its own at 750px and below (viewer.css), or the toolbar's step that
+ * bridge.js takes earlier when the toolbar needs it.
  */
-@media not all and (max-width: 750px) {
-  #secondaryToolbarButtonContainer > .visibleMediumView + .horizontalToolbarSeparator {
-    display: none;
-  }
+#toolbarContainer:not(.pdflionToolbarMedium)
+  #secondaryToolbarButtonContainer
+  > .visibleMediumView
+  + .horizontalToolbarSeparator {
+  display: none;
 }
 
 /* ---------------------------------------------------------------------------
@@ -327,6 +329,54 @@
   }
 }
 
+/*
+ * A favourite dragged to another place among them (bridge.js), and a line
+ * where it would go: before or after the favourite it's over, across the
+ * toolbar or down the ★ menu. Their ::before is free, since the icon is a
+ * child.
+ */
+.toolbarButton.pdflionFavourite {
+  &.pdflionDragged {
+    opacity: 0.38;
+  }
+
+  &:is(.pdflionDropBefore, .pdflionDropAfter)::before {
+    content: "";
+    position: absolute;
+    display: block;
+    width: 2px;
+    height: auto;
+    inset-block: 4px;
+    border-radius: 1px;
+    background-color: currentColor;
+    mask-image: none;
+    opacity: 1;
+  }
+
+  &.pdflionDropBefore::before {
+    inset-inline-start: -1px;
+  }
+
+  &.pdflionDropAfter::before {
+    inset-inline-end: -1px;
+  }
+
+  &.labeled:is(.pdflionDropBefore, .pdflionDropAfter)::before {
+    width: auto;
+    height: 2px;
+    inset-inline: 8px;
+    inset-block: auto;
+  }
+
+  &.labeled.pdflionDropBefore::before {
+    inset-block-start: -1px;
+  }
+
+  &.labeled.pdflionDropAfter::before {
+    inset-block-end: -1px;
+  }
+}
+
 /* As specific as the icon's rule above, which it follows. */
 @media not (forced-colors: active) {
   .toolbarButton.pdflionFavourite > span.pdflionFavouriteIcon {
@@ -451,21 +501,28 @@
 }
 
 /*
- * Narrow windows get 32px icon buttons. pdf.js only starts hiding toolbar
- * items at 750px, and the 40px buttons would push the last ones out of the
- * window before then.
+ * The toolbar's steps for narrower windows, which bridge.js takes as classes
+ * of #toolbarContainer (layoutToolbar()): the first at which the toolbar fits
+ * the window, but none before the one pdf.js takes at its width. How wide the
+ * toolbar is depends on the language, the number of pages, the favourites and
+ * a signed document's button, so fixed widths would either cut it off or
+ * shrink it too soon. Each step keeps those before it. :where() keeps each
+ * rule as specific as it was in the media queries these steps replace.
  */
-@media all and (max-width: 900px) {
-  :root {
-    --toolbar-vertical-padding: 8px;
-  }
 
+/* 32px icon buttons, with less room around them. */
+#toolbarContainer.pdflionToolbarCompact {
+  --toolbar-vertical-padding: 8px;
+
+  /* As specific as viewer.css's rule for it, which it follows. */
+  #toolbarViewer .toolbarButtonSpacer {
+    width: 0;
+  }
+}
+
+:where(#toolbarContainer.pdflionToolbarCompact) {
   .toolbarHorizontalGroup {
     gap: 0;
-  }
-
-  #toolbarContainer #toolbarViewer .toolbarButtonSpacer {
-    width: 0;
   }
 
   .verticalToolbarSeparator {
@@ -487,8 +544,27 @@
   }
 }
 
-/* From pdf.js's 690px step down to its 560px one, which hides the zoom menu. */
-@media all and (max-width: 690px) {
+/* pdf.js's medium view, from viewer.css's 750px step: Print moves into the ⋮ menu. */
+:where(#toolbarContainer.pdflionToolbarMedium) {
+  .hiddenMediumView {
+    display: none !important;
+  }
+
+  .visibleMediumView:not(.hidden, [hidden]) {
+    display: inline-block !important;
+  }
+}
+
+/*
+ * pdf.js's small view, from viewer.css's 690px step: the previous and next
+ * page buttons go. Narrower dividers and zoom menu.
+ */
+:where(#toolbarContainer.pdflionToolbarSmall) {
+  .hiddenSmallView,
+  .hiddenSmallView * {
+    display: none !important;
+  }
+
   .verticalToolbarSeparator {
     margin-inline: 2px;
   }
@@ -503,6 +579,11 @@
       inset-inline-end: 2px;
     }
   }
+}
+
+/* From viewer.css's 560px step: the zoom menu goes, and the zoom buttons stay. */
+:where(#toolbarContainer.pdflionToolbarNarrow) #scaleSelectContainer {
+  display: none;
 }
 
 /* Menus and popovers: no arrow, aligned with the button that opens them. */

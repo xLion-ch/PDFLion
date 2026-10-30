@@ -144,6 +144,12 @@ const sidebarOpen = (page) => page.evaluate(() => PDFViewerApplication.viewsMana
 
 /**
  * @param {Page} page
+ * @returns {import("@playwright/test").Locator} pdf.js's sidebar button, left of the overview's
+ */
+const sidebarButton = (page) => page.locator("#viewsManagerToggleButton");
+
+/**
+ * @param {Page} page
  * @returns {Promise<void>} once nothing moves, such as the sidebar sliding in
  */
 const settled = (page) =>
@@ -436,6 +442,9 @@ test("the page overview opens and closes with its button, the menu, Esc and a do
     await button.click();
     await expect.poll(() => overviewOpen(page)).toBe(true);
     await expect(button).toHaveAttribute("aria-pressed", "true");
+    // Only the overview's button is on, not the sidebar's.
+    await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "false");
+    await expect(sidebarButton(page)).not.toHaveClass(/toggled/);
     await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(14);
     // The document is hidden behind it.
     await expect(page.locator("#viewerContainer")).toBeHidden();
@@ -488,14 +497,46 @@ test("the page overview leaves the sidebar as it was, and the document in its pl
     sidebar.width * 2,
   );
   expect(await boundsOf(page, "#viewerContainer")).toEqual(documentArea);
+  await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "false");
 
   await clickMenu(app, page, "pageOverview");
   await expect.poll(() => overviewOpen(page)).toBe(false);
   expect(await sidebarOpen(page)).toBe(true);
+  await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "true");
+  await expect(sidebarButton(page)).toHaveClass(/toggled/);
   expect(await page.evaluate(() => PDFViewerApplication.viewsManager.visibleView)).toBe(1);
   expect(await boundsOf(page, "#viewsManager")).toEqual(sidebar);
   expect(await boundsOf(page, "#viewerContainer")).toEqual(documentArea);
   expect(await page.evaluate(() => PDFViewerApplication.pdfViewer.currentScale)).toBe(scale);
+});
+
+test("toggling the sidebar from the page overview shows the sidebar", async ({ pdflion }) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  /** @type {[string, () => Promise<unknown>][]} */
+  const toggles = [
+    ["its button", () => sidebarButton(page).click()],
+    ["View > Toggle Sidebar", () => clickMenu(app, page, "toggleSidebar")],
+  ];
+  // Elsewhere F4 is the menu's, as View > Toggle Sidebar's shortcut.
+  if (process.platform === "darwin") toggles.push(["F4", () => page.keyboard.press("F4")]);
+
+  for (const [how, toggle] of toggles) {
+    await test.step(how, async () => {
+      await page.locator("#pdflionPageOverview").click();
+      await expect.poll(() => overviewOpen(page)).toBe(true);
+      await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "false");
+      await toggle();
+      await expect.poll(() => overviewOpen(page)).toBe(false);
+      expect(await sidebarOpen(page)).toBe(true);
+      expect(await page.evaluate(() => PDFViewerApplication.viewsManager.visibleView)).toBe(1);
+      await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "true");
+      await expect(page.locator("#viewerContainer")).toBeVisible();
+
+      await sidebarButton(page).click();
+      await expect.poll(() => sidebarOpen(page)).toBe(false);
+      await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "false");
+    });
+  }
 });
 
 test("pages moved and deleted in the page overview's grid are saved", async ({ pdflion }) => {
@@ -551,6 +592,7 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
   await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "", "Page 3"]);
   expect(await currentPage(page)).toBe(3);
   expect(await overviewOpen(page)).toBe(true);
+  await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(4);
 
   // With no page checked, after the current one.
