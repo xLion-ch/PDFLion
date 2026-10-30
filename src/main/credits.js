@@ -37,6 +37,13 @@ export const CREDITS = [
         license: "Apache-2.0",
         url: "https://github.com/google/material-design-icons",
       },
+      // The app icon, resources/icon.svg.
+      {
+        name: "Lion icon",
+        by: "SVG Repo",
+        license: "public domain",
+        url: "https://www.svgrepo.com/svg/484717/lion",
+      },
       { name: "Material Design 3", by: "Google", url: "https://m3.material.io" },
       // Its paper size data: which regions get Letter for File > New (blank.js).
       {

@@ -202,6 +202,7 @@ PDFLion is built on:
 - [Electron](https://www.electronjs.org) (MIT)
 - [@cantoo/pdf-lib](https://github.com/cantoo-scribe/pdf-lib) by Cantoo, which inserts pages (MIT)
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, the viewer's icons (Apache-2.0)
+- a [lion icon](https://www.svgrepo.com/svg/484717/lion) from SVG Repo, the app icon (public domain)
 - [Material Design 3](https://m3.material.io) by Google, the design guidelines the viewer follows
 - [Unicode CLDR](https://cldr.unicode.org) by Unicode, whose paper size data decides between US Letter and A4 for new documents (Unicode-3.0)
 
