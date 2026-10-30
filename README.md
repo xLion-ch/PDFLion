@@ -20,8 +20,9 @@ A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://githu
 - Zoom, rotation, search, sidebar, Presentation Mode and printing, all from the menu and the platform's usual shortcuts.
 - Follows the system's light or dark appearance. The viewer also follows the system language; the menus are in English.
 - Remembers where you left the last window, and lists recently opened files.
+- On Windows and Linux, updates itself from the releases on GitHub.
 
-PDFLion makes no network requests of its own. Links in a document open in your browser or mail app, and only `http`, `https` and `mailto` links open at all.
+PDFLion's only network requests of its own are its checks for updates, on Windows and Linux (see Updates). Links in a document open in your browser or mail app, and only `http`, `https` and `mailto` links open at all.
 
 ## Installing
 
@@ -41,6 +42,17 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 **Windows:** run the installer. SmartScreen shows "Windows protected your PC"; click More info, then Run anyway. PDFLion installs for your user only, without administrator rights. It appears under Open with for PDFs; to make it the default, use Settings > Apps > Default apps. Uninstall it from Settings > Apps.
 
 **Linux:** in a terminal, in the folder with the package, run `sudo apt install ./PDFLion-<version>-linux-amd64.deb`. PDFLion appears among your apps, and under Open With for PDFs in Files and Nemo. To make it the default, right-click a PDF, choose Open With, and set PDFLion as the default there. Uninstall it with `sudo apt remove pdflion`.
+
+### Updates
+
+On Windows and Linux, PDFLion checks for a new release 10 seconds after it starts, and every 6 hours while it runs. It downloads one in the background, and then asks whether to restart now. Restart Now first asks about any unsaved changes, as quitting does, then installs the update and starts the new version. Release Notes shows what's new on GitHub.
+
+- **Windows:** otherwise the update installs when PDFLion quits, without administrator rights.
+- **Linux:** installing asks for an administrator's password, so the update installs only with Restart Now. Help > Check for Updates… offers it again.
+
+Help > Check for Updates… checks at once. Help > Check for Updates Automatically turns the automatic checks off. A check asks GitHub for the latest release, which tells GitHub your computer's IP address, as opening the release page would, and nothing else.
+
+On macOS, PDFLion doesn't update itself yet: download each new release from GitHub.
 
 ## Shortcuts
 
@@ -115,7 +127,7 @@ The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLA
 
 ## Releasing
 
-Every push to `main` that changes more than Markdown files is a release. Once its tests and builds have passed on macOS, Windows and Linux, CI publishes the GitHub release `v<version>`, tagged on that commit, with the four installers, the two Mac `.zip` files, the update files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml` and the `.blockmap` files), and notes GitHub writes from the pull requests merged since the last release. A run that fails on any platform releases nothing, and running it again for a commit that's released already doesn't release it twice. Pull requests are never released.
+Every push to `main` that changes more than Markdown files is a release. Once its tests and builds have passed on macOS, Windows and Linux, CI publishes the GitHub release `v<version>`, tagged on that commit, with the four installers, the two Mac `.zip` files, the update files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml` and the `.blockmap` files), and notes GitHub writes from the pull requests merged since the last release. A run that fails on any platform releases nothing, and running it again for a commit that's released already doesn't release it twice. Pull requests are never released. Copies installed on Windows and Linux find each release within 6 hours, and update to it (see Updates).
 
 So `main` only takes changes that passed CI, and the checks by hand come before merging:
 
@@ -163,6 +175,7 @@ On a Windows PC:
 - Shutting down or signing out with unsaved changes is held off while PDFLion asks about them.
 - The taskbar button groups with the pinned or Start menu shortcut, and the jump list shows recent files.
 - The viewer switches with Settings > Personalization > Colors, and a touchpad or touchscreen pinch zooms the pages.
+- With the previous release installed, PDFLion offers the latest one about 10 seconds after it starts, and SmartScreen and Defender let the downloaded installer run. Restart Now with an edited document asks about it first, then installs without showing the installer or asking for administrator rights, and starts the new version. Later, then quitting, installs it without starting PDFLion again. Shutting down with an update downloaded doesn't install it, and the next launch offers it again.
 
 On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, which uses X11:
 
@@ -177,6 +190,7 @@ On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, w
 - Cancelling the Open dialog at launch quits the app.
 - File > Open Recent lists opened files, and Help > About PDFLion shows the version, the icon and the credits.
 - The viewer follows the system's light or dark style, Print shows the print dialog with every page, and a touchpad pinch zooms the pages, on Wayland and on X11.
+- With the previous release's `.deb` installed, PDFLion offers the latest one about 10 seconds after it starts. Restart Now with an edited document asks about it first, then shows the system's password prompt, installs the update and starts the new version, with Chromium's sandbox on. Cancelling the password prompt leaves PDFLion running, and it says the update wasn't installed. Quitting installs nothing.
 
 On every platform, and on Linux both on Wayland and on X11:
 
@@ -209,6 +223,7 @@ PDFLion is built on:
 - [pdf.js](https://github.com/mozilla/pdf.js) by Mozilla (Apache-2.0)
 - [Electron](https://www.electronjs.org) (MIT)
 - [@cantoo/pdf-lib](https://github.com/cantoo-scribe/pdf-lib) by Cantoo, which inserts pages (MIT)
+- [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater), which downloads and installs updates (MIT)
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, the viewer's icons (Apache-2.0)
 - a [lion icon](https://www.svgrepo.com/svg/484717/lion) from SVG Repo, the app icon (public domain)
 - [Material Design 3](https://m3.material.io) by Google, the design guidelines the viewer follows
@@ -237,6 +252,22 @@ pdf.js includes:
 - [UPNG.js and UZIP.js](https://github.com/photopea/UPNG.js) by Photopea, for PNG images (MIT)
 - [base64-arraybuffer](https://github.com/niklasvh/base64-arraybuffer) by Niklas von Hertzen (MIT)
 - path drawing from [PDFKit](https://github.com/foliojs/pdfkit) by Devon Govett (MIT), and stream decoding from pdf.js
+
+electron-updater includes:
+
+- [builder-util-runtime](https://github.com/electron-userland/electron-builder/tree/master/packages/builder-util-runtime) (MIT)
+- [debug](https://github.com/debug-js/debug) by TJ Holowaychuk and Josh Junon (MIT)
+- [ms](https://github.com/vercel/ms) by Vercel (MIT)
+- [sax](https://github.com/isaacs/sax-js) by Isaac Z. Schlueter, which reads the release feed (BlueOak-1.0.0)
+- [fs-extra](https://github.com/jprichardson/node-fs-extra) and [jsonfile](https://github.com/jprichardson/node-jsonfile) by JP Richardson (MIT)
+- [graceful-fs](https://github.com/isaacs/node-graceful-fs) by Isaac Z. Schlueter and Ben Noordhuis (ISC)
+- [universalify](https://github.com/RyanZim/universalify) by Ryan Zimmerman (MIT)
+- [js-yaml](https://github.com/nodeca/js-yaml) by Vitaly Puzrin, which reads the update files (MIT)
+- [argparse](https://github.com/nodeca/argparse), a port of Python's (Python-2.0)
+- [lazy-val](https://github.com/develar/lazy-val) by Vladimir Krivosheev (MIT)
+- [lodash.escaperegexp and lodash.isequal](https://lodash.com) by the JS Foundation (MIT)
+- [semver](https://github.com/npm/node-semver) by Isaac Z. Schlueter, which compares versions (ISC)
+- [tiny-typed-emitter](https://github.com/binier/tiny-typed-emitter) by Zurab Benashvili (MIT)
 
 Electron includes:
 

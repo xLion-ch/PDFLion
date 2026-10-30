@@ -83,16 +83,24 @@ export async function tracemonkey(dir, name = "tracemonkey.pdf") {
  * WINDOW_SIZE, and waits until the first of them shows its first page.
  *
  * @param {string[]} files
- * @param {{ userData?: string, lang?: string }} [options] userData: reuse a
- *   folder. lang: the language, such as `de`, for pdf.js's labels, rather
- *   than the system's
+ * @param {{ userData?: string, lang?: string, args?: string[], env?: Record<string, string> }} [options]
+ *   userData: reuse a folder. lang: the language, such as `de`, for pdf.js's
+ *   labels, rather than the system's. args: more switches. env: variables to
+ *   set besides this process's
  * @returns {Promise<{ app: ElectronApplication, page: Page, userData: string }>}
  */
-export async function launch(files, { userData, lang } = {}) {
+export async function launch(files, { userData, lang, args = [], env = {} } = {}) {
   userData ??= await tempDir();
   const app = await electron.launch({
-    args: [ROOT, `--user-data-dir=${userData}`, ...(lang ? [`--lang=${lang}`] : []), ...files],
+    args: [
+      ROOT,
+      `--user-data-dir=${userData}`,
+      ...(lang ? [`--lang=${lang}`] : []),
+      ...args,
+      ...files,
+    ],
     cwd: ROOT,
+    env: { ...process.env, ...env },
   });
   const page = await documentPage(app, path.basename(files[0]));
   await setSize(app, page, WINDOW_SIZE);

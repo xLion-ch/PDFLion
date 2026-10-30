@@ -14,6 +14,7 @@ import { handleProtocol, registerScheme } from "./protocol.js";
 import { handleStrip } from "./strip.js";
 import { handleToolSettings } from "./toolsettings.js";
 import { guardUnsavedChanges } from "./unsaved.js";
+import { isRestartingForUpdate, startUpdates } from "./updates.js";
 import { openDocument, openDocuments, showOpenPanel } from "./windows.js";
 
 const isMac = process.platform === "darwin";
@@ -74,9 +75,10 @@ function start() {
   });
 
   // Without a listener, Electron quits when the last window closes. Mac apps
-  // keep running, Windows and Linux apps quit.
+  // keep running, Windows and Linux apps quit, but not while an update's
+  // Restart Now closes them: it quits by itself.
   app.on("window-all-closed", () => {
-    if (!isMac) app.quit();
+    if (!isMac && !isRestartingForUpdate()) app.quit();
   });
 
   app.whenReady().then(() => {
@@ -87,6 +89,7 @@ function start() {
     handleToolSettings();
     guardUnsavedChanges();
     installMenu();
+    startUpdates();
 
     const files = [...openFileQueue, ...launchFiles];
     openFileQueue = null;

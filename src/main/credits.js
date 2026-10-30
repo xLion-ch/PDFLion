@@ -31,6 +31,12 @@ export const CREDITS = [
         license: "MIT",
         url: "https://github.com/cantoo-scribe/pdf-lib",
       },
+      // Downloads and installs updates (updates.js).
+      {
+        name: "electron-updater",
+        license: "MIT",
+        url: "https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater",
+      },
       {
         name: "Material Symbols",
         by: "Google",
@@ -172,6 +178,87 @@ export const CREDITS = [
         by: "Devon Govett",
         license: "MIT",
         url: "https://github.com/foliojs/pdfkit",
+      },
+    ],
+  },
+  {
+    // Its dependencies, which electron-builder packs into app.asar, as
+    // `npm ls --omit=dev --all` lists them.
+    heading: "electron-updater includes",
+    components: [
+      {
+        name: "builder-util-runtime",
+        license: "MIT",
+        url: "https://github.com/electron-userland/electron-builder/tree/master/packages/builder-util-runtime",
+      },
+      {
+        name: "debug",
+        by: "TJ Holowaychuk and Josh Junon",
+        license: "MIT",
+        url: "https://github.com/debug-js/debug",
+      },
+      { name: "ms", by: "Vercel", license: "MIT", url: "https://github.com/vercel/ms" },
+      {
+        name: "sax",
+        by: "Isaac Z. Schlueter",
+        license: "BlueOak-1.0.0",
+        url: "https://github.com/isaacs/sax-js",
+      },
+      {
+        name: "fs-extra",
+        by: "JP Richardson",
+        license: "MIT",
+        url: "https://github.com/jprichardson/node-fs-extra",
+      },
+      {
+        name: "jsonfile",
+        by: "JP Richardson",
+        license: "MIT",
+        url: "https://github.com/jprichardson/node-jsonfile",
+      },
+      {
+        name: "graceful-fs",
+        by: "Isaac Z. Schlueter and Ben Noordhuis",
+        license: "ISC",
+        url: "https://github.com/isaacs/node-graceful-fs",
+      },
+      {
+        name: "universalify",
+        by: "Ryan Zimmerman",
+        license: "MIT",
+        url: "https://github.com/RyanZim/universalify",
+      },
+      {
+        name: "js-yaml",
+        by: "Vitaly Puzrin",
+        license: "MIT",
+        url: "https://github.com/nodeca/js-yaml",
+      },
+      // A port of Python's argparse, under Python's license.
+      { name: "argparse", license: "Python-2.0", url: "https://github.com/nodeca/argparse" },
+      {
+        name: "lazy-val",
+        by: "Vladimir Krivosheev",
+        license: "MIT",
+        url: "https://github.com/develar/lazy-val",
+      },
+      {
+        name: "lodash.escaperegexp and lodash.isequal",
+        by: "the JS Foundation",
+        license: "MIT",
+        url: "https://lodash.com",
+      },
+      {
+        name: "semver",
+        by: "Isaac Z. Schlueter",
+        license: "ISC",
+        url: "https://github.com/npm/node-semver",
+      },
+      {
+        name: "tiny-typed-emitter",
+        by: "Zurab Benashvili",
+        license: "MIT",
+        url: "https://github.com/binier/tiny-typed-emitter",
       },
     ],
   },

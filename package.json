@@ -29,6 +29,7 @@
     "electron-builder": "^26.18.0"
   },
   "dependencies": {
-    "@cantoo/pdf-lib": "2.11.1"
+    "@cantoo/pdf-lib": "2.11.1",
+    "electron-updater": "6.8.11"
   }
 }

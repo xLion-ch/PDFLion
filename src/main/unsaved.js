@@ -1,12 +1,12 @@
 /**
  * Asks before unsaved changes are lost, when a tab or a window closes, the app
- * quits, or the system shuts down, the way document apps do on macOS, Windows
- * and Linux. "Unsaved" is a tab's edited state, which bridge.js reports and
- * tabs.js shows.
+ * quits, the system shuts down, or an update installs (updates.js), the way
+ * document apps do on macOS, Windows and Linux. "Unsaved" is a tab's edited
+ * state, which bridge.js reports and tabs.js shows.
  *
- * A window, the app or the system asks about each edited tab in turn, and
- * selects it first. Each tab closes once the user has decided about it. Cancel
- * stops there, and leaves the remaining tabs open.
+ * A window, the app, the system or an update asks about each edited tab in
+ * turn, and selects it first. Each tab closes once the user has decided about
+ * it. Cancel stops there, and leaves the remaining tabs open.
  */
 import { app, BrowserWindow, dialog, powerMonitor } from "electron";
 import { runCommand } from "./ipc.js";
@@ -101,16 +101,31 @@ export async function closeOtherTabs(keep) {
 }
 
 /**
+ * Asks about every edited tab in turn, as quitting does, and closes each once
+ * the user has decided, but doesn't quit. For installing an update, which
+ * quits only once nothing is left to ask about. Cancel stops there.
+ *
+ * @returns {Promise<boolean>} whether no edited tab is left: false if the
+ *   user cancelled or saving failed
+ */
+export async function reviewUnsavedChanges() {
+  for (const tab of editedTabs(BrowserWindow.getAllWindows())) {
+    if (!tabs.isOpen(tab)) continue;
+    if (!(await reviewAndCloseTab(tab))) return false;
+  }
+  return true;
+}
+
+/**
  * Stops a quit, the end of a Windows session, or a Linux shutdown, while
  * there are edited tabs, and asks about them instead.
  *
  * @param {Electron.Event} event
  */
 function reviewBeforeQuitting(event) {
-  const edited = editedTabs(BrowserWindow.getAllWindows());
-  if (edited.length === 0) return;
+  if (editedTabs(BrowserWindow.getAllWindows()).length === 0) return;
   event.preventDefault();
-  reviewAndQuit(edited);
+  reviewAndQuit();
 }
 
 /**
@@ -135,17 +150,12 @@ async function reviewAndCloseWindow(win) {
 /**
  * Reviews edited tabs one at a time, then quits. Cancel stops the review and
  * the quit.
- *
- * @param {tabs.Tab[]} edited
  */
-async function reviewAndQuit(edited) {
+async function reviewAndQuit() {
   if (reviewingQuit) return;
   reviewingQuit = true;
   try {
-    for (const tab of edited) {
-      if (!tabs.isOpen(tab)) continue;
-      if (!(await reviewAndCloseTab(tab))) return;
-    }
+    if (!(await reviewUnsavedChanges())) return;
   } finally {
     reviewingQuit = false;
   }

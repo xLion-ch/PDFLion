@@ -23,6 +23,7 @@ import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
 import { clearRecentDocuments, onRecentDocumentsChange, recentDocuments } from "./recent.js";
 import * as tabs from "./tabs.js";
 import { closeTab } from "./unsaved.js";
+import { automaticChecks, checkForUpdates, hasUpdater, setAutomaticChecks } from "./updates.js";
 import {
   documentWindows,
   isDocumentWindow,
@@ -243,9 +244,32 @@ function template() {
       label: "&Help",
       submenu: [
         { label: "PDFLion on &GitHub", click: () => shell.openExternal(REPOSITORY_URL) },
+        ...updateMenuItems(),
         // On macOS, About is in the app menu.
         ...onWindowsAndLinux({ type: "separator" }, { role: "about", label: `&About ${app.name}` }),
       ],
+    },
+  ];
+}
+
+/**
+ * Check for Updates… and the checkbox for automatic checks, in the Help menu
+ * of a PDFLion that updates itself (updates.js), before About.
+ *
+ * @returns {Electron.MenuItemConstructorOptions[]}
+ */
+function updateMenuItems() {
+  if (!hasUpdater) return [];
+  return [
+    { type: "separator" },
+    { id: "checkForUpdates", label: "Check for &Updates…", click: () => checkForUpdates() },
+    {
+      id: "automaticUpdates",
+      label: "Check for Updates Au&tomatically",
+      type: "checkbox",
+      checked: automaticChecks(),
+      // Electron has flipped `checked` by then.
+      click: (item) => setAutomaticChecks(item.checked),
     },
   ];
 }
