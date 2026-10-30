@@ -12,9 +12,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { test as base, _electron as electron } from "@playwright/test";
+import { test as base, _electron as electron, expect } from "@playwright/test";
 
-export { expect } from "@playwright/test";
+export { expect };
 
 /** @typedef {import("@playwright/test").ElectronApplication} ElectronApplication */
 /** @typedef {import("@playwright/test").Page} Page */
@@ -55,6 +55,13 @@ const TRACEMONKEY = path.join(
 /** `RenderingStates.FINISHED` in pdf.js's web/renderable_view.js. */
 const RENDERING_FINISHED = 3;
 
+/**
+ * The size of the first window's content in every launch. Tests then see the
+ * same window on every machine, and it fits the smallest screen CI has: 1024
+ * × 768 on Windows, where a new window's default size doesn't fit.
+ */
+export const WINDOW_SIZE = { width: 1000, height: 640 };
+
 /** @returns {Promise<string>} a new temporary folder, with its real path */
 export async function tempDir() {
   return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdflion-e2e-")));
@@ -72,8 +79,8 @@ export async function tracemonkey(dir, name = "tracemonkey.pdf") {
 }
 
 /**
- * Starts PDFLion with `files` on its command line and waits until the first
- * of them shows its first page.
+ * Starts PDFLion with `files` on its command line, sizes the window to
+ * WINDOW_SIZE, and waits until the first of them shows its first page.
  *
  * @param {string[]} files
  * @param {{ userData?: string, lang?: string }} [options] userData: reuse a
@@ -88,6 +95,7 @@ export async function launch(files, { userData, lang } = {}) {
     cwd: ROOT,
   });
   const page = await documentPage(app, path.basename(files[0]));
+  await setSize(app, page, WINDOW_SIZE);
   await rendered(page);
   return { app, page, userData };
 }
@@ -234,8 +242,49 @@ export async function rendered(page) {
 }
 
 /**
- * Sets the width of a page's window, as far as its minimum width lets it,
- * and waits until the page has laid itself out at that width.
+ * Sets the size of a page's window, as far as its minimum width and the
+ * screen let it, and waits until the page has laid itself out at that size.
+ *
+ * @param {ElectronApplication} app
+ * @param {Page} page a tab's viewer
+ * @param {{ width: number, height: number }} size of the window's content, in pixels
+ * @returns {Promise<{ width: number, height: number }>} the size it got
+ */
+export async function setSize(app, page, { width, height }) {
+  const win = await app.browserWindow(page);
+  await win.evaluate((win, [width, height]) => win.setContentSize(width, height), [width, height]);
+  // The window may take a moment to resize, and the tab's view, the page's
+  // own size, follows it.
+  const layout = () =>
+    win.evaluate((win, url) => {
+      const [width, height] = win.getContentSize();
+      const tab = win.contentView.children.find(
+        (child) =>
+          /** @type {Electron.WebContentsView} */ (child).webContents?.getURL().split("#")[0] ===
+          url.split("#")[0],
+      );
+      return { content: { width, height }, view: tab?.getBounds() };
+    }, page.url());
+  await expect
+    .poll(async () => {
+      const { content, view } = await layout();
+      return view?.width === content.width && view.y + view.height === content.height;
+    }, { message: "the tab's view fills the window" })
+    .toBe(true);
+  const { content: got, view } = await layout();
+  await page.waitForFunction(
+    ({ width, height }) => innerWidth === width && innerHeight === height,
+    /** @type {Electron.Rectangle} */ (view),
+  );
+  // ResizeObservers, such as the toolbar's, run in the frame after a resize.
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  return got;
+}
+
+/**
+ * Sets the width of a page's window, as setSize() does.
  *
  * @param {ElectronApplication} app
  * @param {Page} page
@@ -244,16 +293,8 @@ export async function rendered(page) {
  */
 export async function setWidth(app, page, width) {
   const win = await app.browserWindow(page);
-  const got = await win.evaluate((w, width) => {
-    w.setContentSize(width, w.getContentSize()[1]);
-    return w.getContentSize()[0];
-  }, width);
-  await page.waitForFunction((got) => innerWidth === got, got);
-  // ResizeObservers, such as the toolbar's, run in the frame after a resize.
-  await page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-  );
-  return got;
+  const height = await win.evaluate((win) => win.getContentSize()[1]);
+  return (await setSize(app, page, { width, height })).width;
 }
 
 /**

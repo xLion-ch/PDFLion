@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
+  answerMessages,
   clickMenu,
   documentPage,
   expect,
@@ -223,6 +224,8 @@ test("a favourite shows in every window's toolbar, draws with its settings, and 
   await expect(other.locator("#editorInkThickness")).toHaveValue("5");
   await other.locator("#editorInkThickness").fill("6");
   await expect(favourite).toHaveAttribute("aria-pressed", "false");
+  // The line drawn is an unsaved change, which quitting would ask about.
+  await answerMessages(app, "Don’t Save");
   await app.close();
 
   const { app: relaunched, page: again } = await pdflion([first], { userData });

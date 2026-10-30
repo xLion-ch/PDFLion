@@ -104,6 +104,11 @@ async function showThumbnails(page) {
 /**
  * Drags a page's thumbnail with the mouse, and drops it after another's.
  *
+ * pdf.js scrolls the thumbnails while the dragged one nears their edge, which
+ * would move the drop. So the thumbnails scroll first to show the whole drag,
+ * with room for the dragged thumbnail around the pointer, and the drag must
+ * fit: in a column of WINDOW_SIZE, from a thumbnail to the next.
+ *
  * @param {Page} page
  * @param {number} from
  * @param {number} after
@@ -112,15 +117,38 @@ async function showThumbnails(page) {
  *   overview's grid, rather than in a column
  */
 async function dragThumbnail(page, from, after, { grid = false } = {}) {
+  // pdf.js drops it after the thumbnail whose middle the dragged one's is
+  // below, in a column, or right of, in a grid. Coming from the row above,
+  // it takes the grid's next row once below that row's middle.
+  const x = grid ? 0.9 : 0.5;
+  // The sidebar may still be sliding in.
+  await settled(page);
+  const fits = await page.evaluate(
+    async ([from, after]) => {
+      /** @param {number} number */
+      const image = (number) =>
+        /** @type {Element} */ (
+          document.querySelector(
+            `#thumbnailsView > .thumbnail[page-number="${number}"] .thumbnailImageContainer`,
+          )
+        ).getBoundingClientRect();
+      const container = /** @type {HTMLElement} */ (document.getElementById("viewsManagerContent"));
+      const [start, end] = [image(from), image(after)];
+      const top = start.top;
+      const bottom = end.top + end.height * 0.75 + start.height / 2;
+      const middle = container.getBoundingClientRect().top + container.clientHeight / 2;
+      container.scrollTop += (top + bottom) / 2 - middle;
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return bottom - top <= container.clientHeight;
+    },
+    [from, after],
+  );
+  if (!fits) throw new Error(`Dragging thumbnail ${from} after ${after} doesn't fit in the window`);
   const start = await thumbnail(page, from).locator(".thumbnailImageContainer").boundingBox();
   const end = await thumbnail(page, after).locator(".thumbnailImageContainer").boundingBox();
   if (!start || !end) throw new Error("No thumbnail to drag");
   await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
   await page.mouse.down();
-  // pdf.js drops it after the thumbnail whose middle the dragged one's is
-  // below, in a column, or right of, in a grid. Coming from the row above,
-  // it takes the grid's next row once below that row's middle.
-  const x = grid ? 0.9 : 0.5;
   await page.mouse.move(end.x + end.width * x, end.y + end.height * 0.75, { steps: 20 });
   await page.mouse.up();
 }
@@ -308,20 +336,20 @@ test("pages moved in the thumbnails are saved in their new order", async ({ pdfl
   let { app, page } = await pdflion([file]);
   await showThumbnails(page);
 
-  await dragThumbnail(page, 1, 3);
-  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+  await dragThumbnail(page, 1, 2);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 1", "Page 3"]);
   await expect.poll(() => isEdited(app, page)).toBe(true);
 
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
   // The tab shows the file as it's now saved.
-  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 1", "Page 3"]);
   expect(await pagesCount(page)).toBe(3);
   await expect(page).toHaveTitle("pages.pdf");
   await app.close();
 
   ({ app, page } = await pdflion([file]));
-  expect(await pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+  expect(await pageTexts(page)).toEqual(["Page 2", "Page 1", "Page 3"]);
 });
 
 test("a page deleted in the thumbnails comes back with Undo", async ({ pdflion }) => {
@@ -353,6 +381,11 @@ test("Add file adds a file's pages after the current page", async ({ pdflion }) 
   await page.evaluate(() => {
     PDFViewerApplication.page = 2;
   });
+  // Add file inserts after the thumbnails' current page.
+  await expect(thumbnail(page, 2).locator(".thumbnailImageContainer")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 
   await page.locator("#viewsManagerAddFilePicker").setInputFiles(more);
   const added = ["Page 1", "Page 2", "More 1", "More 2", "Page 3"];
@@ -697,7 +730,7 @@ test("a document with a password shows its pages, but no page tools", async ({ p
   await expect(page.locator("#viewsManagerStatus")).toBeHidden();
   await expect(page.locator("#viewsManagerAddFileButton")).toBeHidden();
 
-  await dragThumbnail(page, 1, 3);
+  await dragThumbnail(page, 1, 2);
   // Files dropped on the thumbnails aren't taken either.
   await page.evaluate(async (bytes) => {
     const dataTransfer = new DataTransfer();
@@ -756,21 +789,21 @@ test("saving pages moved in a document with XMP metadata asks once", async ({ pd
   await showThumbnails(page);
   await answerMessages(app, "Save");
 
-  await dragThumbnail(page, 1, 3);
-  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
+  await dragThumbnail(page, 1, 2);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 1", "Page 3"]);
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
   expect(await messages(app)).toEqual(["Saving removes some information from “xmp.pdf”."]);
 
-  await dragThumbnail(page, 1, 3);
-  await expect.poll(() => pageTexts(page)).toEqual(["Page 3", "Page 1", "Page 2"]);
+  await dragThumbnail(page, 2, 3);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
   expect(await messages(app)).toHaveLength(1);
   await app.close();
 
   ({ app, page } = await pdflion([file]));
-  await expect.poll(() => pageTexts(page)).toEqual(["Page 3", "Page 1", "Page 2"]);
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 2", "Page 3", "Page 1"]);
 });
 
 test("saving pages moved in a document without such data doesn't ask", async ({ pdflion }) => {

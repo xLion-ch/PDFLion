@@ -381,7 +381,10 @@ function adopt(win) {
   if (adopted.has(win)) return;
   adopted.add(win);
   const { id } = win;
-  win.on("resize", () => layout(win));
+  // The content's size, rather than the window's: on Windows and Linux the
+  // menu bar takes its room once the window shows, and gives it back in full
+  // screen, without a resize.
+  win.contentView.on("bounds-changed", () => layout(win));
   // Leaving the window's full screen, as with its green button, ends the
   // page's, as in Presentation Mode. Electron does that only for the window's
   // own page.

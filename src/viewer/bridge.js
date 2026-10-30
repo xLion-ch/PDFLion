@@ -1148,10 +1148,12 @@
       await Promise.all([shown, pdfViewer.pagesPromise, app.pdfDocument.getPage(page)]);
       pdfViewer.scrollMode = scrollMode;
       pdfViewer.spreadMode = spreadMode;
-      if (sidebarView) viewsManager.switchView(sidebarView, /* forceOpen = */ true);
+      // The overview may have opened meanwhile, which needs the thumbnails.
+      const view = overview ? SIDEBAR_THUMBS : sidebarView;
+      if (view) viewsManager.switchView(view, /* forceOpen = */ true);
       else viewsManager?.close();
       // pdf.js would drag pages to where the old document's thumbnails were.
-      if (sidebarView === SIDEBAR_THUMBS) relayoutThumbnails(app);
+      if (view === SIDEBAR_THUMBS) relayoutThumbnails(app);
       for (const number of selection) checkThumbnail(number);
       // open() with data forgets the URL, which save() compares against.
       showDocumentUrl(app, url);

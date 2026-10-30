@@ -2,13 +2,14 @@
  * The menu's shortcuts for PDFLion's own commands, which pdf.js mustn't act
  * on as well.
  *
- * Electron hands the native menu the keys the page leaves unhandled, but a key
- * sent with webContents.sendInputEvent() never reaches the menu on macOS. So
- * pressShortcut() presses a key in the page, checks that the page left it to
- * the menu and acted on nothing, and then clicks the one menu item with that
+ * Electron hands the native menu the keys the page leaves unhandled. A key
+ * sent with webContents.sendInputEvent() reaches the menu that way on Windows
+ * and Linux, but never on macOS. So pressShortcut() presses a key in the page
+ * and checks that the page left it to the menu. On macOS it then checks that
+ * the page acted on nothing, and clicks the one menu item with that
  * accelerator, as Electron would.
  */
-import { clickMenu, expect, tempDir, test, tracemonkey } from "./pdflion.js";
+import { clickMenu, expect, isEdited, tempDir, test, tracemonkey } from "./pdflion.js";
 
 /** @typedef {import("./pdflion.js").ElectronApplication} ElectronApplication */
 /** @typedef {import("./pdflion.js").Page} Page */
@@ -68,8 +69,8 @@ const viewerState = (page) =>
   });
 
 /**
- * Presses a shortcut in a tab's page. Once the page has left it unhandled,
- * without acting on it, clicks the menu item with its accelerator.
+ * Presses a shortcut in a tab's page, and checks that the page leaves it to
+ * the menu, whose one item with that accelerator then acts once.
  *
  * @param {ElectronApplication} app
  * @param {Page} page
@@ -78,6 +79,44 @@ const viewerState = (page) =>
  */
 async function pressShortcut(app, page, accelerator) {
   const key = keyOf(accelerator);
+  const items = await app.evaluate(({ Menu }) => {
+    /** @type {{ id: string, accelerator: string }[]} */
+    const found = [];
+    /** @param {Electron.Menu | null | undefined} menu */
+    const collect = (menu) => {
+      for (const item of menu?.items ?? []) {
+        if (item.accelerator) found.push({ id: item.id, accelerator: item.accelerator });
+        collect(item.submenu);
+      }
+    };
+    collect(Menu.getApplicationMenu());
+    return found;
+  });
+  const same = (/** @type {string} */ other) =>
+    JSON.stringify(keyOf(other)) === JSON.stringify(key);
+  const matching = items.filter((item) => same(item.accelerator)).map((item) => item.id);
+  expect(matching, `one menu item has ${accelerator}`).toHaveLength(1);
+  const [id] = matching;
+  // Counts the item's clicks, the menu's own and clickMenu()'s alike.
+  await app.evaluate(({ Menu }, id) => {
+    const item = /** @type {Electron.MenuItem} */ (Menu.getApplicationMenu()?.getMenuItemById(id));
+    /** @type {Map<Electron.MenuItem, number>} */
+    const clicks = (/** @type {any} */ (globalThis).menuClicks ??= new Map());
+    if (!clicks.has(item)) {
+      const { click } = item;
+      item.click = (...args) => {
+        clicks.set(item, (clicks.get(item) ?? 0) + 1);
+        return click.apply(item, args);
+      };
+    }
+    clicks.set(item, 0);
+  }, id);
+  const clicks = () =>
+    app.evaluate(({ Menu }, id) => {
+      const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+      return /** @type {any} */ (globalThis).menuClicks.get(item);
+    }, id);
+
   await page.evaluate(() => {
     /** @type {any} */ (window).pressed = null;
     // After the listeners of pdf.js and bridge.js.
@@ -107,27 +146,12 @@ async function pressShortcut(app, page, accelerator) {
       message: `the page leaves ${accelerator} to the menu`,
     })
     .toBe(false);
-  expect(await viewerState(page), `nothing acts on ${accelerator} in the page`).toEqual(before);
-
-  const items = await app.evaluate(({ Menu }) => {
-    /** @type {{ id: string, accelerator: string }[]} */
-    const found = [];
-    /** @param {Electron.Menu | null | undefined} menu */
-    const collect = (menu) => {
-      for (const item of menu?.items ?? []) {
-        if (item.accelerator) found.push({ id: item.id, accelerator: item.accelerator });
-        collect(item.submenu);
-      }
-    };
-    collect(Menu.getApplicationMenu());
-    return found;
-  });
-  const same = (/** @type {string} */ other) =>
-    JSON.stringify(keyOf(other)) === JSON.stringify(key);
-  const matching = items.filter((item) => same(item.accelerator)).map((item) => item.id);
-  expect(matching, `one menu item has ${accelerator}`).toHaveLength(1);
-  await clickMenu(app, page, matching[0]);
-  return matching[0];
+  if (isMac) {
+    expect(await viewerState(page), `nothing acts on ${accelerator} in the page`).toEqual(before);
+    await clickMenu(app, page, id);
+  }
+  await expect.poll(clicks, { message: `the menu acts on ${accelerator}` }).toBe(1);
+  return id;
 }
 
 test("PDFLion's own shortcuts each act once, and pdf.js doesn't act on them", async ({
@@ -140,6 +164,8 @@ test("PDFLion's own shortcuts each act once, and pdf.js doesn't act on them", as
     expect(await pressShortcut(app, page, SHORTCUTS.insertBlankPage)).toBe("insertBlankPage");
     // After the current page, which it shows.
     await expect.poll(state).toMatchObject({ pages: 15, page: 2 });
+    // The document is edited once it has reopened with the page.
+    await expect.poll(() => isEdited(app, page)).toBe(true);
   });
 
   await test.step("Page Overview", async () => {

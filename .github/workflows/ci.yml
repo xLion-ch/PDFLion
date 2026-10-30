@@ -1,7 +1,8 @@
 # Tests and builds PDFLion on macOS, Windows and Linux, for every pull request
-# into main and every push to main, and keeps the installers for 14 days. A
-# push that changes only Markdown runs nothing, but a pull request always
-# runs, since a required check that never runs blocks the merge.
+# into main and every push to main. It keeps the installers for 14 days,
+# except those of a pull request from a fork. A push that changes only
+# Markdown runs nothing, but a pull request always runs, since a required
+# check that never runs blocks the merge.
 #
 # Only GitHub's own actions, each pinned to the commit of its release.
 name: CI
@@ -112,6 +113,11 @@ jobs:
 
       - run: npm ci
 
+      # The electron package fetches its binary the first time it runs, not
+      # as it installs. Linux's sandbox step needs the binary's helper.
+      - name: Download Electron
+        run: node node_modules/electron/install.js
+
       - name: Download the pdf.js build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -160,8 +166,12 @@ jobs:
         run: npm run dist -- ${{ matrix.builder }} --publish never "-c.extraMetadata.version=$VERSION"
 
       # The installers and their .blockmap files, by their names
-      # (artifactName in electron-builder.yml), and the update files.
+      # (artifactName in electron-builder.yml), and the update files. Not for
+      # a pull request from a fork: its installers come from code nobody has
+      # reviewed, under PDFLion's name. Compared by name, since a deleted
+      # fork's head.repo is null, and null == false.
       - name: Upload the installers
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: PDFLion-${{ steps.version.outputs.version }}-${{ matrix.platform }}

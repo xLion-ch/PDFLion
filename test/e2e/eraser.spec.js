@@ -9,15 +9,25 @@ import { INK_STROKES, writeForm, writeInk, writeLabelled } from "./pdfs.js";
  * @param {number} x
  * @param {number} y
  * @returns {Promise<[number, number]>} where a point of the first page, in
- *   PDF coordinates, is in the window
+ *   PDF coordinates, is in the window. It must be in view, since the mouse
+ *   can't reach it otherwise.
  */
 async function toWindow(page, x, y) {
-  const [left, top] = await page.evaluate(([x, y]) => {
+  const [left, top, visible] = await page.evaluate(([x, y]) => {
     const view = PDFViewerApplication.pdfViewer.getPageView(0);
     const { left, top } = view.div.getBoundingClientRect();
     const [vx, vy] = view.viewport.convertToViewportPoint(x, y);
-    return [left + view.div.clientLeft + vx, top + view.div.clientTop + vy];
+    const [px, py] = [left + view.div.clientLeft + vx, top + view.div.clientTop + vy];
+    const container = /** @type {HTMLElement} */ (document.getElementById("viewerContainer"));
+    const shown = container.getBoundingClientRect();
+    const visible =
+      px >= shown.left &&
+      px < shown.left + container.clientWidth &&
+      py >= shown.top &&
+      py < shown.top + container.clientHeight;
+    return [px, py, visible];
   }, [x, y]);
+  if (!visible) throw new Error(`The point ${x}, ${y} of the first page is out of view`);
   return [left, top];
 }
 
@@ -182,7 +192,7 @@ test("Pencil, another tool or Esc turns the eraser off, and its circle follows t
   expect(await mode()).toBe(15);
   await expect(page.locator("#editorInkParamsToolbar")).toBeVisible();
   await expect(page.locator("#pdflionEditorEraserParamsToolbar")).toBeHidden();
-  await drag(page, [[100, 400], [300, 400]]);
+  await drag(page, [[100, 650], [300, 650]]);
   await page.keyboard.press("Escape");
   await expect.poll(() => drawings(page)).toEqual(["ink of 1"]);
 

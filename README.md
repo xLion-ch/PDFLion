@@ -101,7 +101,7 @@ npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
-GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). Then it builds the installers, which the run keeps for 14 days, so a pull request can be tried before it's merged. When a test fails, the run keeps Playwright's report instead.
+GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). Then it builds the installers, which the run keeps for 14 days, so a pull request can be tried before it's merged. A pull request from a fork is built but keeps no installers, since they'd come from code nobody has reviewed yet. When a test fails, the run keeps Playwright's report instead.
 
 CI numbers its builds `<major>.<minor>.<commits>`: the major and minor version from `package.json`, and the number of commits, such as `0.1.31`. A pull request's are `0.1.31-pr.7`, which sorts before the release of the same count. `node scripts/version.js` prints the version of the commit checked out.
 
