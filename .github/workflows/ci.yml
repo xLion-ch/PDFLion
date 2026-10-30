@@ -1,10 +1,12 @@
 # Tests and builds PDFLion on macOS, Windows and Linux, for every pull request
 # into main and every push to main. It keeps the installers for 14 days,
-# except those of a pull request from a fork. A push that changes only
-# Markdown runs nothing, but a pull request always runs, since a required
-# check that never runs blocks the merge.
+# except those of a pull request from a fork, and makes every push to main
+# that passed on all three a published GitHub release. A push that changes
+# only Markdown runs nothing, so it makes no release, but a pull request
+# always runs, since a required check that never runs blocks the merge.
 #
-# Only GitHub's own actions, each pinned to the commit of its release.
+# Only GitHub's own actions, each pinned to the commit of its release, and
+# the GitHub CLI.
 name: CI
 
 on:
@@ -14,13 +16,14 @@ on:
     branches: [main]
     paths-ignore: ["**/*.md"]
 
-# Nothing here writes to the repository.
+# Only the release job writes to the repository.
 permissions:
   contents: read
 
 # A new run of a pull request cancels its previous one. Runs on main share one
-# group and never cancel a running one. GitHub drops all but the newest of
-# those waiting.
+# group and never cancel a running one, so a release is never cut short.
+# GitHub drops all but the newest of those waiting, whose release has a higher
+# version and the skipped commits in it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -79,6 +82,9 @@ jobs:
     needs: pdfjs
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    # The same on every platform, since each counts the same commits.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     strategy:
       # A failure on one platform doesn't stop the others.
       fail-fast: false
@@ -191,3 +197,83 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  # Every push to main that passed on all three platforms becomes a published
+  # release, v<version>, tagged on its commit, with every platform's
+  # installers and update files.
+  release:
+    name: Release
+    needs: build
+    # Not for pull requests, nor for a push to a fork's main. With no status
+    # function in the condition, success() applies too, so a platform that
+    # failed, or was skipped, means no release.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'xLion-ch/PDFLion'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # The repository's settings limit this environment to main.
+    environment: release
+    # The only write token: releases, and the tag publishing one makes.
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: v${{ needs.build.outputs.version }}
+    steps:
+      - name: Download the installers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: PDFLion-${{ needs.build.outputs.version }}-*
+          path: release
+          merge-multiple: true
+
+      # With gh, which needs no checkout, since GH_REPO names the repository.
+      - name: Publish the release
+        working-directory: release
+        run: |
+          # A re-run, or a run for an older commit than the latest release's,
+          # which has this one's changes in it already.
+          latest=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          if [ "$latest" = "$TAG" ]; then
+            echo "::notice::$TAG is out already."
+            exit 0
+          fi
+          if [ -n "$latest" ] && [ "$(printf '%s\n' "$latest" "$TAG" | sort -V | tail -n 1)" = "$latest" ]; then
+            echo "::notice::$latest is out already, with this commit in it, so $TAG isn't released."
+            exit 0
+          fi
+
+          # The installers, and their .blockmap files and the update files,
+          # which name them. A release missing one would break updates.
+          files=()
+          for arch in arm64 x64; do
+            for ext in dmg zip; do
+              files+=("PDFLion-$VERSION-mac-$arch.$ext" "PDFLion-$VERSION-mac-$arch.$ext.blockmap")
+            done
+          done
+          files+=(
+            "PDFLion-$VERSION-win-x64.exe" "PDFLion-$VERSION-win-x64.exe.blockmap"
+            "PDFLion-$VERSION-linux-amd64.deb"
+            latest-mac.yml latest.yml latest-linux.yml
+          )
+          for file in "${files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::$file is missing."
+              exit 1
+            fi
+          done
+
+          # Drafts left with this tag by earlier runs that failed. The API
+          # lists drafts only to those who can write. Assigned first, so that
+          # a failed listing stops the step.
+          drafts=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft and .tag_name == env.TAG) | .id')
+          for id in $drafts; do
+            gh api --method DELETE "repos/$GH_REPO/releases/$id"
+          done
+
+          # A draft first, which nobody sees until it has every file, then
+          # published, which creates the tag, as the latest release, which
+          # /releases/latest leads to.
+          gh release create "$TAG" "${files[@]}" --draft --target "$GITHUB_SHA" --title "PDFLion $VERSION" --generate-notes
+          gh release edit "$TAG" --draft=false --latest

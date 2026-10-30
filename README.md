@@ -25,7 +25,7 @@ PDFLion makes no network requests of its own. Links in a document open in your b
 
 ## Installing
 
-PDFLion runs on macOS 13 Ventura or later, on Apple silicon and Intel Macs, on 64-bit Windows 10 and 11, and on 64-bit Ubuntu 22.04 and Linux Mint 21 or later. Pick the build for your computer:
+PDFLion runs on macOS 13 Ventura or later, on Apple silicon and Intel Macs, on 64-bit Windows 10 and 11, and on 64-bit Ubuntu 22.04 and Linux Mint 21 or later. Pick the build for your computer from the [latest release](https://github.com/xLion-ch/PDFLion/releases/latest):
 
 | Build | For |
 |---|---|
@@ -101,7 +101,7 @@ npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
-GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). Then it builds the installers, which the run keeps for 14 days, so a pull request can be tried before it's merged. A pull request from a fork is built but keeps no installers, since they'd come from code nobody has reviewed yet. When a test fails, the run keeps Playwright's report instead.
+GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). Then it builds the installers, which the run keeps for 14 days, so a pull request can be tried before it's merged. A pull request from a fork is built but keeps no installers, since they'd come from code nobody has reviewed yet. When a test fails, the run keeps Playwright's report instead. A push to `main` that passes becomes a release (see Releasing).
 
 CI numbers its builds `<major>.<minor>.<commits>`: the major and minor version from `package.json`, and the number of commits, such as `0.1.31`. A pull request's are `0.1.31-pr.7`, which sorts before the release of the same count. `node scripts/version.js` prints the version of the commit checked out.
 
@@ -115,13 +115,21 @@ The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLA
 
 ## Releasing
 
-CI builds the installers but publishes nothing, and there's no auto-update. A release is built by hand:
+Every push to `main` that changes more than Markdown files is a release. Once its tests and builds have passed on macOS, Windows and Linux, CI publishes the GitHub release `v<version>`, tagged on that commit, with the four installers, the two Mac `.zip` files, the update files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml` and the `.blockmap` files), and notes GitHub writes from the pull requests merged since the last release. A run that fails on any platform releases nothing, and running it again for a commit that's released already doesn't release it twice. Pull requests are never released.
 
-1. Check for a newer pdf.js with `npm run pdfjs:check`, and update as [CLAUDE.md](CLAUDE.md) describes.
-2. Raise the minor or major version in `package.json`. Its patch version stays 0, since CI counts commits there.
-3. Run `npm run build` on a Mac, on a Windows PC and on a Linux PC. Between them, they build both Mac versions, the Windows installer and the Linux package.
-4. Go through the checks below, which the automated tests can't do. The Windows and Linux checks haven't been done for any release yet.
-5. Publish the `.dmg`, `.zip`, `.exe` and `.deb` files from `dist/`.
+So `main` only takes changes that passed CI, and the checks by hand come before merging:
+
+1. Make the change on a branch, and open a pull request into `main`. CI tests and builds it, and keeps its installers for 14 days, as `<version>-pr.<number>`.
+2. Go through the checks below that the change touches, with the pull request's installers. They're what the automated tests can't do. The Windows and Linux checks haven't been done for any release yet.
+3. Merge it. The push to `main` becomes the next release.
+
+The version is `<major>.<minor>.<commits>` (see Development), so every release has a higher one. To raise the major or minor version, edit `package.json`, keeping its patch version at 0. To update pdf.js, check for a newer release with `npm run pdfjs:check`, and update as [CLAUDE.md](CLAUDE.md) describes, in a pull request of its own. `npm run build` still builds every version the machine can, as `package.json`'s version, for trying a build, but releases come only from CI.
+
+The releases rely on settings of the repository on GitHub, which only its administrators can change:
+
+- A ruleset protects `main`: changes come through pull requests, the checks `pdf.js`, `mac`, `windows` and `linux` must pass before one merges, and `main` can't be force-pushed or deleted. Rewriting `main` could lower the commit count, and with it the version. The `pdf.js` check is required too, since GitHub would count the others as passed if they were skipped because it failed.
+- The `release` environment, in which CI makes the release, allows only the `main` branch.
+- Everyone who can push to `main` or change these settings signs in to GitHub with two-factor authentication.
 
 ### Checks by hand
 
@@ -241,7 +249,8 @@ PDFLion is built and tested with:
 - [NSIS](https://nsis.sourceforge.io), which electron-builder uses for the Windows installer (Zlib)
 - [fpm](https://github.com/jordansissel/fpm) by Jordan Sissel, which electron-builder uses for the Linux package (MIT)
 - [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
-- [actions/checkout, setup-node, cache, upload-artifact and download-artifact](https://github.com/actions) by GitHub, which run the tests on GitHub Actions (MIT)
+- [actions/checkout, setup-node, cache, upload-artifact and download-artifact](https://github.com/actions) by GitHub, which run the tests and builds on GitHub Actions (MIT)
+- [GitHub CLI](https://cli.github.com) by GitHub, with which CI publishes the releases (MIT)
 - [Xvfb](https://gitlab.freedesktop.org/xorg/xserver) by X.Org, the virtual display the Linux tests run on there (MIT)
 
 The license texts ship with the app: pdf.js's and its components' in `pdfjs/`, Electron's in `LICENSE.electron.txt`, and Chromium's in `LICENSES.chromium.html`. The About panel lists the same projects, with the versions of pdf.js, Electron, Chromium and Node.js.

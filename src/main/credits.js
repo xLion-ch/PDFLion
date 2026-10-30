@@ -201,6 +201,8 @@ export const CREDITS = [
         license: "MIT",
         url: "https://github.com/actions",
       },
+      // gh, with which CI's release job publishes the releases.
+      { name: "GitHub CLI", by: "GitHub", license: "MIT", url: "https://cli.github.com" },
       // The virtual display CI's Linux end-to-end tests run on.
       {
         name: "Xvfb",
