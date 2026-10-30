@@ -184,6 +184,16 @@ const settled = (page) =>
   expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBe(0);
 
 /**
+ * PDFLion's page changes show their result before they end, and Save or
+ * another page change does nothing until then. The page buttons are disabled
+ * meanwhile.
+ *
+ * @param {Page} page
+ * @returns {Promise<void>} once the page change under way has ended
+ */
+const pageChangeEnded = (page) => expect(page.locator("#pdflionInsertBlankPage")).toBeEnabled();
+
+/**
  * @param {Page} page
  * @param {string} selector
  * @returns {Promise<DOMRect>} where the element is
@@ -206,6 +216,7 @@ test("Insert Blank Page adds a page after the current one, and Save appends it",
 
   await clickMenu(app, page, "insertBlankPage");
   await expect.poll(() => pagesCount(page)).toBe(15);
+  await pageChangeEnded(page);
   await expect.poll(() => currentPage(page)).toBe(4);
   expect(await pageView(page, 4)).toEqual(await pageView(page, 3));
   await expect.poll(() => isEdited(app, page)).toBe(true);
@@ -232,6 +243,7 @@ test("a typed form value survives inserting a page and saving", async ({ pdflion
 
   await clickMenu(app, page, "insertBlankPage");
   await expect.poll(() => pagesCount(page)).toBe(2);
+  await pageChangeEnded(page);
   await page.evaluate(() => {
     PDFViewerApplication.page = 1;
   });
@@ -286,6 +298,7 @@ test("a signed document asks before its first page change only", async ({ pdflio
   await answerMessages(app, "Change Pages");
   await clickMenu(app, page, "insertBlankPage");
   await expect.poll(() => pagesCount(page)).toBe(2);
+  await pageChangeEnded(page);
   await clickMenu(app, page, "insertBlankPage");
   await expect.poll(() => pagesCount(page)).toBe(3);
   expect(await messages(app)).toEqual([ask, ask]);
@@ -623,6 +636,7 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
   await thumbnail(page, 2).locator("input").check();
   await insert.click();
   await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "", "Page 3"]);
+  await pageChangeEnded(page);
   expect(await currentPage(page)).toBe(3);
   expect(await overviewOpen(page)).toBe(true);
   await expect(sidebarButton(page)).toHaveAttribute("aria-expanded", "false");
@@ -652,6 +666,7 @@ test("checked pages rotated in the page overview stay checked, and are saved", a
   await thumbnail(page, 3).locator("input").check();
   await page.locator("#pdflionRotatePagesRight").click();
   await expect.poll(() => pageRotations(page)).toEqual([90, 0, 90]);
+  await pageChangeEnded(page);
   expect(await checkedThumbnails(page)).toEqual([1, 3]);
   // pdf.js's selection too, which its status bar counts.
   await expect(page.locator("#viewsManagerStatusActionLabel")).toContainText("2");
@@ -662,6 +677,7 @@ test("checked pages rotated in the page overview stay checked, and are saved", a
   // Again, now that the pages have a /Rotate of their own.
   await page.locator("#pdflionRotatePagesRight").click();
   await expect.poll(() => pageRotations(page)).toEqual([180, 0, 180]);
+  await pageChangeEnded(page);
 
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
@@ -689,6 +705,7 @@ test("Rotate Pages Left turns the current page with none checked, keeping form v
 
   await page.locator("#pdflionRotatePagesLeft").click();
   await expect.poll(() => pageRotations(page)).toEqual([0, 270]);
+  await pageChangeEnded(page);
   expect(await currentPage(page)).toBe(2);
   expect(await checkedThumbnails(page)).toEqual([]);
   expect(await isEdited(app, page)).toBe(true);
