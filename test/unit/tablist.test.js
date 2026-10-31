@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { TabList } from "../../src/main/tablist.js";
+import { TabList } from "../../src/shared/tablist.js";
 
 /**
  * @param {Record<number, string[]>} windows window id -> tab ids

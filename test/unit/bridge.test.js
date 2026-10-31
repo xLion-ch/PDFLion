@@ -114,11 +114,17 @@ class FakeRangeTransport {
  * it uses: window.pdflion from the preload, and pdf.js's PDFViewerApplication.
  *
  * @param {object} [options]
- * @param {string} [options.platform] what the preload reports
+ * @param {string} [options.commandKey] what the preload reports: `meta` or `ctrl`
  * @param {(url: string, init?: RequestInit) => Promise<Response>} [options.fetch]
  * @param {boolean} [options.toolbar] whether the page has pdf.js's toolbar
+ * @param {string} [options.href] the viewer's URL
  */
-function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
+function loadBridge({
+  commandKey = "meta",
+  fetch,
+  toolbar = true,
+  href = "https://app.test/viewer/web/viewer.html?file=x",
+} = {}) {
   /** @type {any[][]} */
   const calls = [];
   const record =
@@ -128,7 +134,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     };
 
   const pdflion = {
-    platform,
+    commandKey,
     /** @type {((command: string) => unknown) | null} */
     handle: null,
     /** @type {boolean[]} */
@@ -436,7 +442,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       append(script) {
         calls.push(["script", script.src]);
         setImmediate(() => {
-          if (script.src === "/lib/pdf-lib.min.js") {
+          if (new URL(script.src).pathname.endsWith("/lib/pdf-lib.min.js")) {
             page.PDFLib = pdfLib;
             script.onload();
           } else {
@@ -766,10 +772,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     Event: SyntheticEvent,
     // Node gives custom schemes an opaque origin, where Chromium treats the
     // registered pdflion: scheme as standard. An https origin stands in.
-    location: {
-      href: "https://app.test/viewer/web/viewer.html?file=x",
-      origin: "https://app.test",
-    },
+    location: { href, origin: new URL(href).origin },
     fetch,
     URL,
     AbortController,
@@ -1062,7 +1065,7 @@ describe("bridge.js menu shortcuts", () => {
   });
 
   it("keeps pdf.js from the ⌘ shortcuts it shares with the menu on macOS", () => {
-    const bridge = loadBridge({ platform: "darwin" });
+    const bridge = loadBridge({ commandKey: "meta" });
     for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
       assert.ok(bridge.keepsFromPdfjs(press(key, "meta")), `⌘${key}`);
     }
@@ -1070,7 +1073,7 @@ describe("bridge.js menu shortcuts", () => {
   });
 
   it("leaves pdf.js every other key on macOS", () => {
-    const bridge = loadBridge({ platform: "darwin" });
+    const bridge = loadBridge({ commandKey: "meta" });
     for (const [key, modifiers] of [
       ["s", "ctrl"],
       ["s", "meta+shift"],
@@ -1083,32 +1086,27 @@ describe("bridge.js menu shortcuts", () => {
     }
   });
 
-  for (const [platform, name] of [
-    ["win32", "Windows"],
-    ["linux", "Linux"],
-  ]) {
-    it(`keeps pdf.js from the Ctrl shortcuts and F4 on ${name}`, () => {
-      const bridge = loadBridge({ platform });
-      for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
-        assert.ok(bridge.keepsFromPdfjs(press(key, "ctrl")), `Ctrl+${key}`);
-      }
-      assert.ok(bridge.keepsFromPdfjs(press("F", "ctrl+shift")), "Ctrl+Shift+F");
-      assert.ok(bridge.keepsFromPdfjs(press("F4")), "F4");
-    });
+  it("keeps pdf.js from the Ctrl shortcuts and F4 on Windows and Linux", () => {
+    const bridge = loadBridge({ commandKey: "ctrl" });
+    for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
+      assert.ok(bridge.keepsFromPdfjs(press(key, "ctrl")), `Ctrl+${key}`);
+    }
+    assert.ok(bridge.keepsFromPdfjs(press("F", "ctrl+shift")), "Ctrl+Shift+F");
+    assert.ok(bridge.keepsFromPdfjs(press("F4")), "F4");
+  });
 
-    it(`leaves pdf.js AltGr characters and other keys on ${name}`, () => {
-      const bridge = loadBridge({ platform });
-      for (const [key, modifiers] of [
-        ["s", "ctrl+alt"], // AltGr+S
-        ["s", "meta"],
-        ["F4", "shift"],
-        ["F4", "alt"],
-        ["c", "ctrl"],
-      ]) {
-        assert.ok(!bridge.keepsFromPdfjs(press(key, modifiers)), `${modifiers}+${key}`);
-      }
-    });
-  }
+  it("leaves pdf.js AltGr characters and other keys on Windows and Linux", () => {
+    const bridge = loadBridge({ commandKey: "ctrl" });
+    for (const [key, modifiers] of [
+      ["s", "ctrl+alt"], // AltGr+S
+      ["s", "meta"],
+      ["F4", "shift"],
+      ["F4", "alt"],
+      ["c", "ctrl"],
+    ]) {
+      assert.ok(!bridge.keepsFromPdfjs(press(key, modifiers)), `${modifiers}+${key}`);
+    }
+  });
 });
 
 describe("bridge.js range loading", () => {
@@ -1200,6 +1198,20 @@ describe("bridge.js range loading", () => {
       assert.equal(bridge.calls.at(-1)?.[1], args);
     }
     assert.deepEqual(requests, []);
+  });
+
+  it("finds /doc/ next to the viewer, below another path", async () => {
+    const { fetch, requests } = fakeFetch();
+    const bridge = loadBridge({ fetch, href: "https://app.test/PDFLion/viewer/web/viewer.html" });
+    await bridge.load();
+    await bridge.app.open({ url: "/PDFLion/doc/t/a.pdf" });
+    assert.ok(bridge.calls.at(-1)?.[1].range instanceof FakeRangeTransport);
+    assert.equal(requests.length, 1);
+
+    const outside = { url: "/doc/t/a.pdf" };
+    await bridge.app.open(outside);
+    assert.equal(bridge.calls.at(-1)?.[1], outside);
+    assert.equal(requests.length, 1);
   });
 
   it("leaves a document main can't serve to pdf.js, which reports it", async () => {
@@ -1434,7 +1446,19 @@ describe("bridge.js Insert Blank Page", () => {
     bridge.openDocument();
     await bridge.run("insertBlankPage");
     await bridge.run("insertBlankPage");
-    assert.deepEqual(named(bridge.calls, "script"), [["script", "/lib/pdf-lib.min.js"]]);
+    assert.deepEqual(named(bridge.calls, "script"), [
+      ["script", "https://app.test/lib/pdf-lib.min.js"],
+    ]);
+  });
+
+  it("loads @cantoo/pdf-lib from /lib/ next to the viewer, below another path", async () => {
+    const bridge = loadBridge({ href: "https://app.test/PDFLion/viewer/web/viewer.html?file=x" });
+    await bridge.load();
+    bridge.openDocument();
+    await bridge.run("insertBlankPage");
+    assert.deepEqual(named(bridge.calls, "script"), [
+      ["script", "https://app.test/PDFLion/lib/pdf-lib.min.js"],
+    ]);
   });
 });
 

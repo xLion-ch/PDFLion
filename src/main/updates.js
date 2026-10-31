@@ -26,6 +26,18 @@
  * ignores that switch, so nothing on its command line can redirect them.
  */
 import { app, autoUpdater as squirrel, BrowserWindow, dialog, shell } from "electron";
+import {
+  LATER,
+  RELEASE_NOTES,
+  RESTART_NOW,
+  updateCheckFailed,
+  updateDownloadFailed,
+  updateNotInstallable,
+  updateNotInstalled,
+  updateOnReadOnlyVolume,
+  updateReady,
+  upToDate,
+} from "../shared/wording.js";
 import { getState, setState } from "./state.js";
 import { reviewUnsavedChanges } from "./unsaved.js";
 
@@ -40,12 +52,15 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 const STATE_KEY = "updates";
 
-const RESTART_NOW = "Restart Now";
-const LATER = "Later";
-const RELEASE_NOTES = "Release Notes";
-
-/** Where Check for Updates… is: the app menu on macOS. */
-const CHECK_FOR_UPDATES = isMac ? "PDFLion > Check for Updates…" : "Help > Check for Updates…";
+/**
+ * How this copy updates, for the texts about it: where Check for Updates… is,
+ * in the app menu on macOS, and whether installing asks for a password.
+ * @type {import("../shared/wording.js").UpdateHost}
+ */
+const HOST = {
+  checkForUpdates: isMac ? "PDFLion > Check for Updates…" : "Help > Check for Updates…",
+  needsPassword: isLinux,
+};
 
 /**
  * Squirrel.Mac's error for an app it can't replace: on a disk image, or in
@@ -150,19 +165,11 @@ export async function checkForUpdates() {
     try {
       result = await (await getUpdater()).checkForUpdates();
     } catch {
-      await showMessage({
-        type: "warning",
-        message: "PDFLion couldn’t check for updates.",
-        detail: "Check your internet connection, and try again later.",
-      });
+      await showMessage({ type: "warning", ...updateCheckFailed() });
       return;
     }
     if (!result?.isUpdateAvailable) {
-      await showMessage({
-        type: "info",
-        message: "PDFLion is up to date.",
-        detail: `PDFLion ${app.getVersion()} is the latest version.`,
-      });
+      await showMessage({ type: "info", ...upToDate(app.getVersion()) });
       return;
     }
     const { version } = result.updateInfo;
@@ -175,11 +182,7 @@ export async function checkForUpdates() {
       await showMessage(
         isMac && handedOver === version
           ? squirrelFailed(version, /** @type {Error} */ (error))
-          : {
-              type: "warning",
-              message: `PDFLion ${version} couldn’t be downloaded.`,
-              detail: "Try again later.",
-            },
+          : { type: "warning", ...updateDownloadFailed(version) },
       );
       return;
     }
@@ -306,17 +309,9 @@ function whenSquirrelReady() {
  */
 function squirrelFailed(version, error) {
   if (READ_ONLY_VOLUME.test(String(error?.message))) {
-    return {
-      type: "warning",
-      message: `PDFLion ${version} can’t be installed here.`,
-      detail: `PDFLion can’t update itself while it runs from a disk image or from Downloads. Move it to the Applications folder, open it from there, and choose ${CHECK_FOR_UPDATES} again.`,
-    };
+    return { type: "warning", ...updateOnReadOnlyVolume(version, HOST) };
   }
-  return {
-    type: "warning",
-    message: `PDFLion ${version} can’t be installed.`,
-    detail: "Download it from PDFLion’s releases on GitHub instead.",
-  };
+  return { type: "warning", ...updateNotInstallable(version) };
 }
 
 /**
@@ -333,10 +328,7 @@ async function offer(version) {
     do {
       const { response } = await showMessage({
         type: "info",
-        message: `PDFLion ${version} is ready to install.`,
-        detail: isLinux
-          ? `Installing it asks for an administrator’s password. ${CHECK_FOR_UPDATES} offers it again later.`
-          : "It installs when PDFLion quits.",
+        ...updateReady(version, HOST),
         buttons: BUTTONS,
         defaultId: BUTTONS.indexOf(RESTART_NOW),
         cancelId: BUTTONS.indexOf(LATER),
@@ -374,13 +366,7 @@ async function restart(version) {
   }
   if (await install()) return;
   restarting = false;
-  await showMessage({
-    type: "warning",
-    message: `PDFLion ${version} wasn’t installed.`,
-    detail: isLinux
-      ? `Installing it needs an administrator’s password. ${CHECK_FOR_UPDATES} offers it again.`
-      : `${CHECK_FOR_UPDATES} offers it again.`,
-  });
+  await showMessage({ type: "warning", ...updateNotInstalled(version, HOST) });
   // On Windows and Linux, the save prompts may have closed every window.
   if (!isMac && BrowserWindow.getAllWindows().length === 0) app.quit();
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { answerRange } from "../../src/main/ranges.js";
+import { answerRange } from "../../src/shared/ranges.js";
 
 describe("answerRange", () => {
   it("sends the whole file without a Range header", () => {

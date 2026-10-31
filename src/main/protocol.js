@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
 import * as documents from "./documents.js";
 import { pdfLibRoot, pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
-import { answerRange } from "./ranges.js";
+import { answerRange } from "../shared/ranges.js";
 import { SCHEME, docToken, resolveUrl } from "./routes.js";
 
 /** Read size for documents. Larger than Node's 64 KiB, for fewer, bigger chunks to the viewer. */

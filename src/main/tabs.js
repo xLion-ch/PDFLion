@@ -10,12 +10,12 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { app, BrowserWindow, WebContentsView, shell } from "electron";
-import { blankPdf, paperSize } from "./blank.js";
+import { blankPdf, paperSize } from "../shared/blank.js";
 import * as documents from "./documents.js";
 import { preloadPath } from "./paths.js";
 import { addRecentDocument } from "./recent.js";
 import { isViewerUrl, viewerUrl } from "./routes.js";
-import { TabList } from "./tablist.js";
+import { TabList } from "../shared/tablist.js";
 
 const isMac = process.platform === "darwin";
 

@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { answerRange } from "../src/main/ranges.js";
+import { answerRange } from "../src/shared/ranges.js";
 import { resolveInside } from "../src/main/routes.js";
 
 const USAGE = `Usage:

@@ -35,6 +35,9 @@
  * @cantoo/pdf-lib, which protocol.js serves at /lib/ and this script loads the
  * first time it's needed. It changes a document as an incremental update,
  * after its bytes.
+ *
+ * It works out /lib/ and /doc/ from where the viewer is, at /viewer/web/, so
+ * that it works below another path than the origin's root too.
  */
 "use strict";
 
@@ -67,7 +70,10 @@
   const PEN_ERASER_BUTTON = 5;
 
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
-  const PDF_LIB_URL = "/lib/pdf-lib.min.js";
+  const PDF_LIB_URL = new URL("../../lib/pdf-lib.min.js", location.href).href;
+
+  /** Where main serves opened documents: `/doc/<token>/<name>`. */
+  const DOCUMENTS_PATH = new URL("../../doc/", location.href).pathname;
 
   /**
    * How far a press on a thumbnail moves before pdf.js drags the page:
@@ -179,8 +185,11 @@
   const SAVE_FAVOURITE = "Save as Favourite";
   const FAVOURITE_NOTE_TIME = 2000;
 
-  /** Whether shortcuts use ⌘, as on macOS, rather than Ctrl, as on Windows. */
-  const isMac = window.pdflion.platform === "darwin";
+  /**
+   * Whether shortcuts use ⌘, as on macOS and iPad keyboards, rather than
+   * Ctrl, as on Windows and Linux, whose menus also have F4.
+   */
+  const usesCommandKey = window.pdflion.commandKey === "meta";
 
   /**
    * Whether the document has changes since it was opened or last saved, as
@@ -330,7 +339,7 @@
 
   /**
    * @typedef {object} Favourite a drawing tool with its settings, as main
-   *   keeps them for every tab (src/main/tools.js)
+   *   keeps them for every tab (src/shared/tools.js)
    * @property {"highlight" | "freetext" | "ink"} tool pdf.js's name for it
    * @property {string} color `#rrggbb`, in lower case
    * @property {number} [thickness] for highlight and ink
@@ -508,7 +517,7 @@
   function isDocumentUrl(url) {
     if (typeof url !== "string") return false;
     const parsed = URL.parse(url, location.href);
-    return parsed?.origin === location.origin && parsed.pathname.startsWith("/doc/");
+    return parsed?.origin === location.origin && parsed.pathname.startsWith(DOCUMENTS_PATH);
   }
 
   /**
@@ -600,8 +609,8 @@
    * @returns {boolean}
    */
   function isMenuShortcut({ key, metaKey, ctrlKey, altKey, shiftKey }) {
-    if (key === "F4") return !isMac && !metaKey && !ctrlKey && !altKey && !shiftKey;
-    const [commandKey, otherKey] = isMac ? [metaKey, ctrlKey] : [ctrlKey, metaKey];
+    if (key === "F4") return !usesCommandKey && !metaKey && !ctrlKey && !altKey && !shiftKey;
+    const [commandKey, otherKey] = usesCommandKey ? [metaKey, ctrlKey] : [ctrlKey, metaKey];
     if (!commandKey || otherKey || altKey) return false;
     switch (key.toLowerCase()) {
       case "o":

@@ -9,7 +9,7 @@ import {
   parseToolSettings,
   readToolSettings,
   removeFavourite,
-} from "../../src/main/tools.js";
+} from "../../src/shared/tools.js";
 
 const pencil = { tool: "ink", color: "#1e66f5", thickness: 1, opacity: 1 };
 const text = { tool: "freetext", color: "#000000", size: 10 };
@@ -152,11 +152,18 @@ describe("tools parseFavourites", () => {
 });
 
 describe("tools parseToolSettings", () => {
-  it("takes the eraser's settings, the favourites, or both", () => {
+  it("takes the eraser's settings, pen-only drawing, the favourites, or several", () => {
     const eraser = { mode: "line", size: 20 };
     assert.deepEqual(parseToolSettings({ eraser }), { eraser });
+    assert.deepEqual(parseToolSettings({ penOnly: true }), { penOnly: true });
+    assert.deepEqual(parseToolSettings({ penOnly: false }), { penOnly: false });
     assert.deepEqual(parseToolSettings({ favourites: [text] }), { favourites: [text] });
     assert.deepEqual(parseToolSettings({ eraser, favourites: [] }), { eraser, favourites: [] });
+    assert.deepEqual(parseToolSettings({ eraser, penOnly: true, favourites: [] }), {
+      eraser,
+      penOnly: true,
+      favourites: [],
+    });
   });
 
   it("drops repeated favourites", () => {
@@ -167,6 +174,8 @@ describe("tools parseToolSettings", () => {
     ["nothing to change", {}],
     ["anything else", { eraser: DEFAULT_ERASER, theme: "dark" }],
     ["a wrong eraser", { eraser: { mode: "line", size: 100 } }],
+    ["pen-only drawing that isn't true or false", { penOnly: "yes" }],
+    ["a missing pen-only setting", { penOnly: undefined }],
     ["a wrong favourite", { eraser: DEFAULT_ERASER, favourites: [{ ...pencil, opacity: 2 }] }],
     ["too many favourites", { favourites: pencils(MAX_FAVOURITES + 1) }],
     ["a missing eraser", { eraser: undefined }],
@@ -182,17 +191,32 @@ describe("tools parseToolSettings", () => {
 describe("tools readToolSettings", () => {
   it("reads what state.json holds", () => {
     const eraser = { mode: "line", size: 30 };
-    assert.deepEqual(readToolSettings({ eraser }, [pencil, highlight]), {
+    assert.deepEqual(readToolSettings({ eraser, penOnly: true }, [pencil, highlight]), {
       eraser,
+      penOnly: true,
       favourites: [pencil, highlight],
     });
   });
 
-  it("starts with the default eraser and no favourites", () => {
+  it("starts with the default eraser, pen-only drawing off, and no favourites", () => {
     const settings = readToolSettings(undefined, undefined);
-    assert.deepEqual(settings, { eraser: { mode: "object", size: 10 }, favourites: [] });
+    assert.deepEqual(settings, {
+      eraser: { mode: "object", size: 10 },
+      penOnly: false,
+      favourites: [],
+    });
     // A copy, which the caller may change.
     assert.notEqual(settings.eraser, DEFAULT_ERASER);
+  });
+
+  it("reads earlier versions' settings, which had no pen-only drawing", () => {
+    assert.equal(readToolSettings({ eraser: DEFAULT_ERASER }, []).penOnly, false);
+  });
+
+  it("turns pen-only drawing on only for true", () => {
+    for (const penOnly of [1, "true", null, {}]) {
+      assert.equal(readToolSettings({ penOnly }, []).penOnly, false, String(penOnly));
+    }
   });
 
   it("falls back to the default eraser for a wrong one", () => {

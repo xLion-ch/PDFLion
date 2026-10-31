@@ -8,7 +8,8 @@
  */
 import path from "node:path";
 import { ipcMain } from "electron";
-import { isPageDialog, showPageDialog } from "./pages.js";
+import { isPageDialog } from "../shared/wording.js";
+import { showPageDialog } from "./pages.js";
 import { isViewerUrl } from "./routes.js";
 import { saveDocument, saveDocumentAs } from "./saving.js";
 import * as tabs from "./tabs.js";

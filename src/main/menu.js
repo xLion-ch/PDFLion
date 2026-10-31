@@ -17,7 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, Menu, shell } from "electron";
-import { creditsText } from "./credits.js";
+import { creditsText } from "../shared/credits.js";
 import { runCommand } from "./ipc.js";
 import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
 import { clearRecentDocuments, onRecentDocumentsChange, recentDocuments } from "./recent.js";

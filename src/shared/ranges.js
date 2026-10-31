@@ -1,7 +1,9 @@
 /**
  * Byte-range requests (RFC 9110, section 14) for `pdflion://app/doc/`, which
- * bridge.js uses to load big documents a part at a time.
- * Kept free of Electron imports so the unit tests can run it under plain Node.
+ * bridge.js uses to load big documents a part at a time, and for
+ * scripts/serve-web.js.
+ * Free of Electron and Node, in src/shared/, so that the web app can use it
+ * too, and unit tests under plain Node.
  */
 
 /**

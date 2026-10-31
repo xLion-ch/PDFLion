@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { A4, LETTER, blankPdf, paperSize } from "../../src/main/blank.js";
+import { A4, LETTER, blankPdf, paperSize } from "../../src/shared/blank.js";
 
 /** @param {Uint8Array} bytes */
 const text = (bytes) => new TextDecoder("latin1").decode(bytes);

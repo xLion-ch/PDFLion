@@ -41,27 +41,29 @@ src/main/        main process: one module per concern
   arguments.js   files from the command line and from a second instance (Electron-free, unit tested)
   protocol.js    pdflion:// scheme handler
   routes.js      pdflion:// URL layout: viewer URLs, /doc/ tokens, mount paths (Electron-free)
-  ranges.js      Range headers for /doc/ (Electron-free, unit tested)
   documents.js   tokens for opened files and untitled documents, atomic writes (Electron-free, unit tested)
-  blank.js       File > New's blank PDF and its paper size by region (Electron-free, unit tested)
   saving.js      Save and Save As: dialogs and error alerts
-  pages.js       the alerts and prompts about changing pages (pdflion:page-dialog)
+  pages.js       shows the alerts and prompts about changing pages (pdflion:page-dialog)
   unsaved.js     save prompts when a tab or window closes, the app quits, an update installs, or the system shuts down
   windows.js     document windows: placement, which is in front, opening documents as tabs, the Open panel
   tabs.js        one tab per document: its WebContentsView, edited state, navigation guards, the window's layout and title
-  tablist.js     each window's tabs and its active tab (Electron-free, unit tested)
   strip.js       the tab strip's messages, its context menu, dragging tabs between windows
   placement.js   where a new window opens (Electron-free, unit tested)
   state.js       userData/state.json
-  tools.js       checks the tool settings PDFLion keeps: the eraser's, and favourites (Electron-free, unit tested)
   toolsettings.js  keeps the tool settings for every tab: their IPC channels, and a favourite's context menu
   recent.js      recent documents, and PDFLion's own list for Open Recent on Windows and Linux
   updates.js     updates through electron-updater: the checks, the prompts and Restart Now
   ipc.js         the viewer's IPC handlers, runCommand() to a tab's bridge.js
   permissions.js web permission handlers
   menu.js        native menu and the About panel
-  credits.js     the third-party projects the About panel lists (Electron-free, unit tested)
   paths.js       the only place that knows dev vs packaged locations
+src/shared/      free of Electron and Node, for main and a web app alike, unit tested
+  ranges.js      Range headers for /doc/
+  blank.js       File > New's blank PDF and its paper size by region
+  tablist.js     each window's tabs and its active tab
+  tools.js       checks the tool settings PDFLion keeps: the eraser's, pen-only drawing, and favourites
+  credits.js     the third-party projects the About panel lists
+  wording.js     what PDFLion's alerts and prompts say: changing pages, saving, opening, updating
 src/preload/     preload.cjs (window.pdflion, for the viewer), tabs.cjs (window.pdflionTabs, for the strip)
 src/tabs/        the tab strip, served at pdflion://app/tabs/
 src/viewer/      bridge.js, geometry.js (unit tested), overrides.css, icons/, served at pdflion://app/pdflion/
@@ -128,6 +130,7 @@ Everything a window loads comes from the privileged scheme `pdflion://app/` (sta
 - A window is a `BrowserWindow` whose page is the tab strip. Each tab is a `WebContentsView` that loads `viewer/web/viewer.html?file=/doc/<token>/<name>.pdf`, below the strip, or over the whole window with one tab or in full screen. Moving a tab to another window moves its view, unsaved changes included. Main keys documents, edited state and commands by tab, not by window.
 - The document must be same-origin: the generic viewer rejects a `file=` from another origin.
 - `bridge.js` is a classic script, so its `webviewerloaded` listener is in place before the viewer's modules initialise. It sets `defaultUrl` to `""`, so pdf.js's demo PDF never opens.
+- `bridge.js` works out `/lib/` and `/doc/` from the viewer's own URL, `../../lib/` and `../../doc/`, so that it works below another path than the origin's root too. `overrides.css` names its icons from the root (`/pdflion/icons/`).
 - pdf.js makes range requests only for http(s), so `bridge.js` opens `/doc/` through a `PDFDataRangeTransport`, with `If-Match`, so that a changed file gets 412.
 - The handler resolves every path against its root, and answers 404 for anything that escapes it.
 - An untitled document from File > New lives in main's memory until its first save. Save on it always means Save As (`runCommand()` sends `saveAs`, also for the save prompts' Save), which turns its token into a file token.
@@ -142,7 +145,7 @@ pdf.js's page tools are on (`enableSplitMerge`, `enableMerge`): in the sidebar's
 - Insert Blank Page and the overview's Rotate Pages go through @cantoo/pdf-lib, as incremental updates appended to `currentBytes()` (`forIncrementalUpdate`, `updateMetadata: false`), so the original bytes, metadata, page labels and signed revisions stay as they were. `reopen()` shows the result in the same tab, with its view, sidebar and overview, and `viewOnLoad` set to `INITIAL`, since the fingerprint stays the same. If the library or pdf.js fails, the tab gets its bytes back, with an alert. One busy flag covers Save and every page change.
 - Documents with a password, even an owner password only, and pure XFA forms are locked against page changes, since the library's increments to encrypted files aren't reliable. `guardPageTools()` captures the page tools' events before pdf.js's listeners, and `pdflionPagesLocked` on `#outerContainer` hides the tools. A signed document asks once per tab before its first change (`confirmPageChange()`). A drag can't be replayed, so it asks once the press has moved far enough to start one.
 - A save that writes a new file through `extractPages()` first asks whether to drop what the document holds and the new file won't (`confirmRewrite()`, with what `findDroppable()` found), once per item and tab. An insertion or rotation after unsaved page changes starts from the new file `currentBytes()` writes, which `newFile` tracks until the next save.
-- Every word of the page dialogs is in `pages.js`, which the page asks through `pdflion:page-dialog`.
+- Every word of the page dialogs is in `src/shared/wording.js`, which the page asks for by reason through `pdflion:page-dialog`, and `pages.js` shows.
 
 The page overview (View > Page Overview) is pdf.js's views manager on its thumbnails, made a grid by `overrides.css` while `#outerContainer` has `pdflionPageOverview`. Its header gets Rotate Pages Left and Right, and Insert Blank Page, before Add file.
 
@@ -186,7 +189,7 @@ The toolbar's width depends on the language, the page count, the favourites and 
 - Items that act on the document come from `commandItem()` in `menu.js`. A click calls `runCommand(tab, command)` (`ipc.js`), which sends the command to the tab's `bridge.js`, where `COMMANDS` maps it to pdf.js. A new command needs all three, and an end-to-end test.
 - Items that act on tabs come from `tabItem()`, and run in main: in the Window menu on macOS, at the end of View on Windows and Linux.
 - PDFLion's own shortcuts follow Preview: Page Overview ⌥⌘6, its Contact Sheet, Insert Blank Page ⇧⌘N and Eraser ⇧⌘E. On Windows and Linux they're Ctrl+Shift+O, since Ctrl+Alt+6 is AltGr+6, Ctrl+Shift+N and Ctrl+Shift+E.
-- The page sees keys before the native menu. `isMenuShortcut` in `bridge.js` keeps pdf.js from acting on the shortcuts it shares with the menu, so a new shortcut that pdf.js also binds needs adding there. pdf.js binds none of the tab shortcuts, nor PDFLion's own above.
+- The page sees keys before the native menu. `isMenuShortcut` in `bridge.js` keeps pdf.js from acting on the shortcuts it shares with the menu, so a new shortcut that pdf.js also binds needs adding there. It takes ⌘ or Ctrl as the preload's `commandKey` says (`meta` on macOS), and F4 with Ctrl. pdf.js binds none of the tab shortcuts, nor PDFLion's own above.
 - Edit > Undo and Redo aren't roles, whose undo reaches editable text only. `undoItem()` asks `bridge.js` first, which dispatches pdf.js's `editingaction` while a drawing tool is on and no text is being typed. Otherwise main calls `webContents.undo()` or `redo()`.
 - A click on the native menu gives the page no user activation, so `runCommand()` grants it for `COMMANDS_NEEDING_ACTIVATION`, such as Presentation Mode's `requestFullscreen()`.
 - Labels mark access keys with `&`, as in `&File`, which macOS drops. A literal `&` is `&&`.
@@ -209,7 +212,7 @@ The packaged app updates from the GitHub releases, through electron-updater (`up
 - Every window and tab view uses `contextIsolation: true`, `sandbox: true` and `nodeIntegration: false`, and `app.enableSandbox()` sandboxes every renderer.
 - The preloads expose small APIs through `contextBridge`, never `ipcRenderer`: `window.pdflion` only on the viewer page, and `window.pdflionTabs` only on the tab strip, since a preload runs in every page its `webContents` shows.
 - Main validates the sender and the payload of every IPC message. The sender must be the top frame, with the viewer's URL (`ipc.js`) or, for the strip's channels, the strip's (`strip.js`). A strip message must also come from a window's own `webContents`, with tab ids of that window and indexes in range. Don't compare origins instead, as Electron's checklist suggests: an `about:blank` page the viewer opens has its origin, and the strip shares it too.
-- The tool settings' channels (`toolsettings.js`) take only what `tools.js` accepts, rebuilt from known fields, so nothing else reaches `state.json`. `pdflion:page-dialog` takes only a reason and items from `pages.js`'s fixed lists.
+- The tool settings' channels (`toolsettings.js`) take only what `tools.js` accepts, rebuilt from known fields, so nothing else reaches `state.json`. `pdflion:page-dialog` takes only a reason and items from `wording.js`'s fixed lists (`isPageDialog()`).
 - Tab ids are random and unrelated to document tokens, since drags carry them out of the app. Main takes a dropped tab only after a strip reported dragging it.
 - Tabs can't navigate away from `pdflion://app/viewer/`, and the strip can't navigate at all. Only `http`, `https` and `mailto` links open, with `shell.openExternal`, and every other `window.open` is denied.
 - `viewer.html` gets a CSP without `unsafe-eval`, with `wasm-unsafe-eval` for pdf.js's image decoders.
@@ -238,7 +241,7 @@ Against Electron's [security checklist](https://www.electronjs.org/docs/latest/t
 
 ## Tests
 
-- `npm test` runs `node --test "test/unit/**/*.test.js"`, quoted so that Node expands the glob. Modules that unit tests import stay free of Electron.
+- `npm test` runs `node --test "test/unit/**/*.test.js"`, quoted so that Node expands the glob. Modules that unit tests import stay free of Electron, and those in `src/shared/` of Node too.
 - `bridge.test.js` runs `bridge.js` in `node:vm`, after `geometry.js`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge uses something new from the page, add it to the stand-ins. The test also checks that the bridge knows every `commandItem()` command in `menu.js`. `geometry.js` answers `Float32Array`s from its own realm, so its tests compare them as arrays.
 - The end-to-end tests drive the dev app with Playwright, each launch with its own `--user-data-dir`. `pdfs.js` writes the test PDFs, and the few that would be hard to write come from the pdf.js submodule. The suite is the safety net for pdf.js updates, so it must cover every bridge command.
 - Playwright lists each tab's viewer and each window's strip as pages. The helpers in `pdflion.js` find a document's page by its URL (`documentPage`), and a page's strip by its window (`stripOf`). A tab that isn't shown doesn't render, so tests open tabs one at a time. `setSize()` and `setWidth()` wait until the page has laid itself out.
@@ -287,6 +290,7 @@ These were settled on purpose. Change them only on purpose.
 
 ## Conventions
 
-- Small modules in `src/main/`, one responsibility each, and no catch-all `utils.js`. Dev-vs-packaged paths live only in `src/main/paths.js`.
-- Every third-party project PDFLion uses goes into `CREDITS` in `src/main/credits.js` and README's Credits, with its link and licence, including what only builds or tests the app, what pdf.js or Electron brings along, and design resources. `credits.test.js` fails when the two list different links.
+- Small modules in `src/main/`, one responsibility each, and no catch-all `utils.js`. Dev-vs-packaged paths live only in `src/main/paths.js`. A module that needs neither Electron nor Node goes into `src/shared/`, and imports nothing outside it.
+- The words of PDFLion's own alerts and prompts are in `src/shared/wording.js`. Main's modules order their buttons for each platform, and show them.
+- Every third-party project PDFLion uses goes into `CREDITS` in `src/shared/credits.js` and README's Credits, with its link and licence, including what only builds or tests the app, what pdf.js or Electron brings along, and design resources. `credits.test.js` fails when the two list different links.
 - Commit messages use the imperative mood and a short subject, e.g. `Add native File menu`.

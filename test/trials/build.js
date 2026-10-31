@@ -9,6 +9,7 @@
  * - `viewer/`: today's viewer, the pdf.js build with PDFLion's overrides.css,
  *   geometry.js and bridge.js, and host.js standing in for window.pdflion
  * - `pdflion/`: src/viewer/
+ * - `lib/`: @cantoo/pdf-lib's browser build, which bridge.js loads from there
  * - `docs/`: PDFs to open, pdf.js's demo and one of large scanned pages
  * - the trial pages, a service worker that keeps all of it for offline use
  *   and serves IndexedDB's bytes with ranges, and a manifest, so the trials
@@ -75,7 +76,12 @@ export function build() {
   }
   fs.writeFileSync(overrides, css.replaceAll("url(/pdflion/icons/", `url(${BASE}pdflion/icons/`));
   copyTree(HERE, OUT, (relative) => !NOT_SERVED.has(relative));
-  fs.copyFileSync(path.join(ROOT, "src", "main", "ranges.js"), path.join(OUT, "ranges.js"));
+  fs.copyFileSync(path.join(ROOT, "src", "shared", "ranges.js"), path.join(OUT, "ranges.js"));
+  fs.mkdirSync(path.join(OUT, "lib"));
+  fs.copyFileSync(
+    path.join(ROOT, "node_modules", "@cantoo", "pdf-lib", "dist", "pdf-lib.min.js"),
+    path.join(OUT, "lib", "pdf-lib.min.js"),
+  );
   fs.copyFileSync(path.join(ROOT, "resources", "icon.png"), path.join(OUT, "icon.png"));
 
   const html = fs.readFileSync(viewerHtml, "utf8");
@@ -97,22 +103,22 @@ export function build() {
 
 /**
  * sw.js: the service worker's own code, after answerRange() from
- * src/main/ranges.js, which a classic script can't import, and the list of
+ * src/shared/ranges.js, which a classic script can't import, and the list of
  * files to keep, which changes with every build, so that the browser
  * installs the new one.
  */
 function writeServiceWorker() {
   const files = listFiles(OUT).filter((file) => file !== "sw.js");
   const bytes = files.reduce((sum, file) => sum + fs.statSync(path.join(OUT, file)).size, 0);
-  const ranges = fs.readFileSync(path.join(ROOT, "src", "main", "ranges.js"), "utf8");
+  const ranges = fs.readFileSync(path.join(ROOT, "src", "shared", "ranges.js"), "utf8");
   if (!/^export function answerRange\(/m.test(ranges)) {
-    throw new Error("src/main/ranges.js no longer exports answerRange()");
+    throw new Error("src/shared/ranges.js no longer exports answerRange()");
   }
   const build = { id: new Date().toISOString(), files: ["./", ...files], bytes };
   fs.writeFileSync(
     path.join(OUT, "sw.js"),
     [
-      "// Built by test/trials/build.js from sw.js, after src/main/ranges.js.",
+      "// Built by test/trials/build.js from sw.js, after src/shared/ranges.js.",
       ranges.replace(/^export function/m, "function"),
       `const BUILD = ${JSON.stringify(build)};`,
       fs.readFileSync(path.join(HERE, "sw.js"), "utf8"),

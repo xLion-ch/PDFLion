@@ -1,7 +1,8 @@
 /**
  * The tabs of each window, in order, and each window's active tab. Tabs and
  * windows are plain ids here: tabs.js keeps what they stand for.
- * Kept free of Electron imports so the unit tests can run it under plain Node.
+ * Free of Electron and Node, in src/shared/, so that the web app can use it
+ * too, and unit tests under plain Node.
  */
 
 /**

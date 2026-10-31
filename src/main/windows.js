@@ -7,6 +7,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BrowserWindow, dialog, screen } from "electron";
+import { openError } from "../shared/wording.js";
 import * as documents from "./documents.js";
 import { tabsPreloadPath } from "./paths.js";
 import { parsePlacement, placeWindow } from "./placement.js";
@@ -35,17 +36,6 @@ const MIN_WIDTH = 560;
  * @type {BrowserWindow[]}
  */
 const windows = [];
-
-/**
- * Phrased like Preview's "couldn't be opened because …" alerts.
- * @type {Record<string, string>}
- */
-const OPEN_ERRORS = {
-  ENOENT: "there is no such file",
-  EACCES: "you don’t have permission to view it",
-  EPERM: "you don’t have permission to view it",
-  EISDIR: "it isn’t a file",
-};
 
 let openPanelShown = false;
 
@@ -306,13 +296,5 @@ async function checkReadable(file) {
  * @param {NodeJS.ErrnoException} error
  */
 async function showOpenError(file, error) {
-  const name = path.basename(file);
-  const reason = error.code && OPEN_ERRORS[error.code];
-  await dialog.showMessageBox({
-    type: "warning",
-    message: reason
-      ? `The file “${name}” couldn’t be opened because ${reason}.`
-      : `The file “${name}” couldn’t be opened.`,
-    detail: reason ? undefined : error.message,
-  });
+  await dialog.showMessageBox({ type: "warning", ...openError(path.basename(file), error) });
 }

@@ -9,7 +9,7 @@
 
 (() => {
   const KEY = "trials.toolSettings";
-  const DEFAULTS = { eraser: { mode: "object", size: 10 }, favourites: [] };
+  const DEFAULTS = { eraser: { mode: "object", size: 10 }, penOnly: false, favourites: [] };
   /** @type {((settings: object) => void)[]} */
   const listeners = [];
 
@@ -37,7 +37,7 @@
 
   window.pdflion = {
     // iPad keyboards use ⌘, as Macs do.
-    platform: "darwin",
+    commandKey: "meta",
     onCommand() {},
     save: async () => null,
     saveAs: async () => null,
