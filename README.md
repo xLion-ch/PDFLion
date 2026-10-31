@@ -95,7 +95,7 @@ npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
-GitHub Actions runs the tests on macOS, Windows and Linux for every pull request into `main`, and every push to `main` that changes more than Markdown files, then builds the installers and keeps them for 14 days, except for pull requests from forks. Builds are numbered `<major>.<minor>.<commits>`, from `package.json` and the commit count, and a pull request's `<version>-pr.<number>`. `node scripts/version.js` prints the version of the commit checked out.
+GitHub Actions runs the tests on macOS, Windows and Linux for every pull request into `main`, and every push to `main` or `dev` that changes more than Markdown files. Except for `dev`, it then builds the installers and keeps them for 14 days, except for pull requests from forks. Builds are numbered `<major>.<minor>.<commits>`, from `package.json` and the commit count, and a pull request's `<version>-pr.<number>`. `node scripts/version.js` prints the version of the commit checked out.
 
 pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. PDFLion adds to it from outside, in `src/viewer/`, and the main process is in `src/main/`. [CLAUDE.md](CLAUDE.md) describes the architecture, the rules and the decisions behind them.
 

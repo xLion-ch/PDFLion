@@ -31,7 +31,7 @@ A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and 
   - [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater), in main (see Updates). `npm ls --omit=dev --all` lists what it brings into `app.asar`.
 - electron-builder: a `.dmg` and a `.zip` per Mac architecture (arm64, x64), an NSIS installer for Windows x64, and a `.deb` for Linux x64. No certificates and no notarization. Mac builds are signed ad hoc (see Packaging).
 - Node 24 LTS (`.nvmrc`). The pdf.js build needs Node `>=22.22.3 || >=24.15.0 || >=26.0`.
-- GitHub Actions (`.github/workflows/ci.yml`) tests and builds on all three platforms, and releases every push to `main`.
+- GitHub Actions (`.github/workflows/ci.yml`) tests and builds on all three platforms, and releases every push to `main`. A push to `dev` runs the tests only, since its installers would have a release's version.
 
 ## Layout
 

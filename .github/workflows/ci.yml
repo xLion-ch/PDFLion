@@ -1,9 +1,12 @@
 # Tests and builds PDFLion on macOS, Windows and Linux, for every pull request
 # into main and every push to main. It keeps the installers for 14 days,
 # except those of a pull request from a fork, and makes every push to main
-# that passed on all three a published GitHub release. A push that changes
-# only Markdown runs nothing, so it makes no release, but a pull request
-# always runs, since a required check that never runs blocks the merge.
+# that passed on all three a published GitHub release. A push to dev, such as
+# a merge into it, runs the tests only: its installers would have a release's
+# version (scripts/version.js), which would keep a copy installed from one
+# from updating to the releases below it. A push that changes only Markdown
+# runs nothing, so it makes no release, but a pull request always runs, since
+# a required check that never runs blocks the merge.
 #
 # Only GitHub's own actions, each pinned to the commit of its release, and
 # the GitHub CLI.
@@ -13,20 +16,20 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, dev]
     paths-ignore: ["**/*.md"]
 
 # Only the release job writes to the repository.
 permissions:
   contents: read
 
-# A new run of a pull request cancels its previous one. Runs on main share one
-# group and never cancel a running one, so a release is never cut short.
-# GitHub drops all but the newest of those waiting, whose release has a higher
-# version and the skipped commits in it.
+# A new run of a pull request, or of dev, cancels its previous one. Runs on
+# main share one group and never cancel a running one, so a release is never
+# cut short. GitHub drops all but the newest of those waiting, whose release
+# has a higher version and the skipped commits in it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # The pdf.js build doesn't depend on the platform, so it's built once, and
@@ -85,6 +88,9 @@ jobs:
     # The same on every platform, since each counts the same commits.
     outputs:
       version: ${{ steps.version.outputs.version }}
+    # Whether the run builds installers: not for a push to dev.
+    env:
+      INSTALLERS: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
     strategy:
       # A failure on one platform doesn't stop the others.
       fail-fast: false
@@ -157,6 +163,7 @@ jobs:
       # A pull request's build is <version>-pr.<number>, which sorts before
       # the release with the same commit count.
       - name: Work out the version
+        if: env.INSTALLERS == 'true'
         id: version
         shell: bash
         env:
@@ -166,6 +173,7 @@ jobs:
       # The update files too, since electron-builder.yml has a publish
       # section, but nothing is published.
       - name: Build the installers
+        if: env.INSTALLERS == 'true'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -177,7 +185,7 @@ jobs:
       # reviewed, under PDFLion's name. Compared by name, since a deleted
       # fork's head.repo is null, and null == false.
       - name: Upload the installers
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: env.INSTALLERS == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: PDFLion-${{ steps.version.outputs.version }}-${{ matrix.platform }}
