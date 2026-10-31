@@ -4,4 +4,4 @@ dist/
 test-results/
 playwright-report/
 test/trials/results.jsonl
-PLAN.md
+local/
