@@ -1,9 +1,10 @@
 /**
  * What PDFLion's own alerts and prompts say: about changing pages, saving,
- * opening and updating. Main shows them as native message boxes, and a web
- * app's shell would show them in the page, so that both say the same. Each
- * platform orders the buttons as its own apps do, so this module only names
- * them, and the caller puts them in order.
+ * opening, updating, Home, and exporting and importing settings. Main shows
+ * them as native message boxes, and a web app's shell would show them in the
+ * page, so that both say the same. Each platform orders the buttons as its
+ * own apps do, so this module only names them, and the caller puts them in
+ * order.
  * PDFLion's own words are in English, like its native menus.
  * Free of Electron and Node, in src/shared/, so that the web app can use it
  * too, and unit tests under plain Node.
@@ -23,6 +24,7 @@ export const RESTART_NOW = "Restart Now";
 export const LATER = "Later";
 export const RELEASE_NOTES = "Release Notes";
 export const REMOVE = "Remove";
+export const IMPORT = "Import";
 
 /**
  * What a save that rewrites the document drops, for `rewrite`, as its detail
@@ -147,11 +149,16 @@ const SAVE_ERRORS = {
  * @param {{ code?: string, message: string }} error
  * @returns {Text}
  */
-export function saveError(name, { code, message }) {
-  return {
-    message: `The document “${name}” could not be saved.`,
-    detail: (code && Object.hasOwn(SAVE_ERRORS, code) && SAVE_ERRORS[code]) || message,
-  };
+export function saveError(name, error) {
+  return { message: `The document “${name}” could not be saved.`, detail: whyNotSaved(error) };
+}
+
+/**
+ * @param {{ code?: string, message: string }} error
+ * @returns {string} why a file wasn't written, or the error's own message
+ */
+function whyNotSaved({ code, message }) {
+  return (code && Object.hasOwn(SAVE_ERRORS, code) && SAVE_ERRORS[code]) || message;
 }
 
 /**
@@ -191,6 +198,79 @@ export function missingRecent(name) {
   return {
     message: openError(name, { code: "ENOENT", message: "" }).message,
     detail: "It may have been moved, renamed or deleted. Do you want to remove it from the recent documents?",
+  };
+}
+
+/**
+ * The settings an import replaces, as its prompt names them.
+ * @type {Record<string, string>}
+ */
+const SETTINGS = { eraser: "eraser", penOnly: "pen", automaticUpdates: "update" };
+
+/**
+ * The prompt before settings are imported, with Import and Cancel.
+ *
+ * @param {string} name the file's
+ * @param {object} changes
+ * @param {string[]} changes.replaced the settings the file has, of `eraser`,
+ *   `penOnly` and `automaticUpdates`
+ * @param {number} changes.added how many of its favourites are new
+ * @returns {Text}
+ */
+export function importSettingsPrompt(name, { replaced, added }) {
+  const settings = new Intl.ListFormat("en").format(replaced.map((setting) => SETTINGS[setting]));
+  const some =
+    added === 1
+      ? "one favourite you don’t have yet is"
+      : `${added} favourites you don’t have yet are`;
+  const favourites =
+    added === 0 ? "it has no favourites you don’t have yet" : `its ${some} added after yours`;
+  const detail =
+    replaced.length === 0
+      ? `${favourites[0].toUpperCase()}${favourites.slice(1)}.`
+      : `Your ${settings} settings are replaced, and ${favourites}.`;
+  return { message: `Import the settings from “${name}”?`, detail };
+}
+
+/**
+ * @param {string} name the file's
+ * @returns {Text} that a settings file would change nothing
+ */
+export function nothingToImport(name) {
+  return {
+    message: `There’s nothing to import from “${name}”.`,
+    detail: "It has no settings, and no favourites you don’t have yet.",
+  };
+}
+
+/** @type {Record<import("./backup.js").SettingsFileError, string>} */
+const SETTINGS_FILE_ERRORS = {
+  "too-large": "The file is larger than a settings file can be.",
+  "not-settings": "It isn’t a PDFLion settings file.",
+  newer: "They come from a newer version of PDFLion. Update PDFLion, and try again.",
+};
+
+/**
+ * @param {string} name the file's
+ * @param {import("./backup.js").SettingsFileError} error what readSettingsFile() found
+ * @returns {Text}
+ */
+export function settingsFileError(name, error) {
+  return {
+    message: `The settings in “${name}” couldn’t be imported.`,
+    detail: SETTINGS_FILE_ERRORS[error],
+  };
+}
+
+/**
+ * @param {string} name the file's
+ * @param {{ code?: string, message: string }} error
+ * @returns {Text}
+ */
+export function settingsExportError(name, error) {
+  return {
+    message: `The settings couldn’t be exported to “${name}”.`,
+    detail: whyNotSaved(error),
   };
 }
 

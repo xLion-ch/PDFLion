@@ -59,6 +59,7 @@ src/main/        main process: one module per concern
   ipc.js         the viewer's IPC handlers, runCommand() to a tab's bridge.js
   permissions.js web permission handlers
   menu.js        native menu and the About panel
+  settingsfile.js  File > Export Settings… and Import Settings…
   paths.js       the only place that knows dev vs packaged locations
 src/shared/      free of Electron and Node, for main and a web app alike, unit tested
   ranges.js      Range headers for /doc/
@@ -68,6 +69,7 @@ src/shared/      free of Electron and Node, for main and a web app alike, unit t
   credits.js     the third-party projects the About panel lists
   wording.js     what PDFLion's alerts and prompts say: changing pages, saving, opening, updating, Home
   thumbnail.js   checks a thumbnail by its PNG header, without decoding it
+  backup.js      the settings file that Export Settings… writes and Import Settings… reads
 src/preload/     preload.cjs (window.pdflion, for the viewer), tabs.cjs (window.pdflionTabs, for the strip), home.cjs (window.pdflionHome)
 src/tabs/        the tab strip, served at pdflion://app/tabs/
 src/home/        Home, served at pdflion://app/home/
@@ -212,6 +214,7 @@ The toolbar's width depends on the language, the page count, the favourites and 
 - Edit > Undo and Redo aren't roles, whose undo reaches editable text only. `undoItem()` asks `bridge.js` first, which dispatches pdf.js's `editingaction` while a drawing tool is on and no text is being typed. Otherwise main calls `webContents.undo()` or `redo()`.
 - A click on the native menu gives the page no user activation, so `runCommand()` grants it for `COMMANDS_NEEDING_ACTIVATION`, such as Presentation Mode's `requestFullscreen()`.
 - Labels mark access keys with `&`, as in `&File`, which macOS drops. A literal `&` is `&&`.
+- File > Export Settings… and Import Settings… (`settingsfile.js`) work without a window, like New. A settings file (`backup.js`) holds the eraser's settings, pen-only drawing, the favourites and automatic updates. Importing asks first, replaces the settings the file has, and adds its favourites that aren't there yet (`addFavourites()`).
 
 ## Updates
 
@@ -236,6 +239,7 @@ The packaged app updates from the GitHub releases, through electron-updater (`up
 - Tabs can't navigate away from `pdflion://app/viewer/`, home tabs not from Home, and the strip can't navigate at all. Only `http`, `https` and `mailto` links open, with `shell.openExternal`, and every other `window.open` is denied.
 - `viewer.html` gets a CSP without `unsafe-eval`, with `wasm-unsafe-eval` for pdf.js's image decoders. `tabs.html` and `home.html` get only their own scripts, styles and images.
 - `pdflion:thumbnail` takes only a PNG of at most 512 × 512 pixels and 256 KiB, by its header, from a document with a file on the recent list, and main never decodes it.
+- Import Settings… reads at most 1 MiB of the chosen file, and only a settings file, never a ZIP. `readSettingsFile()` rebuilds every part through `tools.js`'s checks and drops the rest, so nothing else reaches `state.json`.
 - @cantoo/pdf-lib parses untrusted documents, so it runs only in the sandboxed viewer, never in main.
 - Permissions are denied, except `fullscreen` and `clipboard-sanitized-write` for the viewer (`permissions.js`).
 - The updater's requests to GitHub, over HTTPS, are PDFLion's only network requests of its own. Releases aren't signed, and only the SHA-512 in the same release checks a download: `NsisUpdater` checks no Authenticode signature without a `publisherName`, and Squirrel's check of the designated requirement proves nothing, since any app can claim the bundle ID. So whoever can publish a release can run code on every installed copy, and the workflow's permissions and the ruleset on `main` guard that. Release text is never shown.
@@ -280,6 +284,7 @@ These were settled on purpose. Change them only on purpose.
 - One build per Mac architecture, half the size of a universal build. Windows x64 only, which Windows on Arm runs emulated. On Linux only a `.deb` for x64, for Ubuntu 22.04 and Linux Mint 21 and later: AppImage would lose the sandbox on Ubuntu 24.04, and Flatpak and Snap bring confinement and stores of their own.
 - File > New makes an untitled document in memory with one blank page: US Letter in the regions CLDR lists for it, A4 everywhere else and where the region is unknown. It counts as edited only once it changes.
 - Launching without a file shows Home, rather than the Open panel. Home is a tab, which a document opened from it replaces. When a window's last tab closes, the window closes, as before: macOS keeps running in the Dock, and Windows and Linux quit.
+- Settings travel as one JSON file, the same on every platform and, later, in a web app: what the user chose, not where windows were or which documents were recent. Importing adds favourites rather than replacing them.
 - PDFLion keeps its own recent list on every platform, since Electron's has no dates and no Linux version, and on Windows fills only once PDFs are associated with PDFLion. The thumbnails are first pages the viewer renders, which main never decodes.
 - No code signing and no notarization. Every push to `main` that passes CI on all three platforms is a release, so `main` takes only changes whose CI passed, after the checks by hand.
 - Installed copies update themselves: in the background, installing on quit on macOS and Windows, and only with Restart Now on Linux, where installing asks for a password. Automatic checks are on until turned off. On macOS that rests on the bundle ID as the designated requirement rather than a Developer ID, and a copy downloaded from GitHub and allowed with Open Anyway updates too, with no further prompt (checked on macOS 27).

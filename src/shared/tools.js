@@ -160,6 +160,20 @@ export function readToolSettings(toolSettings, favourites) {
 }
 
 /**
+ * Adds favourites after those there are, leaving out the ones that are there
+ * already, and keeping MAX_FAVOURITES at most.
+ *
+ * @param {Favourite[]} favourites as readToolSettings() gives them
+ * @param {Favourite[]} more as parseFavourite() makes them
+ * @returns {{ favourites: Favourite[], added: number }} all of them, and how
+ *   many of `more` are new
+ */
+export function addFavourites(favourites, more) {
+  const all = withoutRepeats([...favourites, ...more]).slice(0, MAX_FAVOURITES);
+  return { favourites: all, added: Math.max(0, all.length - favourites.length) };
+}
+
+/**
  * @param {Favourite[]} favourites
  * @param {Favourite} favourite
  * @returns {Favourite[]} the favourites without `favourite`

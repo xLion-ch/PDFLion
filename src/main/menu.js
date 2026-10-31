@@ -21,6 +21,7 @@ import { creditsText } from "../shared/credits.js";
 import { runCommand } from "./ipc.js";
 import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
 import { clearRecentDocuments, menuDocuments, onRecentDocumentsChange } from "./recent.js";
+import { exportSettings, importSettings } from "./settingsfile.js";
 import * as tabs from "./tabs.js";
 import { closeTab } from "./unsaved.js";
 import { automaticChecks, checkForUpdates, hasUpdater, setAutomaticChecks } from "./updates.js";
@@ -157,6 +158,11 @@ function template() {
         commandItem("Save &As…", "saveAs", "Shift+CmdOrCtrl+S"),
         { type: "separator" },
         commandItem("&Print…", "print", "CmdOrCtrl+P"),
+        { type: "separator" },
+        // The tool settings and favourites, to take to another computer. They
+        // work without a window, like New.
+        { id: "exportSettings", label: "&Export Settings…", click: () => exportSettings() },
+        { id: "importSettings", label: "&Import Settings…", click: () => importSettings() },
         // Exit, which has no shortcut on Windows: Alt+F4 closes the window,
         // and closing the last one quits. Linux apps have Quit, with the
         // role's Ctrl+Q.

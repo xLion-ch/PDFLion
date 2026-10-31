@@ -23,13 +23,13 @@ import {
 export function handleToolSettings() {
   ipcMain.handle("pdflion:get-tool-settings", (event) => {
     if (!tabs.fromWebContents(event.sender) || !fromViewer(event)) return null;
-    return toolSettings();
+    return currentToolSettings();
   });
 
   ipcMain.on("pdflion:set-tool-settings", (event, settings) => {
     const changes = parseToolSettings(settings);
     if (!tabs.fromWebContents(event.sender) || !fromViewer(event) || !changes) return;
-    update(changes);
+    updateToolSettings(changes);
   });
 
   ipcMain.on("pdflion:favourite-menu", (event, value) => {
@@ -41,32 +41,37 @@ export function handleToolSettings() {
     Menu.buildFromTemplate([
       {
         label: "Remove Favourite",
-        click: () => update({ favourites: removeFavourite(toolSettings().favourites, favourite) }),
+        click: () =>
+          updateToolSettings({
+            favourites: removeFavourite(currentToolSettings().favourites, favourite),
+          }),
       },
     ]).popup({ window: win });
   });
 }
 
-/** @returns {import("../shared/tools.js").ToolSettings} */
-function toolSettings() {
+/** @returns {import("../shared/tools.js").ToolSettings} the settings every tab shares */
+export function currentToolSettings() {
   return readToolSettings(getState("toolSettings"), getState("favourites"));
 }
 
 /**
- * Stores changed tool settings, and sends every tab all of them.
+ * Stores changed tool settings, from a tab or an import, and sends every tab
+ * all of them.
  *
- * @param {Partial<import("../shared/tools.js").ToolSettings>} changes
+ * @param {Partial<import("../shared/tools.js").ToolSettings>} changes checked
+ *   with tools.js
  */
-function update({ eraser, penOnly, favourites }) {
+export function updateToolSettings({ eraser, penOnly, favourites }) {
   if (eraser || penOnly !== undefined) {
-    const current = toolSettings();
+    const current = currentToolSettings();
     setState("toolSettings", {
       eraser: eraser ?? current.eraser,
       penOnly: penOnly ?? current.penOnly,
     });
   }
   if (favourites) setState("favourites", favourites);
-  const settings = toolSettings();
+  const settings = currentToolSettings();
   for (const tab of tabs.allTabs()) {
     if (!tabs.isHome(tab) && !tab.webContents.isDestroyed()) {
       tab.webContents.send("pdflion:tool-settings-changed", settings);

@@ -46,6 +46,10 @@ PDFLion checks for a new release when it starts and every 6 hours, downloads it 
 
 Check for Updates… and Check for Updates Automatically are in the PDFLion menu on macOS, and in the Help menu on Windows and Linux. A check tells GitHub your computer's IP address, and nothing else. A copy without Check for Updates… is from before updates came in: download the latest release once.
 
+### Moving to another computer
+
+File > Export Settings… saves your favourites, the eraser's and Pencil's settings and whether updates are checked automatically, as `PDFLion Settings.json`. File > Import Settings… on the other computer, on any of the three systems, asks first, then replaces those settings and adds the favourites you don't have there yet. Neither takes your documents or the recent documents along.
+
 ## Shortcuts
 
 | | macOS | Windows | Linux |
@@ -194,6 +198,7 @@ On every platform, and on Linux both on Wayland and on X11:
 - In system languages other than English and German, the toolbar fits as a window narrows a little at a time: its buttons get smaller, then favourites move into the ★ menu, Print into the ⋮ menu, the previous and next page buttons go, and last the zoom menu. Nothing comes back until the window gets wider.
 - Home lists the documents opened, newest first, with their first pages, folders and times, and marks those open in a tab. A card opens its document in Home's place, and Open…, New and a PDF dragged from the file manager do too. The context menu's Show in Finder, Explorer or Files shows the file, and Remove from Recent and Clear take documents off. The arrow keys, Return and Delete (Backspace on macOS) work on the cards, and VoiceOver, Narrator or Orca reads each card's name, folder and time. Home follows the light or dark appearance and high contrast, and fits a window 560 pixels wide.
 - The toolbar's Home button shows the window's home tab, or adds one, and goes in the narrowest windows, where File > Home stays.
+- File > Export Settings… writes the favourites and settings, and File > Import Settings… on another platform asks first, then adds the favourites to every window's toolbar, without repeats. A file that isn't a settings file shows an alert and changes nothing.
 - File > New gives a US Letter page with the region set to the United States or Canada, and an A4 page with Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Closing an edited new document asks about saving, and Save asks where.
 
 ## License

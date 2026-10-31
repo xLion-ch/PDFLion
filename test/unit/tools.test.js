@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  addFavourites,
   DEFAULT_ERASER,
   MAX_FAVOURITES,
   parseEraser,
@@ -251,5 +252,29 @@ describe("tools removeFavourite", () => {
 
   it("leaves the favourites when it isn't one of them", () => {
     assert.deepEqual(removeFavourite([pencil, text], { ...text, size: 11 }), [pencil, text]);
+  });
+});
+
+describe("tools addFavourites", () => {
+  it("adds the new favourites after the others, and says how many", () => {
+    assert.deepEqual(addFavourites([pencil], [text, pencil, highlight]), {
+      favourites: [pencil, text, highlight],
+      added: 2,
+    });
+  });
+
+  it("adds nothing that's there", () => {
+    assert.deepEqual(addFavourites([pencil, text], [text, text]), {
+      favourites: [pencil, text],
+      added: 0,
+    });
+  });
+
+  it(`keeps ${MAX_FAVOURITES} at most`, () => {
+    const full = pencils(MAX_FAVOURITES - 1);
+    assert.deepEqual(addFavourites(full, [text, highlight]), {
+      favourites: [...full, text],
+      added: 1,
+    });
   });
 });

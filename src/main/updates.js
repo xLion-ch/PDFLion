@@ -136,10 +136,13 @@ export function automaticChecks() {
   return stored?.automatic !== false;
 }
 
-/** @param {boolean} automatic */
+/**
+ * @param {boolean} automatic which the menu's checkbox or an import of
+ *   settings sets, also where PDFLion doesn't update itself
+ */
 export function setAutomaticChecks(automatic) {
   setState(STATE_KEY, { automatic });
-  scheduleChecks();
+  if (hasUpdater) scheduleChecks();
 }
 
 /**

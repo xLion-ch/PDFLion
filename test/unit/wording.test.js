@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  importSettingsPrompt,
   isPageDialog,
   missingRecent,
+  nothingToImport,
   openError,
   pageDialog,
   saveError,
   savePrompt,
+  settingsExportError,
+  settingsFileError,
   updateCheckFailed,
   updateDownloadFailed,
   updateNotInstallable,
@@ -139,6 +143,59 @@ describe("wording Home", () => {
       message: "The file “a.pdf” couldn’t be opened because there is no such file.",
       detail:
         "It may have been moved, renamed or deleted. Do you want to remove it from the recent documents?",
+    });
+  });
+});
+
+describe("wording settings", () => {
+  it("says what an import replaces and adds", () => {
+    const name = "PDFLion Settings.json";
+    const all = ["eraser", "penOnly", "automaticUpdates"];
+    assert.deepEqual(
+      importSettingsPrompt(name, { replaced: all, added: 12 }),
+      {
+        message: "Import the settings from “PDFLion Settings.json”?",
+        detail:
+          "Your eraser, pen, and update settings are replaced, and its 12 favourites you don’t have yet are added after yours.",
+      },
+    );
+    assert.equal(
+      importSettingsPrompt(name, { replaced: ["eraser", "penOnly"], added: 1 }).detail,
+      "Your eraser and pen settings are replaced, and its one favourite you don’t have yet is added after yours.",
+    );
+    assert.equal(
+      importSettingsPrompt(name, { replaced: ["eraser"], added: 0 }).detail,
+      "Your eraser settings are replaced, and it has no favourites you don’t have yet.",
+    );
+    assert.equal(
+      importSettingsPrompt(name, { replaced: [], added: 3 }).detail,
+      "Its 3 favourites you don’t have yet are added after yours.",
+    );
+  });
+
+  it("says when there's nothing to import", () => {
+    assert.deepEqual(nothingToImport("a.json"), {
+      message: "There’s nothing to import from “a.json”.",
+      detail: "It has no settings, and no favourites you don’t have yet.",
+    });
+  });
+
+  it("says why a file couldn't be imported or written", () => {
+    assert.deepEqual(settingsFileError("a.json", "not-settings"), {
+      message: "The settings in “a.json” couldn’t be imported.",
+      detail: "It isn’t a PDFLion settings file.",
+    });
+    assert.equal(
+      settingsFileError("a.json", "newer").detail,
+      "They come from a newer version of PDFLion. Update PDFLion, and try again.",
+    );
+    assert.equal(
+      settingsFileError("a.json", "too-large").detail,
+      "The file is larger than a settings file can be.",
+    );
+    assert.deepEqual(settingsExportError("a.json", { code: "EROFS", message: "" }), {
+      message: "The settings couldn’t be exported to “a.json”.",
+      detail: "The volume is read-only.",
     });
   });
 });
