@@ -9,7 +9,7 @@
  * the page acted on nothing, and clicks the one menu item with that
  * accelerator, as Electron would.
  */
-import { clickMenu, expect, isEdited, tempDir, test, tracemonkey } from "./pdflion.js";
+import { clickMenu, expect, homePage, isEdited, tempDir, test, tracemonkey } from "./pdflion.js";
 
 /** @typedef {import("./pdflion.js").ElectronApplication} ElectronApplication */
 /** @typedef {import("./pdflion.js").Page} Page */
@@ -18,8 +18,18 @@ const isMac = process.platform === "darwin";
 
 /** The shortcuts, as Electron's accelerators. */
 const SHORTCUTS = isMac
-  ? { insertBlankPage: "Shift+Cmd+N", pageOverview: "Alt+Cmd+6", eraser: "Shift+Cmd+E" }
-  : { insertBlankPage: "Shift+Ctrl+N", pageOverview: "Shift+Ctrl+O", eraser: "Shift+Ctrl+E" };
+  ? {
+      insertBlankPage: "Shift+Cmd+N",
+      pageOverview: "Alt+Cmd+6",
+      eraser: "Shift+Cmd+E",
+      home: "Shift+Cmd+H",
+    }
+  : {
+      insertBlankPage: "Shift+Ctrl+N",
+      pageOverview: "Shift+Ctrl+O",
+      eraser: "Shift+Ctrl+E",
+      home: "Shift+Ctrl+H",
+    };
 
 /** sendInputEvent()'s name for each modifier of an accelerator. */
 const MODIFIERS = {
@@ -181,6 +191,12 @@ test("PDFLion's own shortcuts each act once, and pdf.js doesn't act on them", as
     await expect.poll(state).toMatchObject({ erasing: true, tool: 15 });
     expect(await pressShortcut(app, page, SHORTCUTS.eraser)).toBe("eraser");
     await expect.poll(state).toMatchObject({ erasing: false, tool: 0 });
+  });
+
+  // Last, since Home then takes the window.
+  await test.step("Home", async () => {
+    expect(await pressShortcut(app, page, SHORTCUTS.home)).toBe("home");
+    await homePage(app);
   });
 
   // A second blank page would have come by now.

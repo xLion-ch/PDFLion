@@ -114,11 +114,17 @@ class FakeRangeTransport {
  * it uses: window.pdflion from the preload, and pdf.js's PDFViewerApplication.
  *
  * @param {object} [options]
- * @param {string} [options.platform] what the preload reports
+ * @param {string} [options.commandKey] what the preload reports: `meta` or `ctrl`
  * @param {(url: string, init?: RequestInit) => Promise<Response>} [options.fetch]
  * @param {boolean} [options.toolbar] whether the page has pdf.js's toolbar
+ * @param {string} [options.href] the viewer's URL
  */
-function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
+function loadBridge({
+  commandKey = "meta",
+  fetch,
+  toolbar = true,
+  href = "https://app.test/viewer/web/viewer.html?file=x",
+} = {}) {
   /** @type {any[][]} */
   const calls = [];
   const record =
@@ -128,7 +134,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     };
 
   const pdflion = {
-    platform,
+    commandKey,
     /** @type {((command: string) => unknown) | null} */
     handle: null,
     /** @type {boolean[]} */
@@ -258,7 +264,24 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     addEventListener(type, listener) {
       this.listeners[type] = listener;
     }
+    /** A canvas's context, which page.render() draws on. */
+    getContext() {
+      return {};
+    }
+    /**
+     * A canvas's PNG, of as many bytes as `canvas.bytes()` says.
+     * @param {(blob: Blob) => void} callback
+     * @param {string} type
+     */
+    toBlob(callback, type) {
+      calls.push(["toBlob", this.width, this.height, type]);
+      const size = canvas.bytes(this.width, this.height);
+      setImmediate(() => callback(new Blob([new Uint8Array(size)], { type })));
+    }
   }
+
+  /** What a canvas's PNG weighs. */
+  const canvas = { bytes: (/** @type {number} */ _width, /** @type {number} */ _height) => 1000 };
 
   const sidebarButton = Object.assign(new Element("button"), { id: "viewsManagerToggleButton" });
   const separator = Object.assign(new Element("div"), { id: "editorModeSeparator" });
@@ -436,7 +459,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       append(script) {
         calls.push(["script", script.src]);
         setImmediate(() => {
-          if (script.src === "/lib/pdf-lib.min.js") {
+          if (new URL(script.src).pathname.endsWith("/lib/pdf-lib.min.js")) {
             page.PDFLib = pdfLib;
             script.onload();
           } else {
@@ -596,7 +619,15 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
       getPageLayout: async () => held.pageLayout,
       getMarkInfo: async () => held.markInfo,
       getPageLabels: async () => held.pageLabels,
-      getPage: async () => ({}),
+      // A US Letter page, which records what renders it.
+      getPage: async () => ({
+        getViewport: ({ scale }) => ({ width: 612 * scale, height: 792 * scale }),
+        render: (/** @type {any} */ params) => {
+          const { viewport, annotationMode, background } = params;
+          calls.push(["render", viewport.width, annotationMode, background]);
+          return { promise: Promise.resolve() };
+        },
+      }),
       isPureXfa,
       extractPages: async (pageInfos, copyLevels) => {
         calls.push(["extractPages", pageInfos, copyLevels]);
@@ -766,10 +797,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     Event: SyntheticEvent,
     // Node gives custom schemes an opaque origin, where Chromium treats the
     // registered pdflion: scheme as standard. An https origin stands in.
-    location: {
-      href: "https://app.test/viewer/web/viewer.html?file=x",
-      origin: "https://app.test",
-    },
+    location: { href, origin: new URL(href).origin },
     fetch,
     URL,
     AbortController,
@@ -793,6 +821,7 @@ function loadBridge({ platform = "darwin", fetch, toolbar = true } = {}) {
     pdflion,
     app,
     calls,
+    canvas,
     /** Dispatches webviewerloaded and waits for the viewer to "initialise". */
     async load() {
       document.listeners.webviewerloaded();
@@ -1062,7 +1091,7 @@ describe("bridge.js menu shortcuts", () => {
   });
 
   it("keeps pdf.js from the ⌘ shortcuts it shares with the menu on macOS", () => {
-    const bridge = loadBridge({ platform: "darwin" });
+    const bridge = loadBridge({ commandKey: "meta" });
     for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
       assert.ok(bridge.keepsFromPdfjs(press(key, "meta")), `⌘${key}`);
     }
@@ -1070,7 +1099,7 @@ describe("bridge.js menu shortcuts", () => {
   });
 
   it("leaves pdf.js every other key on macOS", () => {
-    const bridge = loadBridge({ platform: "darwin" });
+    const bridge = loadBridge({ commandKey: "meta" });
     for (const [key, modifiers] of [
       ["s", "ctrl"],
       ["s", "meta+shift"],
@@ -1083,32 +1112,27 @@ describe("bridge.js menu shortcuts", () => {
     }
   });
 
-  for (const [platform, name] of [
-    ["win32", "Windows"],
-    ["linux", "Linux"],
-  ]) {
-    it(`keeps pdf.js from the Ctrl shortcuts and F4 on ${name}`, () => {
-      const bridge = loadBridge({ platform });
-      for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
-        assert.ok(bridge.keepsFromPdfjs(press(key, "ctrl")), `Ctrl+${key}`);
-      }
-      assert.ok(bridge.keepsFromPdfjs(press("F", "ctrl+shift")), "Ctrl+Shift+F");
-      assert.ok(bridge.keepsFromPdfjs(press("F4")), "F4");
-    });
+  it("keeps pdf.js from the Ctrl shortcuts and F4 on Windows and Linux", () => {
+    const bridge = loadBridge({ commandKey: "ctrl" });
+    for (const key of ["o", "s", "p", "f", "+", "=", "-", "0"]) {
+      assert.ok(bridge.keepsFromPdfjs(press(key, "ctrl")), `Ctrl+${key}`);
+    }
+    assert.ok(bridge.keepsFromPdfjs(press("F", "ctrl+shift")), "Ctrl+Shift+F");
+    assert.ok(bridge.keepsFromPdfjs(press("F4")), "F4");
+  });
 
-    it(`leaves pdf.js AltGr characters and other keys on ${name}`, () => {
-      const bridge = loadBridge({ platform });
-      for (const [key, modifiers] of [
-        ["s", "ctrl+alt"], // AltGr+S
-        ["s", "meta"],
-        ["F4", "shift"],
-        ["F4", "alt"],
-        ["c", "ctrl"],
-      ]) {
-        assert.ok(!bridge.keepsFromPdfjs(press(key, modifiers)), `${modifiers}+${key}`);
-      }
-    });
-  }
+  it("leaves pdf.js AltGr characters and other keys on Windows and Linux", () => {
+    const bridge = loadBridge({ commandKey: "ctrl" });
+    for (const [key, modifiers] of [
+      ["s", "ctrl+alt"], // AltGr+S
+      ["s", "meta"],
+      ["F4", "shift"],
+      ["F4", "alt"],
+      ["c", "ctrl"],
+    ]) {
+      assert.ok(!bridge.keepsFromPdfjs(press(key, modifiers)), `${modifiers}+${key}`);
+    }
+  });
 });
 
 describe("bridge.js range loading", () => {
@@ -1202,6 +1226,20 @@ describe("bridge.js range loading", () => {
     assert.deepEqual(requests, []);
   });
 
+  it("finds /doc/ next to the viewer, below another path", async () => {
+    const { fetch, requests } = fakeFetch();
+    const bridge = loadBridge({ fetch, href: "https://app.test/PDFLion/viewer/web/viewer.html" });
+    await bridge.load();
+    await bridge.app.open({ url: "/PDFLion/doc/t/a.pdf" });
+    assert.ok(bridge.calls.at(-1)?.[1].range instanceof FakeRangeTransport);
+    assert.equal(requests.length, 1);
+
+    const outside = { url: "/doc/t/a.pdf" };
+    await bridge.app.open(outside);
+    assert.equal(bridge.calls.at(-1)?.[1], outside);
+    assert.equal(requests.length, 1);
+  });
+
   it("leaves a document main can't serve to pdf.js, which reports it", async () => {
     const { fetch } = fakeFetch({ document: () => new Response("Not found", { status: 404 }) });
     const bridge = loadBridge({ fetch });
@@ -1209,6 +1247,150 @@ describe("bridge.js range loading", () => {
     const args = { url: "/doc/t/gone.pdf" };
     await bridge.app.open(args);
     assert.equal(bridge.calls.at(-1)?.[1], args);
+  });
+});
+
+describe("bridge.js Home", () => {
+  /** Lets the thumbnail's render, PNG and bytes come through. */
+  const settleThumbnail = async () => {
+    for (let i = 0; i < 10; i++) await settle();
+  };
+
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @returns {Uint8Array[]} the thumbnails the bridge hands the host
+   */
+  const thumbnails = (bridge) => {
+    /** @type {Uint8Array[]} */
+    const sent = [];
+    bridge.pdflion.setThumbnail = (/** @type {Uint8Array} */ png) => sent.push(png);
+    return sent;
+  };
+
+  it("adds Home left of the sidebar's button, which shows Home", async () => {
+    const bridge = loadBridge();
+    let shown = 0;
+    bridge.pdflion.showHome = () => shown++;
+    await bridge.load();
+    const [home, sidebar, overview] = bridge.toolbar;
+    assert.equal(home.id, "pdflionHomeButton");
+    assert.equal(home.className, "toolbarButton");
+    assert.equal(home.title, "Home");
+    assert.equal(sidebar.id, "viewsManagerToggleButton");
+    assert.equal(overview.id, "pdflionPageOverview");
+    home.listeners.click();
+    assert.equal(shown, 1);
+  });
+
+  it("adds no Home button for a host without Home", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.ok(!bridge.toolbar.some(({ id }) => id === "pdflionHomeButton"));
+  });
+
+  it("hands over the first page as a PNG once the viewer has shown a page", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    await bridge.load();
+    bridge.openDocument();
+    await settleThumbnail();
+    assert.deepEqual(sent, []);
+
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 3 });
+    await settleThumbnail();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].length, 1000);
+    // US Letter, fitting 180 × 240 CSS pixels, with its annotations as they are.
+    assert.deepEqual(named(bridge.calls, "toBlob"), [["toBlob", 180, 233, "image/png"]]);
+    assert.deepEqual(
+      named(bridge.calls, "render").map(([name, width, mode, background]) => [
+        name,
+        Math.round(width),
+        mode,
+        background,
+      ]),
+      [["render", 180, 3, "white"]],
+    );
+
+    // Once per document.
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 4 });
+    await settleThumbnail();
+    assert.equal(sent.length, 1);
+  });
+
+  it("fits 180 × 240 CSS pixels at the screen's pixel ratio, and 512 pixels", async () => {
+    for (const [ratio, size] of [
+      [2, [360, 466]],
+      [3, [396, 512]],
+    ]) {
+      const bridge = loadBridge();
+      bridge.page.devicePixelRatio = ratio;
+      thumbnails(bridge);
+      await bridge.load();
+      bridge.openDocument();
+      bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+      await settleThumbnail();
+      const made = named(bridge.calls, "toBlob");
+      assert.deepEqual(made, [["toBlob", ...size, "image/png"]], `${ratio}x`);
+    }
+  });
+
+  it("renders smaller until the PNG is small enough to keep", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    bridge.canvas.bytes = (width) => (width > 130 ? 300 * 1024 : 2000);
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.deepEqual(
+      named(bridge.calls, "toBlob").map(([, width]) => width),
+      [180, 126],
+    );
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].length, 2000);
+  });
+
+  it("gives up after three tries at a PNG too large to keep", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    bridge.canvas.bytes = () => 300 * 1024;
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.equal(named(bridge.calls, "toBlob").length, 3);
+    assert.deepEqual(sent, []);
+  });
+
+  it("hands over a thumbnail after each save, and none for a page change", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    await bridge.load();
+    const storage = bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.equal(sent.length, 1);
+
+    storage.onSetModified();
+    assert.equal(await bridge.run("save"), true);
+    await settleThumbnail();
+    assert.equal(sent.length, 2);
+
+    // Inserting a page reopens the document, which isn't saved yet.
+    await bridge.run("insertBlankPage");
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.equal(sent.length, 2);
+  });
+
+  it("hands over nothing to a host without thumbnails", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.deepEqual(named(bridge.calls, "render"), []);
   });
 });
 
@@ -1434,7 +1616,19 @@ describe("bridge.js Insert Blank Page", () => {
     bridge.openDocument();
     await bridge.run("insertBlankPage");
     await bridge.run("insertBlankPage");
-    assert.deepEqual(named(bridge.calls, "script"), [["script", "/lib/pdf-lib.min.js"]]);
+    assert.deepEqual(named(bridge.calls, "script"), [
+      ["script", "https://app.test/lib/pdf-lib.min.js"],
+    ]);
+  });
+
+  it("loads @cantoo/pdf-lib from /lib/ next to the viewer, below another path", async () => {
+    const bridge = loadBridge({ href: "https://app.test/PDFLion/viewer/web/viewer.html?file=x" });
+    await bridge.load();
+    bridge.openDocument();
+    await bridge.run("insertBlankPage");
+    assert.deepEqual(named(bridge.calls, "script"), [
+      ["script", "https://app.test/PDFLion/lib/pdf-lib.min.js"],
+    ]);
   });
 });
 
@@ -2005,8 +2199,10 @@ describe("bridge.js eraser", () => {
    * @param {ReturnType<typeof loadBridge>} bridge
    * @param {{ id: string, editorType: string, strokes: number[][] }[]} drawings
    * @param {{ mode: string, size: number }} [eraser]
+   * @param {{ on?: boolean }} [options] on: false leaves the eraser off, and
+   *   pdf.js with no tool on
    */
-  async function erasing(bridge, drawings, eraser = { mode: "object", size: 10 }) {
+  async function erasing(bridge, drawings, eraser = { mode: "object", size: 10 }, { on = true } = {}) {
     await bridge.load();
     const { app, uiManager, viewerContainer, calls } = bridge;
     const pageDiv = {
@@ -2088,23 +2284,36 @@ describe("bridge.js eraser", () => {
 
     app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
     bridge.pdflion.toolSettingsListener?.({ eraser, favourites: [] });
-    eraserOf(bridge).button.listeners.click();
+    if (on) eraserOf(bridge).button.listeners.click();
     /** @type {any} */
     let down;
     return {
       editors,
       commands,
+      pageDiv,
       /**
        * Drags pointer 7 along points in the window, which at 100 % are PDF
        * points from the top. The drag stays down unless `up`.
        *
        * @param {number[][]} points
        * @param {boolean} [up]
+       * @param {{ pointerType?: string, button?: number }} [pointer] the
+       *   press's, a mouse's left button unless given
        */
-      async drag(points, up = true) {
+      async drag(points, up = true, pointer = {}) {
         const [[clientX, clientY], ...moves] = points;
         if (!down) {
-          down = { target: pageDiv, button: 0, pointerId: 7, clientX, clientY, stopped: false, prevented: false };
+          down = {
+            target: pageDiv,
+            pointerType: "mouse",
+            button: 0,
+            ...pointer,
+            pointerId: 7,
+            clientX,
+            clientY,
+            stopped: false,
+            prevented: false,
+          };
           Object.assign(down, {
             stopPropagation: () => (down.stopped = true),
             preventDefault: () => (down.prevented = true),
@@ -2221,6 +2430,96 @@ describe("bridge.js eraser", () => {
     assert.deepEqual(page.ids(), []);
     page.commands[0].undo();
     assert.deepEqual(page.ids(), ["short"]);
+  });
+
+  /** A press with a pen's eraser end, as Pointer Events report it. */
+  const ERASER_END = { pointerType: "pen", button: 5 };
+
+  /** Drawings across and away from a drag down x 200, from y 50 to 150. */
+  const CROSSED_AND_MISSED = [
+    { id: "crossed", editorType: "ink", strokes: [[100, 700, 300, 700]] },
+    { id: "missed", editorType: "ink", strokes: [[100, 500, 300, 500]] },
+  ];
+
+  it("erases with a pen's eraser end too, while it's on", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED);
+    await page.drag([[200, 50], [200, 150]], true, ERASER_END);
+    assert.deepEqual(page.ids(), ["missed"]);
+    assert.equal(page.commands.length, 1);
+  });
+
+  it("erases with a pen's eraser end whatever tool is on, which stays on", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED, undefined, { on: false });
+    switchTool(bridge, 9);
+    const unselected = named(bridge.calls, "ui.unselectAll").length;
+    const [cursor] = bridge.outerContainer.children;
+
+    const down = await page.drag([[200, 50], [200, 150]], false, ERASER_END);
+    assert.ok(down.stopped && down.prevented, "pdf.js gets no press to draw with");
+    // As when the eraser turns on: Pencil's strokes become a drawing first.
+    assert.equal(named(bridge.calls, "ui.unselectAll").length - unselected, 2);
+    assert.equal(cursor.hidden, false, "the circle shows while it erases");
+    await page.drag([[200, 150]]);
+
+    assert.deepEqual(page.ids(), ["missed"]);
+    assert.equal(page.commands.length, 1, "one step to undo, as with the eraser");
+    page.commands[0].undo();
+    assert.deepEqual(page.ids(), ["missed", "crossed"]);
+    assert.equal(mode(bridge), 9);
+    assert.ok(!isErasing(bridge));
+    assert.equal(cursor.hidden, true);
+  });
+
+  it("turns on for a pen's eraser end with no tool on, and erases once ink mode is", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED, undefined, { on: false });
+    // pdf.js switches tools asynchronously, and has the file's drawings as
+    // editors only once its new mode is on.
+    const { app, uiManager } = bridge;
+    const switching = app.eventBus.listeners.find(({ name }) => name === "switchannotationeditormode");
+    assert.ok(switching);
+    switching.listener = ({ mode }) =>
+      setImmediate(() => {
+        app.pdfViewer.annotationEditorMode = mode;
+        app.eventBus.dispatch("annotationeditormodechanged", { mode });
+      });
+    const editorsOnPage = uiManager.getEditors;
+    uiManager.getEditors = function* (/** @type {number} */ pageIndex) {
+      if (mode(bridge) !== 0) yield* editorsOnPage(pageIndex);
+    };
+
+    await page.drag([[200, 50], [200, 150]], true, ERASER_END);
+    assert.ok(isErasing(bridge));
+    assert.equal(mode(bridge), 15);
+    assert.deepEqual(page.ids(), ["missed"]);
+    assert.equal(page.commands.length, 1);
+  });
+
+  it("leaves a pen's tip and other presses to pdf.js while it's off", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED, undefined, { on: false });
+    /** @param {object} pointer */
+    const press = (pointer) => {
+      const down = { target: page.pageDiv, pointerId: 9, clientX: 200, clientY: 50, stopped: false, ...pointer };
+      Object.assign(down, { stopPropagation: () => (down.stopped = true), preventDefault: () => {} });
+      bridge.viewerContainer.listeners.pointerdown(down);
+      return down;
+    };
+    switchTool(bridge, 15);
+    for (const pointer of [
+      { pointerType: "pen", button: 0 },
+      { pointerType: "mouse", button: 0 },
+      { pointerType: "mouse", button: 5 },
+    ]) {
+      assert.ok(!press(pointer).stopped, JSON.stringify(pointer));
+    }
+    // Nor the eraser end while pdf.js's tools don't work.
+    bridge.app.pdfViewer.annotationEditorMode = -1;
+    assert.ok(!press(ERASER_END).stopped);
+    await settleAll();
+    assert.deepEqual(page.ids(), ["crossed", "missed"]);
   });
 
   it("goes nowhere without a document to edit", async () => {

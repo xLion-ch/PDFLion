@@ -1,12 +1,13 @@
 /**
  * App lifecycle and the ways documents come in. On every platform each
- * document gets its own tab, in the frontmost window. On macOS the app keeps
- * running after its last window closes, until the user quits with Cmd+Q. On
- * Windows and Linux it quits with its last window, and a single process shows
- * every document.
+ * document gets its own tab, in the frontmost window, and Home shows when no
+ * document does. On macOS the app keeps running after its last window closes,
+ * until the user quits with Cmd+Q. On Windows and Linux it quits with its last
+ * window, and a single process shows every document.
  */
 import { app, BrowserWindow } from "electron";
 import { commandLineFiles, secondInstanceFiles } from "./arguments.js";
+import { handleHome } from "./home.js";
 import { handleIpc } from "./ipc.js";
 import { installMenu } from "./menu.js";
 import { handlePermissions } from "./permissions.js";
@@ -15,7 +16,7 @@ import { handleStrip } from "./strip.js";
 import { handleToolSettings } from "./toolsettings.js";
 import { guardUnsavedChanges } from "./unsaved.js";
 import { isRestartingForUpdate, startUpdates } from "./updates.js";
-import { openDocument, openDocuments, showOpenPanel } from "./windows.js";
+import { openDocument, openDocuments, showHome } from "./windows.js";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -67,10 +68,11 @@ function start() {
   });
 
   // Windows and Linux, and always after `ready`. Chromium may reorder and add
-  // to the second process's argv, so its files come as additionalData.
+  // to the second process's argv, so its files come as additionalData. A
+  // second launch without files brings the front window forward with Home.
   app.on("second-instance", (_event, _argv, _workingDirectory, data) => {
     const files = secondInstanceFiles(data);
-    if (files.length === 0) showOpenPanel();
+    if (files.length === 0) showHome();
     else openDocuments(files);
   });
 
@@ -85,6 +87,7 @@ function start() {
     handlePermissions();
     handleProtocol();
     handleIpc();
+    handleHome();
     handleStrip();
     handleToolSettings();
     guardUnsavedChanges();
@@ -93,19 +96,15 @@ function start() {
 
     const files = [...openFileQueue, ...launchFiles];
     openFileQueue = null;
-    // Like Preview, a launch without a document shows the Open panel.
-    const opening = files.length === 0 ? showOpenPanel() : openDocuments(files);
-    // Windows and Linux apps have no Dock to wait in. If the launch opened no
-    // window, because the panel was cancelled or no file could be read, quit.
-    if (!isMac) {
-      opening.finally(() => {
-        if (BrowserWindow.getAllWindows().length === 0) app.quit();
-      });
-    }
+    // A launch without a document shows Home, and so does one whose files
+    // couldn't be read, once it has said so.
+    openDocuments(files).finally(() => {
+      if (BrowserWindow.getAllWindows().length === 0) showHome();
+    });
 
     // Clicking the Dock icon with no windows open.
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) showOpenPanel();
+      if (BrowserWindow.getAllWindows().length === 0) showHome();
     });
   });
 }

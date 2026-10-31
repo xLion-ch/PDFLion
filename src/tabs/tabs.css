@@ -101,6 +101,18 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Home's icon, before its name. The tab's own ::before is the separator. */
+.tab.home .name::before {
+  content: "";
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 6px;
+  vertical-align: -3px;
+  background-color: currentColor;
+  mask: url(/pdflion/icons/home.svg) center / contain no-repeat;
+}
+
 /* The close button, or the edited dot in its place until the pointer is over the tab. */
 .close,
 .dot {

@@ -21,8 +21,11 @@ if (
 }
 
 contextBridge.exposeInMainWorld("pdflion", {
-  /** `darwin`, `win32` or `linux`, for the shortcuts that differ between them. */
-  platform: process.platform,
+  /**
+   * The modifier of the menu's shortcuts: `meta`, ⌘, on macOS, and `ctrl` on
+   * Windows and Linux.
+   */
+  commandKey: process.platform === "darwin" ? "meta" : "ctrl",
   /**
    * @param {(command: string) => unknown} callback called for each command
    *   from main. What it returns or resolves to goes back to main.
@@ -63,12 +66,13 @@ contextBridge.exposeInMainWorld("pdflion", {
   pageDialog: (reason, items) => ipcRenderer.invoke("pdflion:page-dialog", reason, items),
   /**
    * @returns {Promise<object | null>} the tool settings every tab shares:
-   *   `{ eraser: { mode, size }, favourites: [{ tool, color, … }] }`
+   *   `{ eraser: { mode, size }, penOnly, favourites: [{ tool, color, … }] }`
    */
   getToolSettings: () => ipcRenderer.invoke("pdflion:get-tool-settings"),
   /**
-   * @param {object} changes `{ eraser }`, `{ favourites }` or both, which main
-   *   checks, stores and sends to every tab, this one too
+   * @param {object} changes `{ eraser }`, `{ penOnly }`, `{ favourites }`, or
+   *   several of them, which main checks, stores and sends to every tab, this
+   *   one too
    */
   setToolSettings: (changes) => ipcRenderer.send("pdflion:set-tool-settings", changes),
   /** @param {(settings: object) => void} callback called with all of them, whenever they change */
@@ -77,6 +81,13 @@ contextBridge.exposeInMainWorld("pdflion", {
   },
   /** @param {object} favourite shows its context menu, with Remove Favourite */
   showFavouriteMenu: (favourite) => ipcRenderer.send("pdflion:favourite-menu", favourite),
+  /** Shows Home in this tab's window: its home tab, or a new one. */
+  showHome: () => ipcRenderer.send("pdflion:show-home"),
+  /**
+   * @param {Uint8Array} png the document's first page, for Home, which main
+   *   keeps if the document has a file
+   */
+  setThumbnail: (png) => ipcRenderer.send("pdflion:thumbnail", png),
 });
 
 /** The drag data type of a tab dragged from a strip, as src/tabs/tabs.js sets it. */

@@ -40,8 +40,14 @@ export const pdfLibRoot = path.join(appPath, "node_modules", "@cantoo", "pdf-lib
 /** `src/tabs/`, the tab strip, served at `pdflion://app/tabs/`. */
 export const tabsRoot = path.join(appPath, "src", "tabs");
 
+/** `src/home/`, the home screen, served at `pdflion://app/home/`. */
+export const homeRoot = path.join(appPath, "src", "home");
+
 /** The sandboxed preload script that exposes `window.pdflion` to the viewer. */
 export const preloadPath = path.join(appPath, "src", "preload", "preload.cjs");
 
 /** The sandboxed preload script that exposes `window.pdflionTabs` to the tab strip. */
 export const tabsPreloadPath = path.join(appPath, "src", "preload", "tabs.cjs");
+
+/** The sandboxed preload script that exposes `window.pdflionHome` to the home screen. */
+export const homePreloadPath = path.join(appPath, "src", "preload", "home.cjs");

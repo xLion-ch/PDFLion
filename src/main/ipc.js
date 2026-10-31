@@ -4,15 +4,16 @@
  * before main acts on it. strip.js handles the tab strip's messages.
  *
  * The channel names are repeated in src/preload/preload.cjs, which can't
- * import this module.
+ * import this module. home.js has the viewer's `pdflion:thumbnail`.
  */
 import path from "node:path";
 import { ipcMain } from "electron";
-import { isPageDialog, showPageDialog } from "./pages.js";
+import { isPageDialog } from "../shared/wording.js";
+import { showPageDialog } from "./pages.js";
 import { isViewerUrl } from "./routes.js";
 import { saveDocument, saveDocumentAs } from "./saving.js";
 import * as tabs from "./tabs.js";
-import { openDocuments } from "./windows.js";
+import { openDocuments, showHome } from "./windows.js";
 
 /** More than anyone drops at once, and few enough to open as tabs. */
 const MAX_DROPPED_FILES = 100;
@@ -69,6 +70,12 @@ export function handleIpc() {
     const tab = tabs.fromWebContents(event.sender);
     if (!tab || !fromViewer(event) || !isPageDialog(reason, items)) return false;
     return showPageDialog(tab, reason, items);
+  });
+
+  // The toolbar's Home button.
+  ipcMain.on("pdflion:show-home", (event) => {
+    const tab = tabs.fromWebContents(event.sender);
+    if (tab && fromViewer(event)) showHome(tabs.windowOf(tab) ?? undefined);
   });
 
   ipcMain.on("pdflion:command-done", (event, id, result) => {

@@ -1,0 +1,312 @@
+/*
+ * Home, in the viewer's Material Design 3 style (src/viewer/overrides.css),
+ * with the colour roles it needs repeated here, as tabs.css does. Colours
+ * apply only outside forced-colors mode, which uses the system's. It lays out
+ * from 320 px wide up.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --card-width: 168px;
+  --md-shape-small: 8px;
+  --md-shape-medium: 12px;
+  --md-shape-full: 9999px;
+  --md-hover: 8%;
+  --md-pressed: 10%;
+}
+
+@media not (forced-colors: active) {
+  :root {
+    /* The viewer's surface-container-low, surface, on-surface and the others. */
+    --background-color: light-dark(#f3f3f3, #1b1b1b);
+    --card-color: light-dark(#f9f9f9, #131313);
+    --preview-color: light-dark(#e2e2e2, #353535);
+    --text-color: light-dark(#1b1b1b, #e2e2e2);
+    --secondary-text-color: light-dark(#474747, #c6c6c6);
+    --outline-color: light-dark(#777777, #919191);
+    --outline-variant-color: light-dark(#c6c6c6, #474747);
+    --primary-color: light-dark(#1b1b1b, #e2e2e2);
+    --on-primary-color: light-dark(#f9f9f9, #1b1b1b);
+    --mark-color: light-dark(#d4d4d4, #474747);
+    --error-color: light-dark(#ba1a1a, #ffb4ab);
+    --focus-ring-color: light-dark(#5e5e5e, #c6c6c6);
+  }
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  margin: 0;
+  padding: 24px 32px 32px;
+  box-sizing: border-box;
+  background-color: var(--background-color, Canvas);
+  color: var(--text-color, CanvasText);
+  font: message-box;
+  font-size: 14px;
+  user-select: none;
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  body {
+    padding: 16px;
+  }
+}
+
+/* PDFs dragged over Home. */
+body.dropping {
+  outline: 2px dashed var(--outline-color, Highlight);
+  outline-offset: -8px;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 400;
+}
+
+body.empty header .actions {
+  visibility: hidden;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Material's common buttons: filled, outlined and text. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 24px;
+  border: none;
+  border-radius: var(--md-shape-full);
+  font: inherit;
+  font-weight: 500;
+  background-color: transparent;
+  color: var(--primary-color, ButtonText);
+
+  &.filled {
+    background-color: var(--primary-color, ButtonFace);
+    color: var(--on-primary-color, ButtonText);
+  }
+
+  &.outlined {
+    border: 1px solid var(--outline-color, ButtonBorder);
+  }
+
+  &.text {
+    padding: 0 12px;
+  }
+
+  &.large {
+    height: 56px;
+    padding: 0 32px;
+    font-size: 16px;
+  }
+
+  &.open::before,
+  &.new::before {
+    content: "";
+    width: 20px;
+    height: 20px;
+    background-color: currentColor;
+    mask: url(/pdflion/icons/folder_open.svg) center / contain no-repeat;
+  }
+
+  &.new::before {
+    mask-image: url(/pdflion/icons/note_add.svg);
+  }
+
+  &:hover {
+    background-image: linear-gradient(
+      color-mix(in srgb, currentColor var(--md-hover), transparent) 0 0
+    );
+  }
+
+  &:active {
+    background-image: linear-gradient(
+      color-mix(in srgb, currentColor var(--md-pressed), transparent) 0 0
+    );
+  }
+}
+
+.button:focus-visible,
+.card:focus-visible {
+  outline: 2px solid var(--focus-ring-color, Highlight);
+  outline-offset: 2px;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--secondary-text-color, CanvasText);
+}
+
+#documents {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--card-width), 100%), 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A document: its first page, its name, folder and time, and its marks. */
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  padding: 8px 8px 12px;
+  border: 1px solid var(--outline-variant-color, CanvasText);
+  border-radius: var(--md-shape-medium);
+  background-color: var(--card-color, Canvas);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+
+  &:hover {
+    background-image: linear-gradient(
+      color-mix(in srgb, currentColor var(--md-hover), transparent) 0 0
+    );
+  }
+
+  &:active {
+    background-image: linear-gradient(
+      color-mix(in srgb, currentColor var(--md-pressed), transparent) 0 0
+    );
+  }
+
+  &.missing .preview,
+  &.missing .name {
+    opacity: 0.5;
+  }
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 3 / 4;
+  margin-bottom: 8px;
+  border-radius: var(--md-shape-small);
+  background-color: var(--preview-color, Canvas);
+  overflow: hidden;
+
+  & img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    box-shadow: 0 0 0 1px var(--outline-variant-color, CanvasText);
+  }
+
+  /* No thumbnail yet: a document's outline. */
+  &.blank::before {
+    content: "";
+    width: 40px;
+    height: 40px;
+    background-color: var(--secondary-text-color, CanvasText);
+    mask: url(/pdflion/icons/crop_portrait.svg) center / contain no-repeat;
+  }
+}
+
+.name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.folder,
+.time {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--secondary-text-color, CanvasText);
+}
+
+.marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+
+  &:empty {
+    display: none;
+  }
+}
+
+.mark {
+  padding: 2px 8px;
+  border-radius: var(--md-shape-small);
+  background-color: var(--mark-color, Canvas);
+  font-size: 12px;
+
+  &.missing {
+    color: var(--error-color, CanvasText);
+  }
+}
+
+@media (forced-colors: active) {
+  .mark {
+    border: 1px solid CanvasText;
+  }
+}
+
+/* No recent documents: Open and New, large, in the middle. */
+#empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12vh;
+  text-align: center;
+
+  &[hidden] {
+    display: none;
+  }
+
+  & .message {
+    margin: 0;
+    font-size: 22px;
+  }
+
+  & .hint {
+    margin: 0 0 16px;
+    color: var(--secondary-text-color, CanvasText);
+  }
+
+  & .actions {
+    justify-content: center;
+  }
+}

@@ -1,7 +1,8 @@
 /**
  * The blank document File > New opens: one empty page, of the paper size the
  * system's region uses.
- * Kept free of Electron imports so the unit tests can run it under plain Node.
+ * Free of Electron and Node, in src/shared/, so that the web app can use it
+ * too, and unit tests under plain Node.
  */
 
 /** @typedef {{ width: number, height: number }} PaperSize in PDF points, 1/72 inch */

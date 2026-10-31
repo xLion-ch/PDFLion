@@ -4,9 +4,9 @@
  * placement or recent documents, and on Windows and Linux never hand their
  * files to a PDFLion that's already running.
  *
- * Playwright lists each tab's viewer and each window's tab strip as pages.
- * app.browserWindow() gives the window either is in. The helpers below find a
- * document's page by its URL, which names its file.
+ * Playwright lists each tab's viewer or Home, and each window's tab strip, as
+ * pages. app.browserWindow() gives the window any of them is in. The helpers
+ * below find a document's page by its URL, which names its file.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -80,7 +80,8 @@ export async function tracemonkey(dir, name = "tracemonkey.pdf") {
 
 /**
  * Starts PDFLion with `files` on its command line, sizes the window to
- * WINDOW_SIZE, and waits until the first of them shows its first page.
+ * WINDOW_SIZE, and waits until the first of them shows its first page, or
+ * without files until Home shows.
  *
  * @param {string[]} files
  * @param {{ userData?: string, lang?: string, args?: string[], env?: Record<string, string> }} [options]
@@ -102,9 +103,10 @@ export async function launch(files, { userData, lang, args = [], env = {} } = {}
     cwd: ROOT,
     env: { ...process.env, ...env },
   });
-  const page = await documentPage(app, path.basename(files[0]));
+  const page =
+    files.length > 0 ? await documentPage(app, path.basename(files[0])) : await homePage(app);
   await setSize(app, page, WINDOW_SIZE);
-  await rendered(page);
+  if (files.length > 0) await rendered(page);
   return { app, page, userData };
 }
 
@@ -114,6 +116,14 @@ export async function launch(files, { userData, lang, args = [], env = {} } = {}
  */
 export function isViewer(url) {
   return url.startsWith("pdflion://app/viewer/web/viewer.html");
+}
+
+/**
+ * @param {string} url
+ * @returns {boolean} whether `url` is a home tab's page
+ */
+export function isHome(url) {
+  return url.startsWith("pdflion://app/home/home.html");
 }
 
 /**
@@ -140,6 +150,33 @@ export async function documentPage(app, name) {
     return decodeURIComponent(file.split("/").pop() ?? "") === name;
   };
   return app.windows().find(matches) ?? app.waitForEvent("window", { predicate: matches });
+}
+
+/**
+ * A home tab's page, once there is one that has drawn the recent documents.
+ *
+ * @param {ElectronApplication} app
+ * @param {Page[]} [except] home pages to pass over, such as those of tabs
+ *   that were open before
+ * @returns {Promise<Page>}
+ */
+export async function homePage(app, except = []) {
+  /** @param {Page} page */
+  const matches = (page) => isHome(page.url()) && !except.includes(page);
+  const page =
+    app.windows().find(matches) ?? (await app.waitForEvent("window", { predicate: matches }));
+  await page.waitForFunction(
+    () => !document.querySelector("#recent")?.hidden || !document.querySelector("#empty")?.hidden,
+  );
+  return page;
+}
+
+/**
+ * @param {ElectronApplication} app
+ * @returns {Page[]} the home tabs' pages
+ */
+export function homePages(app) {
+  return app.windows().filter((page) => isHome(page.url()));
 }
 
 /**

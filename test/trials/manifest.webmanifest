@@ -1,0 +1,9 @@
+{
+  "name": "PDFLion trials",
+  "short_name": "Trials",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "icons": [{ "src": "icon.png", "sizes": "1024x1024", "type": "image/png" }]
+}

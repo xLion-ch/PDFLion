@@ -16,7 +16,7 @@
   const api = window.pdflionTabs;
   const strip = /** @type {HTMLElement} */ (document.getElementById("tabs"));
 
-  /** @typedef {{ id: string, name: string, edited: boolean, active: boolean }} TabState */
+  /** @typedef {{ id: string, name: string, home: boolean, edited: boolean, active: boolean }} TabState */
 
   /** @type {TabState[]} */
   let tabs = [];
@@ -81,7 +81,8 @@
    * @param {HTMLElement} element
    * @param {TabState} tab
    */
-  function update(element, { name, edited, active }) {
+  function update(element, { name, home, edited, active }) {
+    element.classList.toggle("home", home);
     element.classList.toggle("active", active);
     element.classList.toggle("edited", edited);
     element.setAttribute("aria-selected", String(active));

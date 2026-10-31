@@ -1,9 +1,10 @@
 /**
  * The `pdflion://` scheme. Windows load everything from `pdflion://app/`: the
  * pdf.js generic viewer at `/viewer/`, `src/viewer/` at `/pdflion/`, the tab
- * strip at `/tabs/`, @cantoo/pdf-lib's browser build at `/lib/`, and opened
- * documents at `/doc/<token>/<name>`, whole or in byte ranges, from their
- * files or, for untitled documents, from memory.
+ * strip at `/tabs/`, the home screen at `/home/`, @cantoo/pdf-lib's browser
+ * build at `/lib/`, opened documents at `/doc/<token>/<name>`, whole or in
+ * byte ranges, from their files or, for untitled documents, from memory, and
+ * recent documents' thumbnails at `/thumb/<id>.png`.
  * One origin for all of it keeps the viewer's same-origin `file=` check happy.
  */
 import fs from "node:fs/promises";
@@ -11,10 +12,11 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
+import { answerRange } from "../shared/ranges.js";
 import * as documents from "./documents.js";
-import { pdfLibRoot, pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
-import { answerRange } from "./ranges.js";
-import { SCHEME, docToken, resolveUrl } from "./routes.js";
+import { homeRoot, pdfLibRoot, pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
+import { SCHEME, docToken, resolveUrl, thumbnailId } from "./routes.js";
+import { thumbnailFile } from "./thumbnails.js";
 
 /** Read size for documents. Larger than Node's 64 KiB, for fewer, bigger chunks to the viewer. */
 const DOCUMENT_CHUNK_SIZE = 1024 * 1024;
@@ -22,9 +24,16 @@ const DOCUMENT_CHUNK_SIZE = 1024 * 1024;
 /** An untitled document's bytes never change until it's saved, as a file. */
 const UNTITLED_ETAG = '"untitled"';
 
-const mounts = { viewer: viewerRoot, pdflion: pdflionRoot, tabs: tabsRoot, lib: pdfLibRoot };
+const mounts = {
+  viewer: viewerRoot,
+  pdflion: pdflionRoot,
+  tabs: tabsRoot,
+  home: homeRoot,
+  lib: pdfLibRoot,
+};
 const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
 const tabsHtml = path.join(tabsRoot, "tabs.html");
+const homeHtml = path.join(homeRoot, "home.html");
 
 /**
  * Added before `</head>` of viewer.html. The classic scripts run in order,
@@ -61,6 +70,9 @@ const VIEWER_CSP = [
  * the icons it shares with the viewer.
  */
 const TABS_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'";
+
+/** Sent with home.html, which shows the icons and the thumbnails too. */
+const HOME_CSP = TABS_CSP;
 
 /**
  * Extensions Chromium has no mapping for. It sniffs their content instead, so
@@ -102,10 +114,14 @@ async function serve(request) {
     return untitled ? serveBytes(request, untitled.bytes) : notFound();
   }
 
+  const thumbnail = thumbnailId(request.url);
+  if (thumbnail) return serveThumbnail(thumbnail);
+
   const file = resolveUrl(request.url, mounts);
   if (!file) return notFound();
   if (file === viewerHtml) return serveViewerHtml();
   if (file === tabsHtml) return serveFile(file, { "Content-Security-Policy": TABS_CSP });
+  if (file === homeHtml) return serveFile(file, { "Content-Security-Policy": HOME_CSP });
 
   const type = CONTENT_TYPES[path.extname(file)];
   return serveFile(file, type ? { "Content-Type": type } : {});
@@ -123,6 +139,20 @@ async function serveViewerHtml() {
       "Content-Security-Policy": VIEWER_CSP,
     },
   });
+}
+
+/**
+ * Serves a recent document's thumbnail, which main checked before storing it
+ * but never decoded. Only the sandboxed home page decodes it, as a PNG, and
+ * never as anything else.
+ *
+ * @param {string} id
+ * @returns {Promise<Response>}
+ */
+async function serveThumbnail(id) {
+  const file = thumbnailFile(id);
+  if (!file) return notFound();
+  return serveFile(file, { "Content-Type": "image/png", "X-Content-Type-Options": "nosniff" });
 }
 
 /**

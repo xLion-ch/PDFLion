@@ -2,7 +2,8 @@
  * The third-party projects PDFLion is made of and made with, for the About
  * panel. README.md lists the same ones under Credits, and credits.test.js
  * checks that both name the same links. A new dependency goes into both.
- * Kept free of Electron imports so the unit tests can run it under plain Node.
+ * Free of Electron and Node, in src/shared/, so that the web app can use it
+ * too, and unit tests under plain Node.
  */
 
 /**
@@ -291,6 +292,8 @@ export const CREDITS = [
         url: "https://github.com/jordansissel/fpm",
       },
       { name: "Playwright", by: "Microsoft", license: "Apache-2.0", url: "https://playwright.dev" },
+      // Playwright's build of it, which the web app's trials run in (test/trials/run.js).
+      { name: "WebKit", license: "BSD-2-Clause and LGPL-2.1", url: "https://webkit.org" },
       // The steps of .github/workflows/ci.yml that aren't commands.
       {
         name: "actions/checkout, setup-node, cache, upload-artifact and download-artifact",

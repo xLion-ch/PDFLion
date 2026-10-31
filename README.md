@@ -5,24 +5,21 @@
 
 # PDFLion
 
-A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://github.com/mozilla/pdf.js), the viewer built into Firefox, in a desktop app: PDFs open from Finder, Explorer and Linux file managers, as tabs, with native menus and shortcuts, and forms and annotations save back into the file.
+A PDF viewer for macOS, Windows and Linux. It's based on Mozilla's [pdf.js](https://github.com/mozilla/pdf.js).
 
-- Opens PDFs from Finder, Explorer, Files and Nemo, the Open dialog, or by dropping them on a window, as tabs of the front window.
-- Tabs can be dragged into another order, onto another window, or out of every window into a window of their own. The tab bar shows once a window has two tabs.
-- Edit > Insert Blank Page, or its toolbar button, adds an empty page after the current one, the size of the current page. It's saved as an addition to the end of the file, so everything else in the file stays as it was. Documents with a password can't have pages added, and signed documents ask first.
-- In the sidebar's page thumbnails, pages can be dragged into another order, and the Manage menu copies, cuts, deletes and exports the checked ones. The add button there, or dropping PDFs or images on the thumbnails, adds their pages. These changes are saved as a new file, which leaves out some of what the old one held, such as XMP metadata, layers and document scripts, and signatures no longer validate. PDFLion asks before the first such save of a document that holds any of it. Documents with a password show their pages there but can't change them, and signed documents ask before their first change.
-- View > Page Overview, or the button next to the sidebar's, shows the pages as a grid across the window, with the same page tools as the thumbnails, plus Insert Blank Page after the checked pages, and Rotate Pages Left and Right, which turn the checked pages, or the current one. Rotations are saved like an inserted page, as an addition to the end of the file. View > Rotate Left and Right turn only the view, which isn't saved. Esc or a double-click on a page closes it, and the sidebar is back as it was. The sidebar's button, which shows off while the overview is open, closes it and shows the sidebar.
-- The Eraser, after Pencil in the toolbar or as Edit > Eraser, erases drawings, also those another app's pen left in the file. In Line mode it erases the parts of lines under it, and in Object mode a drawing it touches goes whole: everything drawn with Pencil in one go, until Esc or another tool. Its size can be set in its options, and Edit > Undo brings back what a drag erased.
-- Save as Favourite, at the end of the options of Highlight, Text and Pencil, keeps the tool's settings, such as a blue pencil 1 point wide. Favourites show in the toolbar of every window, before the drawing tools, each as its tool's icon in its colour, with its size. A click picks that tool with those settings, without opening its options, a drag onto another favourite moves it there, and a right-click removes it. Those that don't fit are in the ★ menu at their end.
-- File > New opens an untitled document with one blank page, US Letter or A4, whichever your region uses. The first save asks where to put it.
-- Saves form data and annotations into the file in place, or to a new file with Save As. Unsaved changes show in the title, or on the tab when a window has several, and PDFLion asks about them before closing or quitting.
-- Shows the first page of a large PDF before the rest has loaded.
-- Zoom, rotation, search, sidebar, Presentation Mode and printing, all from the menu and the platform's usual shortcuts.
-- Follows the system's light or dark appearance. The viewer also follows the system language; the menus are in English.
-- Remembers where you left the last window, and lists recently opened files.
-- Updates itself from the releases on GitHub.
+- Opens PDFs from the file manager, the Open dialog, or dropped on a window, as tabs of the front window. Tabs can be dragged into another order, onto another window, or out into a window of their own.
+- Saves form data and annotations into the file, or to a new one with Save As, and asks about unsaved changes before closing or quitting.
+- File > New opens an untitled document with one blank page, US Letter or A4, whichever your region uses.
+- In the sidebar's thumbnails, and in View > Page Overview, which shows them as a grid across the window, pages can be moved, copied, cut, deleted and exported, and PDFs or images added. These changes are saved as a new file, which leaves out some of what the old one held, such as XMP metadata, layers and document scripts, and PDFLion asks first.
+- Edit > Insert Blank Page, and the page overview's Rotate Pages Left and Right, are saved as additions to the end of the file, so everything else in it stays as it was.
+- Documents with a password can't have their pages changed, and signed documents ask first.
+- The Eraser, after Pencil, erases the parts of lines it passes over, or whole drawings, also those another app left in the file. A pen's eraser end erases too, without picking the Eraser.
+- Save as Favourite, in the options of Highlight, Text and Pencil, keeps the tool's settings, such as a blue pencil 1 point wide, as a button in the toolbar of every window.
+- Zoom, rotation, search, sidebar, Presentation Mode and printing, from the menus and the platform's usual shortcuts.
+- Follows the system's light or dark appearance, and in the viewer its language. The menus are in English.
+- Remembers the last window's place and recently opened files, and updates itself from the releases on GitHub.
 
-PDFLion's only network requests of its own are its checks for updates (see Updates). Links in a document open in your browser or mail app, and only `http`, `https` and `mailto` links open at all.
+PDFLion's only network requests of its own are its checks for updates. Links in a document open in your browser or mail app, and only `http`, `https` and `mailto` links open at all.
 
 ## Installing
 
@@ -30,30 +27,28 @@ PDFLion runs on macOS 13 Ventura or later, on Apple silicon and Intel Macs, on 6
 
 | Build | For |
 |---|---|
-| `PDFLion-<version>-mac-arm64.dmg` (or `.zip`) | Macs with Apple silicon (M1 and later) |
-| `PDFLion-<version>-mac-x64.dmg` (or `.zip`) | Intel Macs |
+| `PDFLion-<version>-mac-arm64.dmg` | Macs with Apple silicon (M1 and later) |
+| `PDFLion-<version>-mac-x64.dmg` | Intel Macs |
 | `PDFLion-<version>-win-x64.exe` | Windows; Windows on Arm runs it emulated |
 | `PDFLion-<version>-linux-amd64.deb` | Ubuntu and Linux Mint on Intel and AMD processors |
 
 PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Windows warn the first time.
 
-**macOS:** open the DMG and drag PDFLion to Applications. The first launch is blocked with a message that Apple couldn't check the app. Open System Settings > Privacy & Security, scroll down to the message about PDFLion and click Open Anyway. To open PDFs with PDFLion by default, select a PDF in Finder, choose File > Get Info, pick PDFLion under Open With, and click Change All.
+**macOS:** open the DMG and drag PDFLion to Applications. The first launch is blocked with a message that Apple couldn't check the app: open System Settings > Privacy & Security, and click Open Anyway by the message about PDFLion. To make it the default for PDFs, select a PDF in Finder, choose File > Get Info, pick PDFLion under Open With, and click Change All.
 
-**Windows:** run the installer. SmartScreen shows "Windows protected your PC"; click More info, then Run anyway. PDFLion installs for your user only, without administrator rights. It appears under Open with for PDFs; to make it the default, use Settings > Apps > Default apps. Uninstall it from Settings > Apps.
+**Windows:** run the installer. SmartScreen shows "Windows protected your PC": click More info, then Run anyway. PDFLion installs for your user only, without administrator rights, and appears under Open with for PDFs. To make it the default, use Settings > Apps > Default apps. Uninstall it from Settings > Apps.
 
-**Linux:** in a terminal, in the folder with the package, run `sudo apt install ./PDFLion-<version>-linux-amd64.deb`. PDFLion appears among your apps, and under Open With for PDFs in Files and Nemo. To make it the default, right-click a PDF, choose Open With, and set PDFLion as the default there. Uninstall it with `sudo apt remove pdflion`.
+**Linux:** in the folder with the package, run `sudo apt install ./PDFLion-<version>-linux-amd64.deb`. PDFLion appears among your apps, and under Open With for PDFs in Files and Nemo, where you can also make it the default. Uninstall it with `sudo apt remove pdflion`.
 
 ### Updates
 
-PDFLion checks for a new release 10 seconds after it starts, and every 6 hours while it runs. It downloads one in the background, and then asks whether to restart now. Restart Now first asks about any unsaved changes, as quitting does, then installs the update and starts the new version. Release Notes shows what's new on GitHub.
+PDFLion checks for a new release when it starts and every 6 hours, downloads it in the background, and asks whether to restart now. Restart Now asks about unsaved changes first. Otherwise the update installs when you quit PDFLion, except on Linux, where installing asks for an administrator's password, so it installs only with Restart Now. On macOS PDFLion updates only from the Applications folder.
 
-- **macOS:** otherwise the update installs when you quit PDFLion. It updates only once it's in the Applications folder: started from the DMG, or from Downloads without moving it, it says to move it to Applications first.
-- **Windows:** otherwise the update installs when PDFLion quits, without administrator rights.
-- **Linux:** installing asks for an administrator's password, so the update installs only with Restart Now. Help > Check for Updates… offers it again.
+Check for Updates… and Check for Updates Automatically are in the PDFLion menu on macOS, and in the Help menu on Windows and Linux. A check tells GitHub your computer's IP address, and nothing else. A copy without Check for Updates… is from before updates came in: download the latest release once.
 
-Check for Updates… checks at once, and Check for Updates Automatically turns the automatic checks off. They're in the PDFLion menu on macOS, and in the Help menu on Windows and Linux. A check asks GitHub for the latest release, which tells GitHub your computer's IP address, as opening the release page would, and nothing else.
+### Moving to another computer
 
-A copy without Check for Updates… is from before updates came in, and needs the latest release downloaded once.
+File > Export Settings… saves your favourites, the eraser's and Pencil's settings and whether updates are checked automatically, as `PDFLion Settings.json`. File > Import Settings… on the other computer, on any of the three systems, asks first, then replaces those settings and adds the favourites you don't have there yet. Neither takes your documents or the recent documents along.
 
 ## Shortcuts
 
@@ -61,6 +56,7 @@ A copy without Check for Updates… is from before updates came in, and needs th
 |---|---|---|---|
 | New | ⌘N | Ctrl+N | Ctrl+N |
 | Open… | ⌘O | Ctrl+O | Ctrl+O |
+| Home | ⇧⌘H | Ctrl+Shift+H | Ctrl+Shift+H |
 | Save / Save As… | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S | Ctrl+S / Ctrl+Shift+S |
 | Print… | ⌘P | Ctrl+P | Ctrl+P |
 | Close Tab | ⌘W | Ctrl+W | Ctrl+W |
@@ -87,23 +83,12 @@ You need [Node.js](https://nodejs.org) 24 (see `.nvmrc`), Git, and a Mac, a Wind
 git clone --recurse-submodules https://github.com/xLion-ch/PDFLion.git
 cd PDFLion
 npm install
-npm start                      # runs PDFLion from the source
+npm start                      # runs PDFLion from the source; the first run also builds pdf.js
 npm start -- path/to/file.pdf  # and opens a file
+npm run build                  # runs all the tests, then builds the installers into dist/
 ```
 
-The first `npm start` also builds pdf.js, which takes a while.
-
-To build the installers, run:
-
-```sh
-npm run build
-```
-
-It runs all the tests, then builds every version the machine can build into `dist/`:
-
-- **On a Mac:** both Mac builds. With Rosetta installed (`softwareupdate --install-rosetta`), the Windows installer as well. electron-builder's tool for Windows installers is an Intel program.
-- **On Windows:** the Windows installer.
-- **On Linux:** the `.deb` package. Packaging it needs `ar`, which `sudo apt install binutils` installs.
+`npm run build` builds both Mac versions on a Mac, and with Rosetta (`softwareupdate --install-rosetta`) the Windows installer too, the Windows installer on Windows, and the `.deb` on Linux, which needs `ar` (`sudo apt install binutils`).
 
 ## Development
 
@@ -114,105 +99,107 @@ npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
-GitHub Actions runs the unit and end-to-end tests on macOS, Windows and Linux for every pull request into `main`, and for every push to `main` that changes more than Markdown files (`.github/workflows/ci.yml`). Then it builds the installers, which the run keeps for 14 days, so a pull request can be tried before it's merged. A pull request from a fork is built but keeps no installers, since they'd come from code nobody has reviewed yet. When a test fails, the run keeps Playwright's report instead. A push to `main` that passes becomes a release (see Releasing).
+GitHub Actions runs the tests on macOS, Windows and Linux for every pull request into `main`, and every push to `main` or `dev` that changes more than Markdown files. Except for `dev`, it then builds the installers and keeps them for 14 days, except for pull requests from forks. Builds are numbered `<major>.<minor>.<commits>`, from `package.json` and the commit count, and a pull request's `<version>-pr.<number>`. `node scripts/version.js` prints the version of the commit checked out.
 
-CI numbers its builds `<major>.<minor>.<commits>`: the major and minor version from `package.json`, and the number of commits, such as `0.1.31`. A pull request's are `0.1.31-pr.7`, which sorts before the release of the same count. `node scripts/version.js` prints the version of the commit checked out.
+pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. PDFLion adds to it from outside, in `src/viewer/`, and the main process is in `src/main/`. [CLAUDE.md](CLAUDE.md) describes the architecture, the rules and the decisions behind them.
 
-PDFLion keeps the Electron side thin. pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. The app adds to it from outside:
+### Trying the web app on an iPad
 
-- `src/viewer/bridge.js` connects the menus to pdf.js.
-- `src/viewer/overrides.css` restyles its interface in Material Design 3.
-- `src/viewer/geometry.js` works out what the eraser erases.
+A web app of PDFLion for the iPad is planned. Trials in `test/trials/` find out first what it can rely on there: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas. `scripts/serve-web.js` serves them at `/PDFLion/`, as GitHub Pages will serve the app.
 
-The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLAUDE.md) describes the architecture, the ground rules, the security model and the decisions behind them.
+```sh
+npm run web:trials                # build dist/trials/ and serve it at http://localhost:8080/PDFLion/
+npm run web:trials -- --https     # the same over HTTPS, for an iPad on the same network
+node test/trials/run.js           # the trials that need no hands, in Playwright's WebKit and Chromium
+```
+
+Each trial shows its results, and sends them to the Mac, into `test/trials/results.jsonl`. The iOS Simulator reaches the Mac at `localhost`, which counts as secure: boot an iPad there, and open `http://localhost:8080/PDFLion/` in its Safari, or run `xcrun simctl openurl booted http://localhost:8080/PDFLion/`. A real iPad needs HTTPS for the service worker, with a certificate it trusts:
+
+1. Run `npm run web:trials -- --https`, and allow Node to accept incoming connections if macOS asks. It prints the addresses, such as `https://Your-Mac.local:8080/PDFLion/`. The first run makes the certificate, which `~/.pdflion-web-server/` keeps.
+2. On the iPad, open `https://Your-Mac.local:8080/certificate.crt` in Safari, going past the warning with Show Details, and allow the download. Or AirDrop `~/.pdflion-web-server/certificate.crt` to it.
+3. Install it from Settings > Profile Downloaded, then turn it on under Settings > General > About > Certificate Trust Settings.
+4. Open the printed address. To try the trials as a Home Screen app too, add it with Share > Add to Home Screen.
+
+The certificate is a root the iPad trusts. Its name constraints keep it to `localhost`, `.local` names and private network addresses, but keep its key in `~/.pdflion-web-server/` to yourself. Afterwards, remove the profile under Settings > General > VPN & Device Management. A new certificate, made when the Mac's name changes, needs trusting again.
 
 ## Releasing
 
-Every push to `main` that changes more than Markdown files is a release. Once its tests and builds have passed on macOS, Windows and Linux, CI publishes the GitHub release `v<version>`, tagged on that commit, with the four installers, the two Mac `.zip` files, the update files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml` and the `.blockmap` files), and notes GitHub writes from the pull requests merged since the last release. A run that fails on any platform releases nothing, and running it again for a commit that's released already doesn't release it twice. Pull requests are never released. Installed copies find each release within 6 hours, and update to it (see Updates).
+Every push to `main` that changes more than Markdown files is a release. Once its tests and builds pass on all three platforms, CI publishes the GitHub release `v<version>`, with the installers, the Mac `.zip` files and the update files, and installed copies update to it within 6 hours. A failed run releases nothing, and a commit is never released twice. So:
 
-So `main` only takes changes that passed CI, and the checks by hand come before merging:
+1. Make the change on a branch, and open a pull request into `main`. CI builds its installers as `<version>-pr.<number>`.
+2. Go through the checks by hand below that the change touches, with those installers. The Windows and Linux checks haven't been done for any release yet.
+3. Merge it.
 
-1. Make the change on a branch, and open a pull request into `main`. CI tests and builds it, and keeps its installers for 14 days, as `<version>-pr.<number>`.
-2. Go through the checks below that the change touches, with the pull request's installers. They're what the automated tests can't do. The Windows and Linux checks haven't been done for any release yet.
-3. Merge it. The push to `main` becomes the next release.
+To raise the major or minor version, edit `package.json`, keeping the patch version at 0. Update pdf.js in a pull request of its own, as [CLAUDE.md](CLAUDE.md) describes.
 
-The version is `<major>.<minor>.<commits>` (see Development), so every release has a higher one. To raise the major or minor version, edit `package.json`, keeping its patch version at 0. To update pdf.js, check for a newer release with `npm run pdfjs:check`, and update as [CLAUDE.md](CLAUDE.md) describes, in a pull request of its own. `npm run build` still builds every version the machine can, as `package.json`'s version, for trying a build, but releases come only from CI.
+The releases rely on settings of the repository on GitHub:
 
-The releases rely on settings of the repository on GitHub, which only its administrators can change:
-
-- A ruleset protects `main`: changes come through pull requests, the checks `pdf.js`, `mac`, `windows` and `linux` must pass before one merges, and `main` can't be force-pushed or deleted. Rewriting `main` could lower the commit count, and with it the version. The `pdf.js` check is required too, since GitHub would count the others as passed if they were skipped because it failed.
-- The `release` environment, in which CI makes the release, allows only the `main` branch.
-- Everyone who can push to `main` or change these settings signs in to GitHub with two-factor authentication.
+- A ruleset protects `main`: changes come through pull requests, the checks `pdf.js`, `mac`, `windows` and `linux` must pass, and `main` can't be force-pushed, which could lower the version, or deleted. `pdf.js` is required too, since GitHub counts skipped checks as passed.
+- The `release` environment allows only `main`.
+- Everyone who can push to `main` or change these settings uses two-factor authentication.
 
 ### Checks by hand
 
 On a Mac with Apple silicon:
 
-- The DMG installs on a Mac that has never run PDFLion, and the app starts once allowed under Privacy & Security.
-- PDFLion is listed in Finder's Open With for PDFs. Once it's the default, double-clicking a PDF opens it.
-- The shortcuts work from the keyboard, and pdf.js doesn't also act on them: ⌘S saves without a download, ⇧⌘F starts Presentation Mode rather than Find, ⇧⌘N inserts one page, ⌥⌘6 opens and closes the page overview, and ⇧⌘E turns the eraser on and off, also with the overview open or Pencil on. ⌥⌘6 works with the keyboard layout set to Swiss German and to French as well.
-- The title bar's proxy icon works and follows the selected tab, and opened files appear in the Dock menu's recent documents.
-- With "Prefer tabs when opening documents" set to Always in System Settings > Desktop & Dock, windows still don't become macOS's own tabs.
-- The viewer switches when the appearance changes in System Settings.
-- Print shows the native dialog, with every page.
-- A trackpad pinch zooms the pages, not the whole window.
-- With the previous release downloaded from GitHub, installed in Applications and allowed under Privacy & Security, PDFLion offers the latest one about 10 seconds after it starts. Restart Now with an edited document asks about it first, then installs the update and starts the new version, without a prompt about modifying apps or another Gatekeeper warning. Later, then quitting with ⌘Q, installs it without starting PDFLion again. The previous release started from Downloads without moving it says, after Check for Updates…, that it can't be installed there.
-
-On an Intel Mac, or under Rosetta, which shows only that it starts:
-
-- The x64 build starts.
+- The DMG installs on a Mac that has never run PDFLion, and the app starts once allowed under Privacy & Security. Made the default in Finder's Open With, it opens PDFs.
+- The shortcuts work from the keyboard, without pdf.js also acting on them: ⌘S saves without a download, ⇧⌘F starts Presentation Mode, ⇧⌘N inserts one page, ⌥⌘6 opens and closes the page overview, also with a Swiss German or French keyboard layout, and ⇧⌘E turns the eraser on and off, also with the overview open or Pencil on.
+- The title bar's proxy icon follows the selected tab, and opened files appear in the Dock menu's recent documents.
+- Clicking the Dock icon with no window open shows Home, and so does ⇧⌘H.
+- With "Prefer tabs when opening documents" set to Always, windows still don't become macOS's own tabs.
+- The viewer follows the appearance setting, Print shows the native dialog with every page, and a trackpad pinch zooms the pages, not the window.
+- The previous release, downloaded from GitHub and installed in Applications, offers the latest about 10 seconds after it starts. Restart Now with an edited document asks about it first, then installs and starts the new version, with no prompt about modifying apps and no other Gatekeeper warning. Later, then ⌘Q, installs it without starting PDFLion again. Started from Downloads without moving it, Check for Updates… says it can't be installed there.
+- On an Intel Mac, or under Rosetta, the x64 build starts.
 
 On a Windows PC:
 
-- `npm run build` passes in PowerShell, including the two end-to-end tests for Windows and Linux.
-- The installer runs without administrator rights after SmartScreen's More info > Run anyway, and the app starts.
-- PDFLion is listed under Open with for PDFs. Once it's the default, double-clicking a PDF opens it. Uninstalling removes the app and its file association.
+- `npm run build` passes in PowerShell.
+- The installer runs without administrator rights after SmartScreen's More info > Run anyway. Made the default under Open with, PDFLion opens PDFs, and uninstalling removes the app and its file association.
 - Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down, Ctrl+Page Up, Ctrl+Shift+N, Ctrl+Shift+O and Ctrl+Shift+E each do one thing, and pdf.js doesn't also act on them. AltGr characters can still be typed into form fields, and Alt+F opens the File menu.
-- Editing a form puts `*` before the title. Closing the window, Exit, and closing the last window each ask about the changes.
-- A PDF opened from Explorer while PDFLion runs opens as a tab of the running app's front window, in front of other windows. A file that's already open gets its tab selected.
-- Cancelling the Open dialog at launch quits the app, and so does a launch with a file that can't be read.
-- Dropping a PDF from Explorer onto a window opens it as a tab of that window.
-- Saving a file another app has open, and saving to a network share, either works or shows an error and keeps the changes. If antivirus scanning makes saving fail with `EPERM` or `EBUSY`, saving needs a short retry, as graceful-fs does.
-- A large PDF on a network share shows its first page before the rest has loaded.
-- Shutting down or signing out with unsaved changes is held off while PDFLion asks about them.
+- Editing a form puts `*` before the title, and closing the window, Exit, and closing the last window each ask about it.
+- A PDF opened from Explorer while PDFLion runs opens as a tab of its front window, in front of other windows, or selects its tab if it's open already. A PDF dropped from Explorer onto a window opens as a tab there.
+- A launch without a file shows Home, and so does a launch with a file that can't be read, once it has said so. Started again without a file, PDFLion brings its window forward with Home.
+- Saving a file another app has open, and saving to a network share, either works or shows an error and keeps the changes. If antivirus scanning makes saving fail with `EPERM` or `EBUSY`, saving needs a short retry. A large PDF on a network share shows its first page before the rest has loaded.
+- Shutting down or signing out with unsaved changes waits while PDFLion asks about them.
 - The taskbar button groups with the pinned or Start menu shortcut, and the jump list shows recent files.
-- The viewer switches with Settings > Personalization > Colors, and a touchpad or touchscreen pinch zooms the pages.
-- With the previous release installed, PDFLion offers the latest one about 10 seconds after it starts, and SmartScreen and Defender let the downloaded installer run. Restart Now with an edited document asks about it first, then installs without showing the installer or asking for administrator rights, and starts the new version. Later, then quitting, installs it without starting PDFLion again. Shutting down with an update downloaded doesn't install it, and the next launch offers it again.
+- The viewer follows Settings > Personalization > Colors, and a touchpad or touchscreen pinch zooms the pages.
+- The previous release offers the latest about 10 seconds after it starts, and SmartScreen and Defender let the downloaded installer run. Restart Now with an edited document asks about it first, then installs without showing the installer or asking for administrator rights, and starts the new version. Later, then quitting, installs it without starting PDFLion again. Shutting down with an update downloaded doesn't install it, and the next launch offers it again.
 
 On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, which uses X11:
 
-- `npm run build` passes, including the two end-to-end tests for Windows and Linux.
-- `sudo apt install ./dist/PDFLion-<version>-linux-amd64.deb` installs it, and PDFLion starts from the app menu with Chromium's sandbox on. Chromium won't start without its sandbox unless it's given `--no-sandbox`, and with the sandbox, `grep Seccomp /proc/$(pgrep -f -- --type=renderer | head -1)/status` shows `Seccomp: 2`.
+- `npm run build` passes.
+- `sudo apt install ./dist/PDFLion-<version>-linux-amd64.deb` installs it, and PDFLion starts from the app menu with Chromium's sandbox on: `grep Seccomp /proc/$(pgrep -f -- --type=renderer | head -1)/status` shows `Seccomp: 2`.
 - The app menu and the dock show PDFLion's icon, and the dock groups its windows with the launcher.
-- PDFLion is listed under Open With for PDFs in Files (Ubuntu) and Nemo (Mint), and PDFs keep their own icon. Once PDFLion is the default, double-clicking a PDF opens it. `sudo apt remove pdflion` removes the app and its Open With entry.
-- A PDF opened from the file manager while PDFLion runs opens as a tab of the running app's front window. A file that's already open gets its tab selected.
-- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+Q, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down, Ctrl+Page Up, Ctrl+Shift+N, Ctrl+Shift+O and Ctrl+Shift+E each do one thing, and pdf.js doesn't also act on them, also with a text field focused while an input method such as IBus runs. Alt+F opens the File menu.
-- Editing a form puts `*` before the title. Closing the window, File > Quit, and closing the last window each ask about the changes, with Save as the rightmost button.
-- Shutting down with unsaved changes shows the save prompt for as long as systemd waits.
-- Cancelling the Open dialog at launch quits the app.
+- PDFLion is under Open With for PDFs in Files and Nemo, and PDFs keep their own icon. Made the default, it opens PDFs, and `sudo apt remove pdflion` removes the app and its Open With entry.
+- A PDF opened from the file manager while PDFLion runs opens as a tab of its front window, or selects its tab if it's open already.
+- Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+Q, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down, Ctrl+Page Up, Ctrl+Shift+N, Ctrl+Shift+O and Ctrl+Shift+E each do one thing, and pdf.js doesn't also act on them, also in a text field while an input method such as IBus runs. Alt+F opens the File menu.
+- Editing a form puts `*` before the title, and closing the window, File > Quit, and closing the last window each ask about it, with Save as the rightmost button. Shutting down with unsaved changes shows that prompt for as long as systemd waits.
+- A launch from the app menu shows Home, and starting it again brings its window forward with Home.
 - File > Open Recent lists opened files, and Help > About PDFLion shows the version, the icon and the credits.
-- The viewer follows the system's light or dark style, Print shows the print dialog with every page, and a touchpad pinch zooms the pages, on Wayland and on X11.
-- With the previous release's `.deb` installed, PDFLion offers the latest one about 10 seconds after it starts. Restart Now with an edited document asks about it first, then shows the system's password prompt, installs the update and starts the new version, with Chromium's sandbox on. Cancelling the password prompt leaves PDFLion running, and it says the update wasn't installed. Quitting installs nothing.
+- On Wayland and on X11, the viewer follows the light or dark style, Print shows every page, and a touchpad pinch zooms the pages.
+- The previous release's `.deb` offers the latest about 10 seconds after it starts. Restart Now with an edited document asks about it first, then shows the password prompt, installs and starts the new version, with its sandbox on. Cancelling the prompt, which electron-updater then shows again, for `apt-get install -f`, leaves PDFLion running, and it says the update wasn't installed. Answering only the second prompt mustn't restart the old version as if it had updated. Quitting installs nothing.
 
 On every platform, and on Linux both on Wayland and on X11:
 
-- Dragging a tab within the tab bar moves it there. Dragged onto another window's tab bar it joins that window where it's dropped, and onto another window's document it becomes that window's last tab. Dropped outside every window, it opens in a window of its own, under the pointer where the platform allows (not on Wayland). A window whose last tab leaves closes. The document keeps its scroll position and unsaved changes throughout.
-- A drag cancelled with Esc leaves the tab where it was. On Wayland it tears the tab off instead (see Known limitations in [CLAUDE.md](CLAUDE.md)).
-- Clicking a tab, Show Next Tab and Show Previous Tab send the keys to that tab's document: the arrow keys scroll it right away.
-- With one tab, editing a form shows in the title: `name.pdf — Edited` and the close button's dot on macOS, `*name.pdf` on Windows and Linux. With several, the edited tab shows a dot in place of its close button until the pointer is over it, and the title names the document alone. On macOS the close button's dot shows while any tab has changes.
-- Closing a window with several edited tabs asks about each in turn, showing each first, and Cancel keeps the window open.
-- Presentation Mode in a window with several tabs fills the screen, without the tab bar, and leaving full screen ends it.
-- The tab bar follows the system's light or dark appearance, and the system's high contrast mode where there is one.
-- Insert Blank Page's toolbar button shows its icon in light and dark mode and in high contrast, and is disabled for a document with a password. On a document signed with a real signing tool, it asks first, and afterwards the signature still validates for the signed revision in Acrobat, which reports the change after signing.
-- In the sidebar's thumbnails, dragging a page with the mouse, a trackpad or a touchscreen moves it. A PDF dragged from the file manager onto the thumbnails adds its pages where it's dropped, and onto the document it opens as a tab. Export selected asks where to save the checked pages. Pages moved and saved stay in their new order after reopening. A document with a password shows its thumbnails without checkboxes, Manage menu or add button, and its pages can't be dragged. On a document signed with a real signing tool, the first drag asks first. Moving pages in a document from a word processor that writes XMP metadata, such as Word or Pages, and saving asks first, naming what goes.
-- The page overview's buttons, in the toolbar and in its header, show their icons in light and dark mode and in high contrast. While the overview is open, its toolbar button shows on, and the sidebar's next to it shows off. The overview fills the window, with as many columns as fit, and dragging a page with the mouse, a trackpad or a touchscreen moves it there, also to another row. In the narrowest window, 560 pixels wide, the overview shows one column, and its header's buttons stay inside it. Closing it leaves the document where it was, and the sidebar as it was.
-- Pages rotated in the page overview stay turned after saving and reopening, in PDFLion and in another viewer such as Preview, Acrobat or a browser. On a document signed with a real signing tool, rotating asks first, and afterwards the signature still validates for the signed revision in Acrobat, which reports the change after signing.
-- The Eraser erases with the mouse, a trackpad, a touchscreen and a pen where there is one, and its circle is as large as the eraser at every zoom. In Line mode, a fast drag across many strokes cuts them all where it passed, without lag, and what's left keeps its colour, thickness and opacity, also in Preview or Acrobat after saving. It erases a drawing from another app, such as Preview's markup, and saving removes it there too. While it's on, the toolbar shows the Eraser on and Pencil off, Pencil turns it off and draws, and the toolbar still fits in the narrowest window. Edit > Undo and Redo, clicked in the menu, undo and redo erasing. With the cursor in a form field, ⌘Z (Ctrl+Z) still undoes typing, and so does Edit > Undo.
-- Save as Favourite, in the options of Highlight, Text and Pencil, shows as an outlined button across the box in light and dark mode and in high contrast, and Tab reaches it. Clicked, it says Saved, and Already a Favourite when clicked again.
-- Favourites in pale and dark colours, such as yellow and black, show in the toolbar in light and dark mode, and in high contrast like the other icons, with their sizes legible. With twenty favourites, the toolbar shows as many as fit and the ★ menu lists the rest, scrolling in a short window, and both follow the window as it's resized. The ★ menu works with the keyboard: Tab to its button, then the arrow keys, Enter and Esc. Picking a favourite while a drawing is selected leaves that drawing as it was, and the next one gets the favourite's settings.
-- Dragging a favourite onto another, with a mouse or a trackpad, shows a line where it'll go, before or after the other by the half it's over, and moves it there in every window. That works in the toolbar, in the ★ menu, and from the menu onto the toolbar. A favourite picks its tool without opening the tool's options, and the tool's button shows the tool on.
-- In system languages other than English and German, which the automated tests cover, the toolbar still fits as a window narrows a little at a time: first its buttons get smaller, then favourites move into the ★ menu, then Print moves into the ⋮ menu, then the previous and next page buttons go, and last the zoom menu. Nothing comes back until the window gets wider again. A window gets no narrower than 560 pixels.
-- File > New gives a US Letter page with the system's region set to the United States or Canada, and an A4 page with it set to Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Editing the new document's page, for example with a drawing, and closing it asks about saving, and Save there asks where to save it.
+- A tab dragged within the tab bar moves there, onto another window's tab bar joins it there, onto another window's document becomes its last tab, and outside every window opens in a window of its own, under the pointer where the platform allows. A window whose last tab leaves closes, and the document keeps its scroll position and unsaved changes. Esc cancels a drag, except on Wayland, where it tears the tab off.
+- Clicking a tab, Show Next Tab and Show Previous Tab give that document the keys: the arrow keys scroll it right away.
+- With one tab, an edited form shows as `name.pdf — Edited` with a dot in the close button on macOS, and `*name.pdf` on Windows and Linux. With several, the edited tab shows a dot instead of its close button until the pointer is over it. Closing a window with several edited tabs asks about each in turn, showing it, and Cancel keeps the window open.
+- Presentation Mode in a window with several tabs fills the screen without the tab bar, and leaving full screen ends it.
+- The tab bar follows the light or dark appearance, and high contrast where there is one.
+- The toolbar's own buttons, Insert Blank Page, the page overview's and the favourites', show in light and dark mode and in high contrast.
+- Insert Blank Page is disabled for a document with a password. On a document signed with a real signing tool, inserting or rotating pages asks first, and Acrobat still validates the signed revision afterwards.
+- In the thumbnails and the page overview, dragging pages with a mouse, a trackpad or a touchscreen moves them, in the overview also to another row. A PDF dragged from the file manager onto the thumbnails adds its pages there, and onto the document opens as a tab. Export selected asks where to save the pages. Moved and rotated pages stay so after saving and reopening, also in Preview, Acrobat or a browser. A document with a password shows no checkboxes, Manage menu or add button, and its pages can't be dragged. A signed document asks before the first drag. Moving pages in a document with XMP metadata, such as one from Word or Pages, asks at Save, naming what goes.
+- While the page overview is open, its toolbar button shows on and the sidebar's off, and in the narrowest window, 560 pixels wide, it shows one column with its header's buttons inside. Closing it leaves the document and the sidebar as they were.
+- The Eraser works with a mouse, a trackpad, a touchscreen and a pen, with its circle as large as the eraser at every zoom. A fast Line drag across many strokes cuts them all where it passed, without lag, and what's left keeps its look, also in Preview or Acrobat after saving. It erases another app's drawing, such as Preview's markup, and saving removes it there too. While it's on, the Eraser shows on and Pencil off, and Pencil turns it off and draws. Edit > Undo and Redo, clicked in the menu, undo and redo erasing, and in a form field ⌘Z (Ctrl+Z) still undoes typing.
+- A pen's eraser end, such as a Surface Pen's, erases with Pencil on, which then draws on, with Highlight on, and with no tool on, which turns the Eraser on, and its drag doesn't scroll the page.
+- Save as Favourite shows as an outlined button, which Tab reaches, and says Saved, then Already a Favourite when clicked again.
+- Favourites in pale and dark colours show in light and dark mode, with legible sizes. With twenty, the toolbar shows as many as fit, and the ★ menu the rest, scrolling in a short window, and both follow the window as it's resized. The ★ menu works with Tab, the arrow keys, Enter and Esc. A favourite picks its tool with the tool's options closed, and picking one with a drawing selected leaves the drawing as it was.
+- A favourite dragged onto another, with a mouse or a trackpad, shows a line where it'll go, and moves there in every window: in the toolbar, in the ★ menu, and from the menu onto the toolbar.
+- In system languages other than English and German, the toolbar fits as a window narrows a little at a time: its buttons get smaller, then favourites move into the ★ menu, Print into the ⋮ menu, the previous and next page buttons go, and last the zoom menu. Nothing comes back until the window gets wider.
+- Home lists the documents opened, newest first, with their first pages, folders and times, and marks those open in a tab. A card opens its document in Home's place, and Open…, New and a PDF dragged from the file manager do too. The context menu's Show in Finder, Explorer or Files shows the file, and Remove from Recent and Clear take documents off. The arrow keys, Return and Delete (Backspace on macOS) work on the cards, and VoiceOver, Narrator or Orca reads each card's name, folder and time. Home follows the light or dark appearance and high contrast, and fits a window 560 pixels wide.
+- The toolbar's Home button shows the window's home tab, or adds one, and goes in the narrowest windows, where File > Home stays.
+- File > Export Settings… writes the favourites and settings, and File > Import Settings… on another platform asks first, then adds the favourites to every window's toolbar, without repeats. A file that isn't a settings file shows an alert and changes nothing.
+- File > New gives a US Letter page with the region set to the United States or Canada, and an A4 page with Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Closing an edited new document asks about saving, and Save asks where.
 
 ## License
 
@@ -283,6 +270,7 @@ PDFLion is built and tested with:
 - [NSIS](https://nsis.sourceforge.io), which electron-builder uses for the Windows installer (Zlib)
 - [fpm](https://github.com/jordansissel/fpm) by Jordan Sissel, which electron-builder uses for the Linux package (MIT)
 - [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
+- [WebKit](https://webkit.org), whose build by Playwright the web app's trials run in (BSD-2-Clause and LGPL-2.1)
 - [actions/checkout, setup-node, cache, upload-artifact and download-artifact](https://github.com/actions) by GitHub, which run the tests and builds on GitHub Actions (MIT)
 - [GitHub CLI](https://cli.github.com) by GitHub, with which CI publishes the releases (MIT)
 - [Xvfb](https://gitlab.freedesktop.org/xorg/xserver) by X.Org, the virtual display the Linux tests run on there (MIT)

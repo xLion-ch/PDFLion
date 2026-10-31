@@ -1,10 +1,12 @@
 /**
  * The tool settings PDFLion remembers, which every tab shares: the eraser's
- * mode and size, and the favourites, each a drawing tool with its settings.
+ * mode and size, whether only a pen draws, and the favourites, each a drawing
+ * tool with its settings.
  * They come from the viewer, whose messages main checks, and from
  * state.json, which an earlier version or a hand edit may have left, so this
  * module checks them, and rebuilds each from its known fields.
- * Electron-free, so that unit tests can import it.
+ * Free of Electron and Node, in src/shared/, so that the web app can use it
+ * too, and unit tests under plain Node.
  */
 
 /** The eraser's modes: erasing the parts of strokes under it, or whole drawings. */
@@ -35,6 +37,9 @@ const TOOLS = {
   highlight: { thickness: [8, 24] },
 };
 
+/** What the viewer may change, any of them at once. */
+const SETTINGS = ["eraser", "penOnly", "favourites"];
+
 /**
  * Far more than anyone saves. It only keeps the messages and state.json
  * small.
@@ -53,6 +58,8 @@ export const MAX_FAVOURITES = 500;
 /**
  * @typedef {object} ToolSettings
  * @property {EraserSettings} eraser
+ * @property {boolean} penOnly whether only a pen draws in the drawing tools,
+ *   while fingers scroll and zoom, as iPadOS's "Only Draw with Apple Pencil"
  * @property {Favourite[]} favourites
  */
 
@@ -100,8 +107,8 @@ export function parseFavourites(value) {
 }
 
 /**
- * Checks what the viewer sends to change: the eraser's settings, the
- * favourites, or both.
+ * Checks what the viewer sends to change: the eraser's settings, whether
+ * only a pen draws, the favourites, or several of them.
  *
  * @param {unknown} value
  * @returns {Partial<ToolSettings> | null} the changes, or null if anything in
@@ -110,13 +117,17 @@ export function parseFavourites(value) {
 export function parseToolSettings(value) {
   if (!isRecord(value)) return null;
   const keys = Object.keys(value);
-  if (keys.length === 0 || keys.some((key) => key !== "eraser" && key !== "favourites")) return null;
+  if (keys.length === 0 || keys.some((key) => !SETTINGS.includes(key))) return null;
   /** @type {Partial<ToolSettings>} */
   const settings = {};
   if (Object.hasOwn(value, "eraser")) {
     const eraser = parseEraser(value.eraser);
     if (!eraser) return null;
     settings.eraser = eraser;
+  }
+  if (Object.hasOwn(value, "penOnly")) {
+    if (typeof value.penOnly !== "boolean") return null;
+    settings.penOnly = value.penOnly;
   }
   if (Object.hasOwn(value, "favourites")) {
     const favourites = parseFavourites(value.favourites);
@@ -128,10 +139,10 @@ export function parseToolSettings(value) {
 
 /**
  * Reads the tool settings as state.json stores them. Whatever's wrong is
- * left out: the eraser's settings fall back to the defaults, and favourites
- * that aren't are dropped.
+ * left out: the eraser's settings fall back to the defaults, pen-only drawing
+ * is off unless it's on, and favourites that aren't are dropped.
  *
- * @param {unknown} toolSettings the `toolSettings` key: `{ eraser }`
+ * @param {unknown} toolSettings the `toolSettings` key: `{ eraser, penOnly }`
  * @param {unknown} favourites the `favourites` key
  * @returns {ToolSettings}
  */
@@ -140,11 +151,26 @@ export function readToolSettings(toolSettings, favourites) {
   const list = Array.isArray(favourites) ? favourites.map(parseFavourite) : [];
   return {
     eraser: eraser ?? { ...DEFAULT_ERASER },
+    penOnly: isRecord(toolSettings) && toolSettings.penOnly === true,
     favourites: withoutRepeats(list.filter((favourite) => favourite !== null)).slice(
       0,
       MAX_FAVOURITES,
     ),
   };
+}
+
+/**
+ * Adds favourites after those there are, leaving out the ones that are there
+ * already, and keeping MAX_FAVOURITES at most.
+ *
+ * @param {Favourite[]} favourites as readToolSettings() gives them
+ * @param {Favourite[]} more as parseFavourite() makes them
+ * @returns {{ favourites: Favourite[], added: number }} all of them, and how
+ *   many of `more` are new
+ */
+export function addFavourites(favourites, more) {
+  const all = withoutRepeats([...favourites, ...more]).slice(0, MAX_FAVOURITES);
+  return { favourites: all, added: Math.max(0, all.length - favourites.length) };
 }
 
 /**

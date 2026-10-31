@@ -9,16 +9,13 @@
  * it. Cancel stops there, and leaves the remaining tabs open.
  */
 import { app, BrowserWindow, dialog, powerMonitor } from "electron";
+import { CANCEL, DONT_SAVE, SAVE, savePrompt } from "../shared/wording.js";
 import { runCommand } from "./ipc.js";
 import * as tabs from "./tabs.js";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
 const isLinux = process.platform === "linux";
-
-const SAVE = "Save";
-const CANCEL = "Cancel";
-const DONT_SAVE = "Don’t Save";
 
 /**
  * The save prompt's buttons, in each platform's order. macOS shows the first
@@ -203,8 +200,7 @@ function editedTabs(windows) {
 async function askToSave(win, tab) {
   const { response } = await dialog.showMessageBox(win, {
     type: "warning",
-    message: `Do you want to save the changes made to the document “${tabs.documentName(tab)}”?`,
-    detail: "Your changes will be lost if you don’t save them.",
+    ...savePrompt(tabs.documentName(tab)),
     buttons: BUTTONS,
     defaultId: BUTTONS.indexOf(SAVE),
     cancelId: BUTTONS.indexOf(CANCEL),

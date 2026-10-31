@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { CREDITS, creditsText } from "../../src/main/credits.js";
+import { CREDITS, creditsText } from "../../src/shared/credits.js";
 
 const README = fs.readFileSync(
   path.resolve(fileURLToPath(import.meta.url), "..", "..", "..", "README.md"),

@@ -21,7 +21,7 @@ if (
 
 contextBridge.exposeInMainWorld("pdflionTabs", {
   /**
-   * @param {(tabs: { id: string, name: string, edited: boolean, active: boolean }[]) => void} callback
+   * @param {(tabs: { id: string, name: string, home: boolean, edited: boolean, active: boolean }[]) => void} callback
    *   called with the window's tabs, left to right, whenever they change
    */
   onState(callback) {

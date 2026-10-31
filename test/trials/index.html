@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>PDFLion trials</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icon.png" />
+    <link rel="stylesheet" href="trials.css" />
+    <script type="module" src="index.js"></script>
+  </head>
+  <body>
+    <header><h1>PDFLion trials</h1></header>
+    <main>
+      <p>
+        What a web app of PDFLion for the iPad needs to know first. Each trial shows its results and sends them to the Mac serving
+        these pages, into <code>test/trials/results.jsonl</code>. Try them in Safari, then again
+        after Share &gt; Add to Home Screen.
+      </p>
+      <dl id="device"></dl>
+      <ol id="trials"></ol>
+      <p><a href="viewer/web/viewer.html?file=..%2F..%2Fdocs%2Ftracemonkey.pdf">Today's viewer</a>
+        with pdf.js's demo, and with <a href="viewer/web/viewer.html?file=..%2F..%2Fdocs%2Fscans.pdf">large scans</a>.</p>
+    </main>
+    <section id="results"></section>
+  </body>
+</html>

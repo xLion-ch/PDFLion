@@ -23,7 +23,13 @@
  * (what the option boxes show), src/display/editor/tools.js (updateMode,
  * updateParams), src/display/editor/draw.js (updateDefaultParams),
  * src/shared/util.js (the editor and parameter types) and web/viewer.css (the
- * toolbar's groups, and the steps it takes as a window narrows).
+ * toolbar's groups, and the steps it takes as a window narrows); for a pen's
+ * eraser end src/display/editor/tools.js (updateMode enables the layers
+ * before web/pdf_viewer.js dispatches annotationeditormodechanged) and
+ * src/display/editor/annotation_editor_layer.js (presses other than button 0
+ * draw nothing); for Home's thumbnails src/display/api.js (getPage,
+ * getViewport, and render's annotationMode and background) and
+ * web/base_pdf_page_view.js (pagerendered).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. The page overview shows those thumbnails across the
@@ -31,6 +37,9 @@
  * @cantoo/pdf-lib, which protocol.js serves at /lib/ and this script loads the
  * first time it's needed. It changes a document as an incremental update,
  * after its bytes.
+ *
+ * It works out /lib/ and /doc/ from where the viewer is, at /viewer/web/, so
+ * that it works below another path than the origin's root too.
  */
 "use strict";
 
@@ -56,8 +65,17 @@
   const EDITOR_NONE = 0;
   const EDITOR_INK = 15;
 
+  /**
+   * A pen's eraser end, as Pointer Events number its button: a press with it
+   * is a `pen` pointer's, with `button` 5.
+   */
+  const PEN_ERASER_BUTTON = 5;
+
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
-  const PDF_LIB_URL = "/lib/pdf-lib.min.js";
+  const PDF_LIB_URL = new URL("../../lib/pdf-lib.min.js", location.href).href;
+
+  /** Where main serves opened documents: `/doc/<token>/<name>`. */
+  const DOCUMENTS_PATH = new URL("../../doc/", location.href).pathname;
 
   /**
    * How far a press on a thumbnail moves before pdf.js drags the page:
@@ -138,14 +156,16 @@
    * The toolbar's steps for narrower windows, as classes of #toolbarContainer
    * that overrides.css styles: 32 px buttons, then pdf.js's medium view,
    * which hides Print, its small view, which hides the previous and next page
-   * buttons, and its hidden zoom menu. Each step keeps those before it.
-   * layoutToolbar() takes the first at which the toolbar fits.
+   * buttons, its hidden zoom menu, and last no Home button, which File > Home
+   * stands in for. Each step keeps those before it. layoutToolbar() takes the
+   * first at which the toolbar fits.
    */
   const TOOLBAR_STEPS = [
     "pdflionToolbarCompact",
     "pdflionToolbarMedium",
     "pdflionToolbarSmall",
     "pdflionToolbarNarrow",
+    "pdflionToolbarWithoutHome",
   ];
 
   /**
@@ -159,6 +179,21 @@
     ["(max-width: 750px)", 2],
   ];
 
+  /**
+   * Home's thumbnail of a document: its first page, fitting this many CSS
+   * pixels at the screen's pixel ratio, and at most THUMBNAIL_MAX_PIXELS each
+   * way and THUMBNAIL_MAX_BYTES, as src/shared/thumbnail.js checks it.
+   */
+  const THUMBNAIL_BOX = { width: 180, height: 240 };
+  const THUMBNAIL_MAX_PIXELS = 512;
+  const THUMBNAIL_MAX_BYTES = 256 * 1024;
+
+  /**
+   * `AnnotationMode.ENABLE_STORAGE` in src/shared/util.js: form values and
+   * annotations as they are.
+   */
+  const ANNOTATIONS_AS_THEY_ARE = 3;
+
   /** The step of pdf.js's medium view, from which all favourites are in the ★ menu. */
   const MEDIUM_STEP = 2;
 
@@ -169,8 +204,11 @@
   const SAVE_FAVOURITE = "Save as Favourite";
   const FAVOURITE_NOTE_TIME = 2000;
 
-  /** Whether shortcuts use ⌘, as on macOS, rather than Ctrl, as on Windows. */
-  const isMac = window.pdflion.platform === "darwin";
+  /**
+   * Whether shortcuts use ⌘, as on macOS and iPad keyboards, rather than
+   * Ctrl, as on Windows and Linux, whose menus also have F4.
+   */
+  const usesCommandKey = window.pdflion.commandKey === "meta";
 
   /**
    * Whether the document has changes since it was opened or last saved, as
@@ -304,6 +342,8 @@
    *   and that drawing
    * @property {boolean} redrawing whether a redraw waits for the next frame
    * @property {AbortController} listening for the drag's pointer events
+   * @property {boolean} inPlace whether it's a pen's eraser end, erasing while
+   *   another tool is on, which stays on
    */
 
   /** @type {Gesture | null} */
@@ -318,7 +358,7 @@
 
   /**
    * @typedef {object} Favourite a drawing tool with its settings, as main
-   *   keeps them for every tab (src/main/tools.js)
+   *   keeps them for every tab (src/shared/tools.js)
    * @property {"highlight" | "freetext" | "ink"} tool pdf.js's name for it
    * @property {string} color `#rrggbb`, in lower case
    * @property {number} [thickness] for highlight and ink
@@ -434,6 +474,7 @@
       // pdf.js hasn't bound its events yet.
       addFilesAsPageChanges(app);
       // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
+      addHomeButton();
       overviewButton = addOverviewButton(app);
       pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
       eraserTool = addEraserTool(app);
@@ -455,7 +496,10 @@
           trackEdits(app);
           checkLocked(app);
           // A reopened document shows changes to the file, not the file.
-          if (!reopening) noteDroppable(app);
+          if (!reopening) {
+            noteDroppable(app);
+            thumbnailOnceShown(app);
+          }
         });
         // Pages moved, copied or deleted in the thumbnails, or that change undone.
         app.eventBus.on("pagesedited", () => {
@@ -496,7 +540,7 @@
   function isDocumentUrl(url) {
     if (typeof url !== "string") return false;
     const parsed = URL.parse(url, location.href);
-    return parsed?.origin === location.origin && parsed.pathname.startsWith("/doc/");
+    return parsed?.origin === location.origin && parsed.pathname.startsWith(DOCUMENTS_PATH);
   }
 
   /**
@@ -588,8 +632,8 @@
    * @returns {boolean}
    */
   function isMenuShortcut({ key, metaKey, ctrlKey, altKey, shiftKey }) {
-    if (key === "F4") return !isMac && !metaKey && !ctrlKey && !altKey && !shiftKey;
-    const [commandKey, otherKey] = isMac ? [metaKey, ctrlKey] : [ctrlKey, metaKey];
+    if (key === "F4") return !usesCommandKey && !metaKey && !ctrlKey && !altKey && !shiftKey;
+    const [commandKey, otherKey] = usesCommandKey ? [metaKey, ctrlKey] : [ctrlKey, metaKey];
     if (!commandKey || otherKey || altKey) return false;
     switch (key.toLowerCase()) {
       case "o":
@@ -749,10 +793,73 @@
         updateEdited(app);
       }
       noteDroppable(app);
+      sendThumbnail(app);
       return true;
     } finally {
       busy = false;
       updatePageButtons(app);
+    }
+  }
+
+  /**
+   * Has Home's thumbnail made once the viewer has shown a page, so that it
+   * doesn't hold up the first one.
+   *
+   * @param {any} app
+   */
+  function thumbnailOnceShown(app) {
+    if (typeof window.pdflion.setThumbnail !== "function") return;
+    const { pdfDocument } = app;
+    app.eventBus.on(
+      "pagerendered",
+      () => {
+        if (app.pdfDocument === pdfDocument) sendThumbnail(app);
+      },
+      { once: true },
+    );
+  }
+
+  /**
+   * Renders the first page for Home, as a PNG, with its form values and
+   * annotations as they are, and hands it to the host, which keeps it for a
+   * document with a file. A PNG too large to keep is rendered smaller.
+   *
+   * @param {any} app
+   */
+  async function sendThumbnail(app) {
+    const { pdfDocument } = app;
+    if (typeof window.pdflion.setThumbnail !== "function" || !pdfDocument) return;
+    try {
+      const page = await pdfDocument.getPage(1);
+      const { width, height } = page.getViewport({ scale: 1 });
+      const ratio = window.devicePixelRatio || 1;
+      let scale = Math.min(
+        Math.min(THUMBNAIL_BOX.width * ratio, THUMBNAIL_MAX_PIXELS) / width,
+        Math.min(THUMBNAIL_BOX.height * ratio, THUMBNAIL_MAX_PIXELS) / height,
+      );
+      for (let attempt = 0; attempt < 3; attempt++, scale *= 0.7) {
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        // Rounded, not floored, since 612 × (180 / 612) is a hair under 180.
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        await page.render({
+          canvasContext: canvas.getContext("2d"),
+          viewport,
+          annotationMode: ANNOTATIONS_AS_THEY_ARE,
+          background: "white",
+        }).promise;
+        /** @type {Blob | null} */
+        const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        // Another document may have come meanwhile.
+        if (app.pdfDocument !== pdfDocument || !png) return;
+        if (png.size <= THUMBNAIL_MAX_BYTES) {
+          window.pdflion.setThumbnail(new Uint8Array(await png.arrayBuffer()));
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn("Couldn't make the thumbnail:", error);
     }
   }
 
@@ -1485,6 +1592,21 @@
   }
 
   /**
+   * Adds Home to the toolbar, left of the sidebar's button, where the host
+   * shows Home: main's home tab on the desktop.
+   *
+   * @returns {HTMLButtonElement | null}
+   */
+  function addHomeButton() {
+    const sidebarButton = document.getElementById("viewsManagerToggleButton");
+    if (!sidebarButton || typeof window.pdflion.showHome !== "function") return null;
+    const button = makeButton("pdflionHomeButton", "toolbarButton", "Home");
+    button.addEventListener("click", () => window.pdflion.showHome());
+    sidebarButton.before(button);
+    return button;
+  }
+
+  /**
    * Adds Page Overview to the toolbar, right of the sidebar's button.
    *
    * @param {any} app
@@ -1835,7 +1957,8 @@
    * - another tool turns it off. Pencil's button would turn ink mode off,
    *   since the eraser leaves pdf.js showing Pencil on, so it just stops
    *   erasing. Esc turns it off, unless pdf.js or the page overview used it.
-   * - a press on a page starts erasing, and the circle follows the pointer
+   * - a press on a page starts erasing, and the circle follows the pointer. A
+   *   pen's eraser end erases whatever tool is on (startGesture())
    *
    * Its settings are main's, the same in every tab: see followToolSettings().
    *
@@ -1990,15 +2113,34 @@
    * events, so it neither draws nor selects drawings. Where the pointer is on
    * the page is read as each event comes, and erasing there waits its turn.
    *
+   * A pen's eraser end erases too, with the eraser's settings, whatever tool
+   * is on, and that tool stays on: pdf.js has the file's drawings as editors
+   * while any of its tools is. With no tool on, the eraser end turns the
+   * eraser on, and erases once ink mode has them as editors. It stays on, for
+   * Undo, which pdf.js takes only while a tool is on.
+   *
    * @param {any} app
    * @param {PointerEvent} event
    */
   function startGesture(app, event) {
-    if (!erasing || gesture || event.button !== 0) return;
+    const eraserEnd = event.pointerType === "pen" && event.button === PEN_ERASER_BUTTON;
+    if (gesture || !(eraserEnd || (erasing && event.button === 0))) return;
+    const ui = uiManager(app);
     const place = placeOf(app, event);
-    if (!place) return;
+    const tool = app.pdfViewer.annotationEditorMode;
+    if (!ui || !place || tool === EDITOR_DISABLE) return;
     event.stopPropagation();
     event.preventDefault();
+    const inPlace = !erasing && tool !== EDITOR_NONE;
+    if (inPlace) {
+      commitDrawing(ui);
+    } else if (!erasing) {
+      const inkMode = new Promise((resolve) => {
+        app.eventBus.on("annotationeditormodechanged", resolve, { once: true });
+      });
+      startErasing(app);
+      afterErasing(() => inkMode);
+    }
     const listening = new AbortController();
     const started = /** @type {Gesture} */ ({
       pointerId: event.pointerId,
@@ -2008,8 +2150,10 @@
       replacements: new Map(),
       redrawing: false,
       listening,
+      inPlace,
     });
     gesture = started;
+    moveCursor(app, event);
     const options = { capture: true, signal: listening.signal };
     window.addEventListener(
       "pointermove",
@@ -2048,6 +2192,7 @@
     const ended = gesture;
     ended.listening.abort();
     gesture = null;
+    if (ended.inPlace && !erasing && eraserTool) eraserTool.cursor.hidden = true;
     afterErasing(async () => {
       await redraw(app, ended);
       const ui = uiManager(app);
@@ -2294,13 +2439,14 @@
 
   /**
    * Shows the eraser's circle where the pointer is, as large as the eraser at
-   * the page's zoom, or hides it off the pages.
+   * the page's zoom, or hides it off the pages: while the eraser is on, and
+   * while a pen's eraser end erases with another tool on.
    *
    * @param {any} app
    * @param {PointerEvent} event
    */
   function moveCursor(app, event) {
-    if (!erasing || !eraserTool) return;
+    if (!(erasing || gesture?.inPlace) || !eraserTool) return;
     const { cursor } = eraserTool;
     const place = placeOf(app, event);
     cursor.hidden = !place;

@@ -1,6 +1,7 @@
 /**
  * The tool settings every tab shares, kept in state.json: the eraser's mode
- * and size, under `toolSettings`, and the favourites, under `favourites`.
+ * and size and whether only a pen draws, under `toolSettings`, and the
+ * favourites, under `favourites`.
  * tools.js checks them. A change from one tab reaches every tab, so that all
  * windows show the same favourites. A favourite's context menu is native.
  *
@@ -11,19 +12,24 @@ import { ipcMain, Menu } from "electron";
 import { fromViewer } from "./ipc.js";
 import { getState, setState } from "./state.js";
 import * as tabs from "./tabs.js";
-import { parseFavourite, parseToolSettings, readToolSettings, removeFavourite } from "./tools.js";
+import {
+  parseFavourite,
+  parseToolSettings,
+  readToolSettings,
+  removeFavourite,
+} from "../shared/tools.js";
 
 /** Must run once the app is ready, before any window loads. */
 export function handleToolSettings() {
   ipcMain.handle("pdflion:get-tool-settings", (event) => {
     if (!tabs.fromWebContents(event.sender) || !fromViewer(event)) return null;
-    return toolSettings();
+    return currentToolSettings();
   });
 
   ipcMain.on("pdflion:set-tool-settings", (event, settings) => {
     const changes = parseToolSettings(settings);
     if (!tabs.fromWebContents(event.sender) || !fromViewer(event) || !changes) return;
-    update(changes);
+    updateToolSettings(changes);
   });
 
   ipcMain.on("pdflion:favourite-menu", (event, value) => {
@@ -35,28 +41,39 @@ export function handleToolSettings() {
     Menu.buildFromTemplate([
       {
         label: "Remove Favourite",
-        click: () => update({ favourites: removeFavourite(toolSettings().favourites, favourite) }),
+        click: () =>
+          updateToolSettings({
+            favourites: removeFavourite(currentToolSettings().favourites, favourite),
+          }),
       },
     ]).popup({ window: win });
   });
 }
 
-/** @returns {import("./tools.js").ToolSettings} */
-function toolSettings() {
+/** @returns {import("../shared/tools.js").ToolSettings} the settings every tab shares */
+export function currentToolSettings() {
   return readToolSettings(getState("toolSettings"), getState("favourites"));
 }
 
 /**
- * Stores changed tool settings, and sends every tab all of them.
+ * Stores changed tool settings, from a tab or an import, and sends every tab
+ * all of them.
  *
- * @param {Partial<import("./tools.js").ToolSettings>} changes
+ * @param {Partial<import("../shared/tools.js").ToolSettings>} changes checked
+ *   with tools.js
  */
-function update({ eraser, favourites }) {
-  if (eraser) setState("toolSettings", { eraser });
+export function updateToolSettings({ eraser, penOnly, favourites }) {
+  if (eraser || penOnly !== undefined) {
+    const current = currentToolSettings();
+    setState("toolSettings", {
+      eraser: eraser ?? current.eraser,
+      penOnly: penOnly ?? current.penOnly,
+    });
+  }
   if (favourites) setState("favourites", favourites);
-  const settings = toolSettings();
+  const settings = currentToolSettings();
   for (const tab of tabs.allTabs()) {
-    if (!tab.webContents.isDestroyed()) {
+    if (!tabs.isHome(tab) && !tab.webContents.isDestroyed()) {
       tab.webContents.send("pdflion:tool-settings-changed", settings);
     }
   }

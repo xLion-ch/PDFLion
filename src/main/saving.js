@@ -6,22 +6,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { app, dialog } from "electron";
+import { saveError } from "../shared/wording.js";
 import * as documents from "./documents.js";
 import { docPath } from "./routes.js";
 import * as tabs from "./tabs.js";
-
-/**
- * Phrased like macOS's "could not be saved" alerts.
- * @type {Record<string, string>}
- */
-const SAVE_ERRORS = {
-  EACCES: "You don’t have permission to save the file.",
-  EPERM: "You don’t have permission to save the file.",
-  EROFS: "The volume is read-only.",
-  ENOSPC: "There isn’t enough space on the disk.",
-  // Windows: another app has the file open.
-  EBUSY: "The file is in use by another app.",
-};
 
 /**
  * Writes a tab's document over its file.
@@ -107,9 +95,5 @@ async function realTarget(file) {
  * @param {NodeJS.ErrnoException} error
  */
 async function showSaveError(win, file, error) {
-  await dialog.showMessageBox(win, {
-    type: "warning",
-    message: `The document “${path.basename(file)}” could not be saved.`,
-    detail: (error.code && SAVE_ERRORS[error.code]) || error.message,
-  });
+  await dialog.showMessageBox(win, { type: "warning", ...saveError(path.basename(file), error) });
 }
