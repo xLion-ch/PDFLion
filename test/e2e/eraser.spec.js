@@ -47,6 +47,37 @@ async function drag(page, points) {
 }
 
 /**
+ * Drags a pen's eraser end along points of the first page, in PDF
+ * coordinates. Playwright's mouse has no such button, so these are the page's
+ * own pointer events, as Chromium sends them for a pen: button 5 for the
+ * eraser end's press and lift, and buttons 32 while it's down.
+ *
+ * @param {Page} page
+ * @param {number[][]} points
+ */
+async function eraseWithPen(page, points) {
+  const inWindow = [];
+  for (const [x, y] of points) inWindow.push(await toWindow(page, x, y));
+  await page.evaluate((points) => {
+    /**
+     * @param {string} type
+     * @param {number[]} point
+     * @param {number} button
+     * @param {number} buttons
+     */
+    const send = (type, [clientX, clientY], button, buttons) => {
+      const target = document.elementFromPoint(clientX, clientY) ?? document.body;
+      const init = { bubbles: true, cancelable: true, composed: true, clientX, clientY };
+      const pen = { pointerId: 2, pointerType: "pen", isPrimary: true, button, buttons };
+      target.dispatchEvent(new PointerEvent(type, { ...init, ...pen }));
+    };
+    send("pointerdown", points[0], 5, 32);
+    for (const point of points.slice(1)) send("pointermove", point, -1, 32);
+    send("pointerup", points.at(-1) ?? points[0], 5, 0);
+  }, inWindow);
+}
+
+/**
  * @param {Page} page
  * @returns {Promise<string[]>} the first page's drawings and highlights, as
  *   pdf.js's editors, with the number of strokes of each drawing
@@ -144,6 +175,54 @@ test("erases an ink annotation from the file, which Save deletes", async ({ pdfl
   await expect.poll(() => isEdited(app, page)).toBe(false);
   await app.close();
 
+  ({ page } = await pdflion([file]));
+  expect(await annotations(page)).toEqual([]);
+});
+
+test("a pen's eraser end erases with Pencil on, which stays on", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  const { page } = await pdflion([file]);
+  const pencil = page.locator("#editorInkButton");
+  await pencil.click();
+  await drag(page, [[100, 650], [300, 660]]);
+  await page.keyboard.press("Escape");
+  await drag(page, [[100, 550], [300, 560]]);
+  expect(await drawings(page)).toHaveLength(1);
+
+  // Across both, the second still Pencil's open drawing.
+  await eraseWithPen(page, [[200, 700], [200, 500]]);
+  await expect.poll(() => drawings(page)).toEqual([]);
+  expect(await isErasing(page)).toBe(false);
+  await expect(pencil).toHaveClass(/toggled/);
+  await expect(page.locator("#pdflionEraserCursor")).toBeHidden();
+
+  // One step to undo, and Pencil draws on.
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1", "ink of 1"]);
+  await drag(page, [[100, 450], [300, 460]]);
+  await page.keyboard.press("Escape");
+  await expect.poll(() => drawings(page)).toHaveLength(3);
+});
+
+test("a pen's eraser end with no tool on turns the eraser on, and erases the file's drawings", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "ink.pdf");
+  await writeInk(file);
+  let { app, page } = await pdflion([file]);
+  expect(await drawings(page)).toEqual([]);
+
+  // Across the second stroke, which pdf.js has as a drawing only in a tool.
+  const [x, y] = INK_STROKES[1].slice(20, 22);
+  await eraseWithPen(page, [[x, y - 30], [x, y + 30]]);
+  await expect.poll(() => isErasing(page)).toBe(true);
+  await expect(page.locator("#pdflionEditorEraserButton")).toHaveClass(/toggled/);
+  await expect.poll(() => drawings(page)).toEqual([]);
+
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  await app.close();
   ({ page } = await pdflion([file]));
   expect(await annotations(page)).toEqual([]);
 });

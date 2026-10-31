@@ -23,7 +23,11 @@
  * (what the option boxes show), src/display/editor/tools.js (updateMode,
  * updateParams), src/display/editor/draw.js (updateDefaultParams),
  * src/shared/util.js (the editor and parameter types) and web/viewer.css (the
- * toolbar's groups, and the steps it takes as a window narrows).
+ * toolbar's groups, and the steps it takes as a window narrows); for a pen's
+ * eraser end src/display/editor/tools.js (updateMode enables the layers
+ * before web/pdf_viewer.js dispatches annotationeditormodechanged) and
+ * src/display/editor/annotation_editor_layer.js (presses other than button 0
+ * draw nothing).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. The page overview shows those thumbnails across the
@@ -55,6 +59,12 @@
   const EDITOR_DISABLE = -1;
   const EDITOR_NONE = 0;
   const EDITOR_INK = 15;
+
+  /**
+   * A pen's eraser end, as Pointer Events number its button: a press with it
+   * is a `pen` pointer's, with `button` 5.
+   */
+  const PEN_ERASER_BUTTON = 5;
 
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
   const PDF_LIB_URL = "/lib/pdf-lib.min.js";
@@ -304,6 +314,8 @@
    *   and that drawing
    * @property {boolean} redrawing whether a redraw waits for the next frame
    * @property {AbortController} listening for the drag's pointer events
+   * @property {boolean} inPlace whether it's a pen's eraser end, erasing while
+   *   another tool is on, which stays on
    */
 
   /** @type {Gesture | null} */
@@ -1835,7 +1847,8 @@
    * - another tool turns it off. Pencil's button would turn ink mode off,
    *   since the eraser leaves pdf.js showing Pencil on, so it just stops
    *   erasing. Esc turns it off, unless pdf.js or the page overview used it.
-   * - a press on a page starts erasing, and the circle follows the pointer
+   * - a press on a page starts erasing, and the circle follows the pointer. A
+   *   pen's eraser end erases whatever tool is on (startGesture())
    *
    * Its settings are main's, the same in every tab: see followToolSettings().
    *
@@ -1990,15 +2003,34 @@
    * events, so it neither draws nor selects drawings. Where the pointer is on
    * the page is read as each event comes, and erasing there waits its turn.
    *
+   * A pen's eraser end erases too, with the eraser's settings, whatever tool
+   * is on, and that tool stays on: pdf.js has the file's drawings as editors
+   * while any of its tools is. With no tool on, the eraser end turns the
+   * eraser on, and erases once ink mode has them as editors. It stays on, for
+   * Undo, which pdf.js takes only while a tool is on.
+   *
    * @param {any} app
    * @param {PointerEvent} event
    */
   function startGesture(app, event) {
-    if (!erasing || gesture || event.button !== 0) return;
+    const eraserEnd = event.pointerType === "pen" && event.button === PEN_ERASER_BUTTON;
+    if (gesture || !(eraserEnd || (erasing && event.button === 0))) return;
+    const ui = uiManager(app);
     const place = placeOf(app, event);
-    if (!place) return;
+    const tool = app.pdfViewer.annotationEditorMode;
+    if (!ui || !place || tool === EDITOR_DISABLE) return;
     event.stopPropagation();
     event.preventDefault();
+    const inPlace = !erasing && tool !== EDITOR_NONE;
+    if (inPlace) {
+      commitDrawing(ui);
+    } else if (!erasing) {
+      const inkMode = new Promise((resolve) => {
+        app.eventBus.on("annotationeditormodechanged", resolve, { once: true });
+      });
+      startErasing(app);
+      afterErasing(() => inkMode);
+    }
     const listening = new AbortController();
     const started = /** @type {Gesture} */ ({
       pointerId: event.pointerId,
@@ -2008,8 +2040,10 @@
       replacements: new Map(),
       redrawing: false,
       listening,
+      inPlace,
     });
     gesture = started;
+    moveCursor(app, event);
     const options = { capture: true, signal: listening.signal };
     window.addEventListener(
       "pointermove",
@@ -2048,6 +2082,7 @@
     const ended = gesture;
     ended.listening.abort();
     gesture = null;
+    if (ended.inPlace && !erasing && eraserTool) eraserTool.cursor.hidden = true;
     afterErasing(async () => {
       await redraw(app, ended);
       const ui = uiManager(app);
@@ -2294,13 +2329,14 @@
 
   /**
    * Shows the eraser's circle where the pointer is, as large as the eraser at
-   * the page's zoom, or hides it off the pages.
+   * the page's zoom, or hides it off the pages: while the eraser is on, and
+   * while a pen's eraser end erases with another tool on.
    *
    * @param {any} app
    * @param {PointerEvent} event
    */
   function moveCursor(app, event) {
-    if (!erasing || !eraserTool) return;
+    if (!(erasing || gesture?.inPlace) || !eraserTool) return;
     const { cursor } = eraserTool;
     const place = placeOf(app, event);
     cursor.hidden = !place;

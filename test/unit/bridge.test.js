@@ -2005,8 +2005,10 @@ describe("bridge.js eraser", () => {
    * @param {ReturnType<typeof loadBridge>} bridge
    * @param {{ id: string, editorType: string, strokes: number[][] }[]} drawings
    * @param {{ mode: string, size: number }} [eraser]
+   * @param {{ on?: boolean }} [options] on: false leaves the eraser off, and
+   *   pdf.js with no tool on
    */
-  async function erasing(bridge, drawings, eraser = { mode: "object", size: 10 }) {
+  async function erasing(bridge, drawings, eraser = { mode: "object", size: 10 }, { on = true } = {}) {
     await bridge.load();
     const { app, uiManager, viewerContainer, calls } = bridge;
     const pageDiv = {
@@ -2088,23 +2090,36 @@ describe("bridge.js eraser", () => {
 
     app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
     bridge.pdflion.toolSettingsListener?.({ eraser, favourites: [] });
-    eraserOf(bridge).button.listeners.click();
+    if (on) eraserOf(bridge).button.listeners.click();
     /** @type {any} */
     let down;
     return {
       editors,
       commands,
+      pageDiv,
       /**
        * Drags pointer 7 along points in the window, which at 100 % are PDF
        * points from the top. The drag stays down unless `up`.
        *
        * @param {number[][]} points
        * @param {boolean} [up]
+       * @param {{ pointerType?: string, button?: number }} [pointer] the
+       *   press's, a mouse's left button unless given
        */
-      async drag(points, up = true) {
+      async drag(points, up = true, pointer = {}) {
         const [[clientX, clientY], ...moves] = points;
         if (!down) {
-          down = { target: pageDiv, button: 0, pointerId: 7, clientX, clientY, stopped: false, prevented: false };
+          down = {
+            target: pageDiv,
+            pointerType: "mouse",
+            button: 0,
+            ...pointer,
+            pointerId: 7,
+            clientX,
+            clientY,
+            stopped: false,
+            prevented: false,
+          };
           Object.assign(down, {
             stopPropagation: () => (down.stopped = true),
             preventDefault: () => (down.prevented = true),
@@ -2221,6 +2236,96 @@ describe("bridge.js eraser", () => {
     assert.deepEqual(page.ids(), []);
     page.commands[0].undo();
     assert.deepEqual(page.ids(), ["short"]);
+  });
+
+  /** A press with a pen's eraser end, as Pointer Events report it. */
+  const ERASER_END = { pointerType: "pen", button: 5 };
+
+  /** Drawings across and away from a drag down x 200, from y 50 to 150. */
+  const CROSSED_AND_MISSED = [
+    { id: "crossed", editorType: "ink", strokes: [[100, 700, 300, 700]] },
+    { id: "missed", editorType: "ink", strokes: [[100, 500, 300, 500]] },
+  ];
+
+  it("erases with a pen's eraser end too, while it's on", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED);
+    await page.drag([[200, 50], [200, 150]], true, ERASER_END);
+    assert.deepEqual(page.ids(), ["missed"]);
+    assert.equal(page.commands.length, 1);
+  });
+
+  it("erases with a pen's eraser end whatever tool is on, which stays on", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED, undefined, { on: false });
+    switchTool(bridge, 9);
+    const unselected = named(bridge.calls, "ui.unselectAll").length;
+    const [cursor] = bridge.outerContainer.children;
+
+    const down = await page.drag([[200, 50], [200, 150]], false, ERASER_END);
+    assert.ok(down.stopped && down.prevented, "pdf.js gets no press to draw with");
+    // As when the eraser turns on: Pencil's strokes become a drawing first.
+    assert.equal(named(bridge.calls, "ui.unselectAll").length - unselected, 2);
+    assert.equal(cursor.hidden, false, "the circle shows while it erases");
+    await page.drag([[200, 150]]);
+
+    assert.deepEqual(page.ids(), ["missed"]);
+    assert.equal(page.commands.length, 1, "one step to undo, as with the eraser");
+    page.commands[0].undo();
+    assert.deepEqual(page.ids(), ["missed", "crossed"]);
+    assert.equal(mode(bridge), 9);
+    assert.ok(!isErasing(bridge));
+    assert.equal(cursor.hidden, true);
+  });
+
+  it("turns on for a pen's eraser end with no tool on, and erases once ink mode is", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED, undefined, { on: false });
+    // pdf.js switches tools asynchronously, and has the file's drawings as
+    // editors only once its new mode is on.
+    const { app, uiManager } = bridge;
+    const switching = app.eventBus.listeners.find(({ name }) => name === "switchannotationeditormode");
+    assert.ok(switching);
+    switching.listener = ({ mode }) =>
+      setImmediate(() => {
+        app.pdfViewer.annotationEditorMode = mode;
+        app.eventBus.dispatch("annotationeditormodechanged", { mode });
+      });
+    const editorsOnPage = uiManager.getEditors;
+    uiManager.getEditors = function* (/** @type {number} */ pageIndex) {
+      if (mode(bridge) !== 0) yield* editorsOnPage(pageIndex);
+    };
+
+    await page.drag([[200, 50], [200, 150]], true, ERASER_END);
+    assert.ok(isErasing(bridge));
+    assert.equal(mode(bridge), 15);
+    assert.deepEqual(page.ids(), ["missed"]);
+    assert.equal(page.commands.length, 1);
+  });
+
+  it("leaves a pen's tip and other presses to pdf.js while it's off", async () => {
+    const bridge = loadBridge();
+    const page = await erasing(bridge, CROSSED_AND_MISSED, undefined, { on: false });
+    /** @param {object} pointer */
+    const press = (pointer) => {
+      const down = { target: page.pageDiv, pointerId: 9, clientX: 200, clientY: 50, stopped: false, ...pointer };
+      Object.assign(down, { stopPropagation: () => (down.stopped = true), preventDefault: () => {} });
+      bridge.viewerContainer.listeners.pointerdown(down);
+      return down;
+    };
+    switchTool(bridge, 15);
+    for (const pointer of [
+      { pointerType: "pen", button: 0 },
+      { pointerType: "mouse", button: 0 },
+      { pointerType: "mouse", button: 5 },
+    ]) {
+      assert.ok(!press(pointer).stopped, JSON.stringify(pointer));
+    }
+    // Nor the eraser end while pdf.js's tools don't work.
+    bridge.app.pdfViewer.annotationEditorMode = -1;
+    assert.ok(!press(ERASER_END).stopped);
+    await settleAll();
+    assert.deepEqual(page.ids(), ["crossed", "missed"]);
   });
 
   it("goes nowhere without a document to edit", async () => {
