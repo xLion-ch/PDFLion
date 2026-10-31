@@ -267,6 +267,16 @@ export const CREDITS = [
     components: [
       { name: "Chromium", license: "BSD-3-Clause", url: "https://www.chromium.org" },
       { name: "Node.js", license: "MIT", url: "https://nodejs.org" },
+      // Electron's autoUpdater on macOS, which installs the updates there, and
+      // the frameworks it brings into the Mac app.
+      {
+        name: "Squirrel.Mac",
+        by: "GitHub",
+        license: "MIT",
+        url: "https://github.com/Squirrel/Squirrel.Mac",
+      },
+      { name: "Mantle", license: "MIT", url: "https://github.com/Mantle/Mantle" },
+      { name: "ReactiveObjC", license: "MIT", url: "https://github.com/ReactiveCocoa/ReactiveObjC" },
     ],
   },
   {

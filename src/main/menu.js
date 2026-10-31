@@ -110,7 +110,7 @@ function setMenu() {
 /** @returns {Electron.MenuItemConstructorOptions[]} */
 function template() {
   return [
-    ...onMac({ role: "appMenu" }),
+    ...onMac(appMenu()),
     {
       label: "&File",
       submenu: [
@@ -244,8 +244,8 @@ function template() {
       label: "&Help",
       submenu: [
         { label: "PDFLion on &GitHub", click: () => shell.openExternal(REPOSITORY_URL) },
-        ...updateMenuItems(),
-        // On macOS, About is in the app menu.
+        // On macOS, they and About are in the app menu.
+        ...onWindowsAndLinux(...updateMenuItems()),
         ...onWindowsAndLinux({ type: "separator" }, { role: "about", label: `&About ${app.name}` }),
       ],
     },
@@ -253,8 +253,34 @@ function template() {
 }
 
 /**
- * Check for Updates… and the checkbox for automatic checks, in the Help menu
- * of a PDFLion that updates itself (updates.js), before About.
+ * macOS's app menu: the appMenu role's own items, and where PDFLion updates
+ * itself, Check for Updates… after About.
+ *
+ * @returns {Electron.MenuItemConstructorOptions}
+ */
+function appMenu() {
+  if (!hasUpdater) return { role: "appMenu" };
+  return {
+    role: "appMenu",
+    submenu: [
+      { role: "about" },
+      ...updateMenuItems(),
+      { type: "separator" },
+      { role: "services" },
+      { type: "separator" },
+      { role: "hide" },
+      { role: "hideOthers" },
+      { role: "unhide" },
+      { type: "separator" },
+      { role: "quit" },
+    ],
+  };
+}
+
+/**
+ * Check for Updates… and the checkbox for automatic checks, where PDFLion
+ * updates itself (updates.js): after About in the app menu on macOS, and
+ * before About, at the end of the Help menu, on Windows and Linux.
  *
  * @returns {Electron.MenuItemConstructorOptions[]}
  */

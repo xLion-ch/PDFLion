@@ -48,6 +48,9 @@ mac:
   # disable-library-validation that the hardened runtime then needs.
   identity: "-"
   hardenedRuntime: true
+# Makes the Mac app's designated requirement its bundle ID, so that Squirrel.Mac
+# installs the next build as an update.
+afterSign: ./scripts/after-sign.js
 win:
   target:
     - target: nsis

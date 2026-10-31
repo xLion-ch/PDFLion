@@ -20,9 +20,9 @@ A PDF viewer for macOS, Windows and Linux. It's Mozilla's [pdf.js](https://githu
 - Zoom, rotation, search, sidebar, Presentation Mode and printing, all from the menu and the platform's usual shortcuts.
 - Follows the system's light or dark appearance. The viewer also follows the system language; the menus are in English.
 - Remembers where you left the last window, and lists recently opened files.
-- On Windows and Linux, updates itself from the releases on GitHub.
+- Updates itself from the releases on GitHub.
 
-PDFLion's only network requests of its own are its checks for updates, on Windows and Linux (see Updates). Links in a document open in your browser or mail app, and only `http`, `https` and `mailto` links open at all.
+PDFLion's only network requests of its own are its checks for updates (see Updates). Links in a document open in your browser or mail app, and only `http`, `https` and `mailto` links open at all.
 
 ## Installing
 
@@ -45,14 +45,15 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 
 ### Updates
 
-On Windows and Linux, PDFLion checks for a new release 10 seconds after it starts, and every 6 hours while it runs. It downloads one in the background, and then asks whether to restart now. Restart Now first asks about any unsaved changes, as quitting does, then installs the update and starts the new version. Release Notes shows what's new on GitHub.
+PDFLion checks for a new release 10 seconds after it starts, and every 6 hours while it runs. It downloads one in the background, and then asks whether to restart now. Restart Now first asks about any unsaved changes, as quitting does, then installs the update and starts the new version. Release Notes shows what's new on GitHub.
 
+- **macOS:** otherwise the update installs when you quit PDFLion. It updates only once it's in the Applications folder: started from the DMG, or from Downloads without moving it, it says to move it to Applications first.
 - **Windows:** otherwise the update installs when PDFLion quits, without administrator rights.
 - **Linux:** installing asks for an administrator's password, so the update installs only with Restart Now. Help > Check for Updates… offers it again.
 
-Help > Check for Updates… checks at once. Help > Check for Updates Automatically turns the automatic checks off. A check asks GitHub for the latest release, which tells GitHub your computer's IP address, as opening the release page would, and nothing else.
+Check for Updates… checks at once, and Check for Updates Automatically turns the automatic checks off. They're in the PDFLion menu on macOS, and in the Help menu on Windows and Linux. A check asks GitHub for the latest release, which tells GitHub your computer's IP address, as opening the release page would, and nothing else.
 
-On macOS, PDFLion doesn't update itself yet: download each new release from GitHub.
+A copy without Check for Updates… is from before updates came in, and needs the latest release downloaded once.
 
 ## Shortcuts
 
@@ -127,7 +128,7 @@ The main process code is in `src/main/`, one module per concern. [CLAUDE.md](CLA
 
 ## Releasing
 
-Every push to `main` that changes more than Markdown files is a release. Once its tests and builds have passed on macOS, Windows and Linux, CI publishes the GitHub release `v<version>`, tagged on that commit, with the four installers, the two Mac `.zip` files, the update files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml` and the `.blockmap` files), and notes GitHub writes from the pull requests merged since the last release. A run that fails on any platform releases nothing, and running it again for a commit that's released already doesn't release it twice. Pull requests are never released. Copies installed on Windows and Linux find each release within 6 hours, and update to it (see Updates).
+Every push to `main` that changes more than Markdown files is a release. Once its tests and builds have passed on macOS, Windows and Linux, CI publishes the GitHub release `v<version>`, tagged on that commit, with the four installers, the two Mac `.zip` files, the update files (`latest-mac.yml`, `latest.yml`, `latest-linux.yml` and the `.blockmap` files), and notes GitHub writes from the pull requests merged since the last release. A run that fails on any platform releases nothing, and running it again for a commit that's released already doesn't release it twice. Pull requests are never released. Installed copies find each release within 6 hours, and update to it (see Updates).
 
 So `main` only takes changes that passed CI, and the checks by hand come before merging:
 
@@ -155,6 +156,7 @@ On a Mac with Apple silicon:
 - The viewer switches when the appearance changes in System Settings.
 - Print shows the native dialog, with every page.
 - A trackpad pinch zooms the pages, not the whole window.
+- With the previous release downloaded from GitHub, installed in Applications and allowed under Privacy & Security, PDFLion offers the latest one about 10 seconds after it starts. Restart Now with an edited document asks about it first, then installs the update and starts the new version, without a prompt about modifying apps or another Gatekeeper warning. Later, then quitting with ⌘Q, installs it without starting PDFLion again. The previous release started from Downloads without moving it says, after Check for Updates…, that it can't be installed there.
 
 On an Intel Mac, or under Rosetta, which shows only that it starts:
 
@@ -273,6 +275,7 @@ Electron includes:
 
 - [Chromium](https://www.chromium.org) (BSD-3-Clause), and the third-party code listed in its `LICENSES.chromium.html`
 - [Node.js](https://nodejs.org) (MIT)
+- [Squirrel.Mac](https://github.com/Squirrel/Squirrel.Mac) by GitHub, which installs updates on macOS, with [Mantle](https://github.com/Mantle/Mantle) and [ReactiveObjC](https://github.com/ReactiveCocoa/ReactiveObjC) (MIT)
 
 PDFLion is built and tested with:
 

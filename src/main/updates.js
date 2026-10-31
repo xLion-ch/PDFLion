@@ -6,14 +6,15 @@
  * on, downloads a newer release in the background, checks its SHA-512 against
  * those files, and asks whether to restart now.
  *
+ * - macOS: Squirrel.Mac, Electron's own updater, installs the .zip when
+ *   PDFLion quits, or at once with Restart Now. It takes the update from
+ *   electron-updater, and only if it satisfies the running app's designated
+ *   requirement, which scripts/after-sign.js makes the bundle ID.
  * - Windows: the NSIS installer installs it silently, for the user, when
  *   PDFLion quits, or at once with Restart Now.
  * - Linux: dpkg installs the .deb, through pkexec, which asks for an
  *   administrator's password. So only Restart Now installs it, never a quit or
  *   a shutdown.
- * - macOS: not yet. Squirrel.Mac accepts an update only if it satisfies the
- *   running app's designated requirement, which for an ad-hoc signature is
- *   its own hash, so it would reject every one.
  *
  * Releases have no signature, so whoever can publish one on xLion-ch/PDFLion
  * can run code on every installed copy. The checks are PDFLion's only network
@@ -24,12 +25,13 @@
  * local feed with --pdflion-update-config=<app-update.yml>. The packaged app
  * ignores that switch, so nothing on its command line can redirect them.
  */
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, autoUpdater as squirrel, BrowserWindow, dialog, shell } from "electron";
 import { getState, setState } from "./state.js";
 import { reviewUnsavedChanges } from "./unsaved.js";
 
 const isMac = process.platform === "darwin";
 const isWindows = process.platform === "win32";
+const isLinux = process.platform === "linux";
 
 const RELEASES_URL = "https://github.com/xLion-ch/PDFLion/releases/tag/";
 
@@ -41,6 +43,15 @@ const STATE_KEY = "updates";
 const RESTART_NOW = "Restart Now";
 const LATER = "Later";
 const RELEASE_NOTES = "Release Notes";
+
+/** Where Check for Updates… is: the app menu on macOS. */
+const CHECK_FOR_UPDATES = isMac ? "PDFLion > Check for Updates…" : "Help > Check for Updates…";
+
+/**
+ * Squirrel.Mac's error for an app it can't replace: on a disk image, or in
+ * Downloads, where macOS runs a downloaded app from a read-only copy.
+ */
+const READ_ONLY_VOLUME = /read-only volume/i;
 
 /**
  * The ready prompt's buttons in each platform's order, as the save prompt's in
@@ -56,10 +67,10 @@ const BUTTONS = isMac
 const testConfig = app.isPackaged ? "" : app.commandLine.getSwitchValue("pdflion-update-config");
 
 /**
- * Whether this copy of PDFLion updates itself: a packaged build on Windows or
- * Linux, or the dev app pointed at a local feed.
+ * Whether this copy of PDFLion updates itself: a packaged build, or the dev
+ * app pointed at a local feed.
  */
-export const hasUpdater = !isMac && (app.isPackaged || testConfig !== "");
+export const hasUpdater = app.isPackaged || testConfig !== "";
 
 /** @type {Promise<import("electron-updater").AppUpdater> | undefined} */
 let updaterPromise;
@@ -78,6 +89,12 @@ let offering = false;
 
 /** Whether Restart Now asks about unsaved changes, or installs. */
 let restarting = false;
+
+/** macOS: the version electron-updater last handed to Squirrel.Mac. */
+let handedOver = "";
+
+/** macOS: whether Squirrel.Mac has that version, checked and ready to install. */
+let squirrelReady = false;
 
 /** Must run once the app is ready, before any window opens. */
 export function startUpdates() {
@@ -119,9 +136,10 @@ export function isRestartingForUpdate() {
 }
 
 /**
- * Help > Check for Updates…: checks, downloads what it finds, and offers it,
- * also a version the user chose Later for. Unlike an automatic check, it says
- * when PDFLion is up to date, and when the check or the download failed.
+ * Check for Updates…: checks, downloads what it finds, and offers it, also a
+ * version the user chose Later for. Unlike an automatic check, it says when
+ * PDFLion is up to date, and when the check, the download or, on macOS,
+ * handing the update to Squirrel.Mac failed.
  */
 export async function checkForUpdates() {
   if (!hasUpdater || checkingFromMenu) return;
@@ -147,14 +165,22 @@ export async function checkForUpdates() {
       });
       return;
     }
+    const { version } = result.updateInfo;
     try {
       await result.downloadPromise;
-    } catch {
-      await showMessage({
-        type: "warning",
-        message: `PDFLion ${result.updateInfo.version} couldn’t be downloaded.`,
-        detail: "Try again later.",
-      });
+      if (isMac) await whenSquirrelReady();
+    } catch (error) {
+      // On macOS, an error after electron-updater handed the update over is
+      // Squirrel.Mac's.
+      await showMessage(
+        isMac && handedOver === version
+          ? squirrelFailed(version, /** @type {Error} */ (error))
+          : {
+              type: "warning",
+              message: `PDFLion ${version} couldn’t be downloaded.`,
+              detail: "Try again later.",
+            },
+      );
       return;
     }
   } finally {
@@ -203,13 +229,19 @@ async function createUpdater() {
   const { default: updaterModule } = await import("electron-updater");
   // Not its autoUpdater, which picks the Linux updater by the package-type
   // file only the .deb has, and would be the AppImage one in the dev app.
-  const updater = isWindows ? new updaterModule.NsisUpdater() : new updaterModule.DebUpdater();
+  const updater = isMac
+    ? new updaterModule.MacUpdater()
+    : isWindows
+      ? new updaterModule.NsisUpdater()
+      : new updaterModule.DebUpdater();
   updater.autoDownload = true;
   updater.allowDowngrade = false;
   // electron-updater allows them while the running version is one, as a pull
   // request's build is.
   updater.allowPrerelease = false;
-  updater.autoInstallOnAppQuit = isWindows;
+  // On macOS also what makes electron-updater hand the update to Squirrel.Mac
+  // as soon as it has it, rather than at Restart Now.
+  updater.autoInstallOnAppQuit = !isLinux;
   updater.disableWebInstaller = true;
   // electron-updater sends every check a random ID it keeps in userData, for
   // rolling out releases in stages, which PDFLion's don't. GitHub would see
@@ -220,10 +252,71 @@ async function createUpdater() {
     updater.updateConfigPath = testConfig;
   }
 
-  updater.on("update-downloaded", ({ version }) => {
-    if (!checkingFromMenu && !postponed.has(version)) offer(version);
-  });
+  if (isMac) {
+    // electron-updater's update-downloaded comes once it has the zip. Then
+    // Squirrel.Mac fetches it from electron-updater's proxy and checks it
+    // against the running app's designated requirement, and on a read-only
+    // volume it refuses. Only its own update-downloaded means the update can
+    // install, about a second later. electron-updater's MacUpdater listens
+    // before this does, so it knows by then too.
+    updater.on("update-downloaded", ({ version }) => {
+      handedOver = version;
+      squirrelReady = false;
+    });
+    squirrel.on("update-downloaded", () => {
+      squirrelReady = true;
+      if (!checkingFromMenu && !postponed.has(handedOver)) offer(handedOver);
+    });
+  } else {
+    updater.on("update-downloaded", ({ version }) => {
+      if (!checkingFromMenu && !postponed.has(version)) offer(version);
+    });
+  }
   return updater;
+}
+
+/**
+ * macOS: resolves once Squirrel.Mac has the update electron-updater handed it,
+ * and rejects with Squirrel's error.
+ *
+ * @returns {Promise<void>}
+ */
+function whenSquirrelReady() {
+  if (squirrelReady) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const ready = () => {
+      squirrel.off("error", fail);
+      resolve();
+    };
+    /** @param {Error} error */
+    const fail = (error) => {
+      squirrel.off("update-downloaded", ready);
+      reject(error);
+    };
+    squirrel.once("update-downloaded", ready).once("error", fail);
+  });
+}
+
+/**
+ * macOS: what to say when Squirrel.Mac refused an update.
+ *
+ * @param {string} version
+ * @param {Error} error
+ * @returns {Electron.MessageBoxOptions}
+ */
+function squirrelFailed(version, error) {
+  if (READ_ONLY_VOLUME.test(String(error?.message))) {
+    return {
+      type: "warning",
+      message: `PDFLion ${version} can’t be installed here.`,
+      detail: `PDFLion can’t update itself while it runs from a disk image or from Downloads. Move it to the Applications folder, open it from there, and choose ${CHECK_FOR_UPDATES} again.`,
+    };
+  }
+  return {
+    type: "warning",
+    message: `PDFLion ${version} can’t be installed.`,
+    detail: "Download it from PDFLion’s releases on GitHub instead.",
+  };
 }
 
 /**
@@ -241,9 +334,9 @@ async function offer(version) {
       const { response } = await showMessage({
         type: "info",
         message: `PDFLion ${version} is ready to install.`,
-        detail: isWindows
-          ? "It installs when PDFLion quits."
-          : "Installing it asks for an administrator’s password. Help > Check for Updates… offers it again later.",
+        detail: isLinux
+          ? `Installing it asks for an administrator’s password. ${CHECK_FOR_UPDATES} offers it again later.`
+          : "It installs when PDFLion quits.",
         buttons: BUTTONS,
         defaultId: BUTTONS.indexOf(RESTART_NOW),
         cancelId: BUTTONS.indexOf(LATER),
@@ -267,7 +360,8 @@ async function offer(version) {
  * Restart Now: asks about every edited tab, as quitting does, then installs
  * and quits, and relaunches the new version. electron-updater's
  * quitAndInstall() can't be taken back: on Windows it starts the installer
- * before quitting, so the prompts come first.
+ * before quitting, and on macOS Squirrel.Mac closes every window, then quits
+ * once they're closed, so the prompts come first.
  *
  * @param {string} version
  */
@@ -283,12 +377,12 @@ async function restart(version) {
   await showMessage({
     type: "warning",
     message: `PDFLion ${version} wasn’t installed.`,
-    detail: isWindows
-      ? "Help > Check for Updates… offers it again."
-      : "Installing it needs an administrator’s password. Help > Check for Updates… offers it again.",
+    detail: isLinux
+      ? `Installing it needs an administrator’s password. ${CHECK_FOR_UPDATES} offers it again.`
+      : `${CHECK_FOR_UPDATES} offers it again.`,
   });
-  // The save prompts may have closed every window.
-  if (BrowserWindow.getAllWindows().length === 0) app.quit();
+  // On Windows and Linux, the save prompts may have closed every window.
+  if (!isMac && BrowserWindow.getAllWindows().length === 0) app.quit();
 }
 
 /**
