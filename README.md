@@ -98,6 +98,25 @@ GitHub Actions runs the tests on macOS, Windows and Linux for every pull request
 
 pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. PDFLion adds to it from outside, in `src/viewer/`, and the main process is in `src/main/`. [CLAUDE.md](CLAUDE.md) describes the architecture, the rules and the decisions behind them.
 
+### Trying the web app on an iPad
+
+A web app of PDFLion for the iPad is planned. Trials in `test/trials/` find out first what it can rely on there: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas. `scripts/serve-web.js` serves them at `/PDFLion/`, as GitHub Pages will serve the app.
+
+```sh
+npm run web:trials                # build dist/trials/ and serve it at http://localhost:8080/PDFLion/
+npm run web:trials -- --https     # the same over HTTPS, for an iPad on the same network
+node test/trials/run.js           # the trials that need no hands, in Playwright's WebKit and Chromium
+```
+
+Each trial shows its results, and sends them to the Mac, into `test/trials/results.jsonl`. The iOS Simulator reaches the Mac at `localhost`, which counts as secure: boot an iPad there, and open `http://localhost:8080/PDFLion/` in its Safari, or run `xcrun simctl openurl booted http://localhost:8080/PDFLion/`. A real iPad needs HTTPS for the service worker, with a certificate it trusts:
+
+1. Run `npm run web:trials -- --https`, and allow Node to accept incoming connections if macOS asks. It prints the addresses, such as `https://Your-Mac.local:8080/PDFLion/`. The first run makes the certificate, which `~/.pdflion-web-server/` keeps.
+2. On the iPad, open `https://Your-Mac.local:8080/certificate.crt` in Safari, going past the warning with Show Details, and allow the download. Or AirDrop `~/.pdflion-web-server/certificate.crt` to it.
+3. Install it from Settings > Profile Downloaded, then turn it on under Settings > General > About > Certificate Trust Settings.
+4. Open the printed address. To try the trials as a Home Screen app too, add it with Share > Add to Home Screen.
+
+The certificate is a root the iPad trusts. Its name constraints keep it to `localhost`, `.local` names and private network addresses, but keep its key in `~/.pdflion-web-server/` to yourself. Afterwards, remove the profile under Settings > General > VPN & Device Management. A new certificate, made when the Mac's name changes, needs trusting again.
+
 ## Releasing
 
 Every push to `main` that changes more than Markdown files is a release. Once its tests and builds pass on all three platforms, CI publishes the GitHub release `v<version>`, with the installers, the Mac `.zip` files and the update files, and installed copies update to it within 6 hours. A failed run releases nothing, and a commit is never released twice. So:
@@ -242,6 +261,7 @@ PDFLion is built and tested with:
 - [NSIS](https://nsis.sourceforge.io), which electron-builder uses for the Windows installer (Zlib)
 - [fpm](https://github.com/jordansissel/fpm) by Jordan Sissel, which electron-builder uses for the Linux package (MIT)
 - [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
+- [WebKit](https://webkit.org), whose build by Playwright the web app's trials run in (BSD-2-Clause and LGPL-2.1)
 - [actions/checkout, setup-node, cache, upload-artifact and download-artifact](https://github.com/actions) by GitHub, which run the tests and builds on GitHub Actions (MIT)
 - [GitHub CLI](https://cli.github.com) by GitHub, with which CI publishes the releases (MIT)
 - [Xvfb](https://gitlab.freedesktop.org/xorg/xserver) by X.Org, the virtual display the Linux tests run on there (MIT)

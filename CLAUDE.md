@@ -66,9 +66,11 @@ src/preload/     preload.cjs (window.pdflion, for the viewer), tabs.cjs (window.
 src/tabs/        the tab strip, served at pdflion://app/tabs/
 src/viewer/      bridge.js, geometry.js (unit tested), overrides.css, icons/, served at pdflion://app/pdflion/
 resources/       icon and entitlements (electron-builder buildResources); about-icon.png also ships in the app
-scripts/         update-pdfjs.js, build.js, version.js (CI's version), after-sign.js (the Mac app's designated requirement)
+scripts/         update-pdfjs.js, build.js, version.js (CI's version), after-sign.js (the Mac app's designated requirement),
+                 serve-web.js (a folder at /PDFLion/, as GitHub Pages serves it; --https for an iPad)
 test/unit/       node --test, *.test.js
 test/e2e/        Playwright against the dev app
+test/trials/     trials for a planned iPad web app: today's viewer and pages that measure, built into dist/trials/
 vendor/pdf.js/   submodule, never edit
 electron-builder.yml, .github/workflows/ci.yml
 ```
@@ -85,6 +87,8 @@ npm run test:e2e         # end-to-end tests: they open windows and take focus wh
 npm run build            # tests, then every version this machine can build, in dist/
 npm run dist             # this platform's installers in dist/; npm run dist -- --dir for the apps alone
 node scripts/version.js  # the version CI builds this commit as; --pr <n> for pull request n
+npm run web:trials       # build the iPad trials and serve them; -- --https for an iPad (see README)
+node test/trials/run.js  # the trials that need no hands, in Playwright's WebKit and Chromium
 ```
 
 ## pdf.js
