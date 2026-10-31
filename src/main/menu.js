@@ -2,8 +2,8 @@
  * The native application menu: the menu bar on macOS, each window's menu bar
  * on Windows and Linux. Standard items use Electron roles. Items that act on
  * the document send a command to the bridge.js of the focused window's active
- * tab, and are disabled while no document window is focused. Items that act
- * on tabs are disabled where they can't act.
+ * tab, and are disabled unless that's a document. Items that act on tabs are
+ * disabled where they can't act.
  *
  * On macOS, shortcuts follow Preview. Windows and Linux use Ctrl where macOS
  * uses ⌘, except where noted. bridge.js keeps pdf.js from acting on the ones
@@ -20,17 +20,17 @@ import { app, BrowserWindow, Menu, shell } from "electron";
 import { creditsText } from "../shared/credits.js";
 import { runCommand } from "./ipc.js";
 import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
-import { clearRecentDocuments, onRecentDocumentsChange, recentDocuments } from "./recent.js";
+import { clearRecentDocuments, menuDocuments, onRecentDocumentsChange } from "./recent.js";
 import * as tabs from "./tabs.js";
 import { closeTab } from "./unsaved.js";
 import { automaticChecks, checkForUpdates, hasUpdater, setAutomaticChecks } from "./updates.js";
 import {
   documentWindows,
-  isDocumentWindow,
   mergeAllWindows,
   moveTabToNewWindow,
   newDocument,
   openDocument,
+  showHome,
   showOpenPanel,
 } from "./windows.js";
 
@@ -127,6 +127,15 @@ function template() {
         isMac
           ? { role: "recentDocuments", submenu: [{ role: "clearRecentDocuments" }] }
           : recentDocumentsItem(),
+        // Selects the window's home tab, or adds one. pdf.js binds a plain H
+        // (the hand tool), but not ⇧⌘H or Ctrl+Shift+H. Like New, it works on
+        // macOS without a window.
+        {
+          id: "home",
+          label: "&Home",
+          accelerator: "Shift+CmdOrCtrl+H",
+          click: (_item, win) => showHome(win instanceof BrowserWindow ? win : undefined),
+        },
         { type: "separator" },
         {
           id: "closeTab",
@@ -397,7 +406,7 @@ function undoItem(label, command, accelerator) {
     label,
     accelerator,
     click: async (_item, win) => {
-      const tab = win instanceof BrowserWindow ? tabs.activeTab(win) : undefined;
+      const tab = win instanceof BrowserWindow ? activeDocument(win) : undefined;
       if (!tab) {
         // Another window, such as the About panel, as the role would.
         if (isMac) Menu.sendActionToFirstResponder(`${command}:`);
@@ -428,7 +437,7 @@ function closeWindow(win) {
  * @returns {Electron.MenuItemConstructorOptions}
  */
 function recentDocumentsItem() {
-  const files = recentDocuments();
+  const files = menuDocuments();
   const names = files.map((file) => path.basename(file));
   // The full path only where the name alone is ambiguous.
   const isUnique = (/** @type {string} */ name) => names.indexOf(name) === names.lastIndexOf(name);
@@ -496,16 +505,25 @@ function commandItem(label, command, accelerator, id = command) {
     label,
     accelerator,
     click: (_item, win) => {
-      const tab = win instanceof BrowserWindow ? tabs.activeTab(win) : undefined;
+      const tab = win instanceof BrowserWindow ? activeDocument(win) : undefined;
       if (tab) runCommand(tab, command);
     },
   };
 }
 
+/**
+ * @param {BrowserWindow | null} win
+ * @returns {tabs.Tab | undefined} the window's active tab, if it's a document
+ */
+function activeDocument(win) {
+  const tab = win ? tabs.activeTab(win) : undefined;
+  return tab && !tabs.isHome(tab) ? tab : undefined;
+}
+
 function updateItems() {
   const menu = Menu.getApplicationMenu();
   const focused = BrowserWindow.getFocusedWindow();
-  const enabled = isDocumentWindow(focused);
+  const enabled = activeDocument(focused) !== undefined;
   for (const id of documentItems) {
     const item = menu?.getMenuItemById(id);
     if (item) item.enabled = enabled;

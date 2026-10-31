@@ -1,8 +1,9 @@
 /**
  * Document windows: where they open, which one is in front, and the Open
- * panel that leads to them. Each window's own page is the tab strip, and its
- * documents are tabs (tabs.js). Opening a document adds a tab to the
- * frontmost window, and a new window opens only when there's none.
+ * panel and Home that lead to them. Each window's own page is the tab strip,
+ * and its documents and home tabs are tabs (tabs.js). Opening a document adds
+ * a tab to the frontmost window, in place of Home if that's the active tab,
+ * and a new window opens only when there's none.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -87,16 +88,38 @@ export function openDocument(file) {
   return openDocuments([file]);
 }
 
-/** File > New: an untitled document as a tab of the frontmost window, or of a new one. */
-export function newDocument() {
-  const win = frontmostWindow() ?? createWindow();
+/**
+ * File > New: an untitled document as a tab of the frontmost window, or of a
+ * new one.
+ *
+ * @param {BrowserWindow} [target] the window to add the tab to, such as
+ *   Home's; defaults to the frontmost window
+ */
+export function newDocument(target) {
+  const win = target && isDocumentWindow(target) ? target : (frontmostWindow() ?? createWindow());
   tabs.newDocument(win);
   showWindow(win);
 }
 
 /**
+ * File > Home, the toolbar's Home button, and a launch without documents:
+ * selects the window's home tab, or adds one after its active tab, and brings
+ * the window to the front. Without a window, Home opens in a new one.
+ *
+ * @param {BrowserWindow} [target] the window to show Home in; defaults to
+ *   the frontmost window
+ */
+export function showHome(target) {
+  const win = target && isDocumentWindow(target) ? target : (frontmostWindow() ?? createWindow());
+  const home = tabs.homeTabOf(win);
+  if (home) tabs.selectTab(home);
+  else tabs.openHomeTab(win);
+  showWindow(win);
+}
+
+/**
  * @param {BrowserWindow | null | undefined} win
- * @returns {boolean} whether `win` is a window showing documents
+ * @returns {boolean} whether `win` is a window showing documents, or Home
  */
 export function isDocumentWindow(win) {
   return win != null && !win.isDestroyed() && tabs.activeTab(win) !== undefined;
@@ -145,10 +168,12 @@ export function mergeAllWindows() {
  * Shows the Open panel and opens each chosen PDF. Does nothing while the
  * panel is already up, e.g. when the Dock icon is clicked again.
  *
+ * @param {BrowserWindow} [target] the window to open them in, such as
+ *   Home's; defaults to the frontmost window
  * @returns {Promise<void>} settles once the chosen files have opened, or
  *   failed to
  */
-export async function showOpenPanel() {
+export async function showOpenPanel(target) {
   if (openPanelShown) return;
   openPanelShown = true;
   let filePaths;
@@ -160,7 +185,7 @@ export async function showOpenPanel() {
   } finally {
     openPanelShown = false;
   }
-  await openDocuments(filePaths);
+  await openDocuments(filePaths, target);
 }
 
 /**

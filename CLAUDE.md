@@ -1,6 +1,6 @@
 # PDFLion
 
-A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and Linux Mint): Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) generic viewer in Electron. pdf.js renders and provides the viewer UI. The Electron shell stays thin, and adds what a browser tab can't: opening files from the file manager, native menus and shortcuts, tabs that move between windows, saving in place, installers, and updates from GitHub releases.
+A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and Linux Mint): Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) generic viewer in Electron. pdf.js renders and provides the viewer UI. The Electron shell stays thin, and adds what a browser tab can't: opening files from the file manager, a home screen of recent documents, native menus and shortcuts, tabs that move between windows, saving in place, installers, and updates from GitHub releases.
 
 [README.md](README.md) covers installing, building, releasing, and the checks by hand before merging into `main`, since every push there is a release.
 
@@ -45,13 +45,16 @@ src/main/        main process: one module per concern
   saving.js      Save and Save As: dialogs and error alerts
   pages.js       shows the alerts and prompts about changing pages (pdflion:page-dialog)
   unsaved.js     save prompts when a tab or window closes, the app quits, an update installs, or the system shuts down
-  windows.js     document windows: placement, which is in front, opening documents as tabs, the Open panel
-  tabs.js        one tab per document: its WebContentsView, edited state, navigation guards, the window's layout and title
+  windows.js     document windows: placement, which is in front, opening documents as tabs, the Open panel, showHome()
+  tabs.js        one tab per document, and home tabs: its WebContentsView, edited state, navigation guards, the window's layout and title
   strip.js       the tab strip's messages, its context menu, dragging tabs between windows
   placement.js   where a new window opens (Electron-free, unit tested)
   state.js       userData/state.json
   toolsettings.js  keeps the tool settings for every tab: their IPC channels, and a favourite's context menu
-  recent.js      recent documents, and PDFLion's own list for Open Recent on Windows and Linux
+  recent.js      PDFLion's own recent documents, for Home and Open Recent, and the system's lists
+  recentlist.js  the recent list's entries: ids, paths, times (Electron-free, unit tested)
+  home.js        Home's messages and state, the thumbnails the viewer sends
+  thumbnails.js  Home's thumbnails in userData/thumbnails/
   updates.js     updates through electron-updater: the checks, the prompts and Restart Now
   ipc.js         the viewer's IPC handlers, runCommand() to a tab's bridge.js
   permissions.js web permission handlers
@@ -63,9 +66,11 @@ src/shared/      free of Electron and Node, for main and a web app alike, unit t
   tablist.js     each window's tabs and its active tab
   tools.js       checks the tool settings PDFLion keeps: the eraser's, pen-only drawing, and favourites
   credits.js     the third-party projects the About panel lists
-  wording.js     what PDFLion's alerts and prompts say: changing pages, saving, opening, updating
-src/preload/     preload.cjs (window.pdflion, for the viewer), tabs.cjs (window.pdflionTabs, for the strip)
+  wording.js     what PDFLion's alerts and prompts say: changing pages, saving, opening, updating, Home
+  thumbnail.js   checks a thumbnail by its PNG header, without decoding it
+src/preload/     preload.cjs (window.pdflion, for the viewer), tabs.cjs (window.pdflionTabs, for the strip), home.cjs (window.pdflionHome)
 src/tabs/        the tab strip, served at pdflion://app/tabs/
+src/home/        Home, served at pdflion://app/home/
 src/viewer/      bridge.js, geometry.js (unit tested), overrides.css, icons/, served at pdflion://app/pdflion/
 resources/       icon and entitlements (electron-builder buildResources); about-icon.png also ships in the app
 scripts/         update-pdfjs.js, build.js, version.js (CI's version), after-sign.js (the Mac app's designated requirement),
@@ -110,6 +115,7 @@ node test/trials/run.js  # the trials that need no hands, in Playwright's WebKit
      - **Eraser:** `pdfViewer._layerProperties.annotationEditorUIManager` and `annotationEditorMode`; the `switchannotationeditormode`, `annotationeditormodechanged` and `editingaction` events; the UI manager's `getEditors()`, `getLayer()`, `unselectAll()` (which commits a drawing session and returns), `addCommands()`, `addEditor()`, `addToAnnotationStorage()`, `isEditorHandlingKeyboard`, and `updateMode()`, which must enable the layers before `web/pdf_viewer.js` dispatches the mode event; the editors' `editorType`, `pageIndex`, `remove()` and `serialize(true)`; the layer's `addOrRebuild()`, `addUndoableEditor()`, which `onceAdded()` in `src/display/editor/draw.js` calls, and `deserialize()`, which needs `annotationType`, `paths.points` as `Float32Array`s, `color`, `thickness`, `opacity`, a `rotation` of 0, 90, 180 or 270, and a `rect`; that the layers in `src/display/editor/annotation_editor_layer.js` ignore presses but `button` 0; the page views' `div` and `viewport`; `AnnotationEditorType` in `src/shared/util.js`, `textInputChecker` in `src/display/editor/tools.js`; that ink mode shows Pencil on with its option box (`toggleExpandedBtn` in `web/toolbar.js`) and Pencil's click turns ink mode off; and `#editorInk`, `#editorInkButton`, `#editorInkParamsToolbar` and `.page[data-page-number]` in `#viewerContainer`.
      - **Favourites:** the option boxes `#editorHighlightParamsToolbar`, `#editorFreeTextParamsToolbar` and `#editorInkParamsToolbar` with their `.editorParamsToolbarContainer`; the inputs read (`#editorInkColor`, `#editorInkThickness`, `#editorInkOpacity`, `#editorFreeTextColor`, `#editorFreeTextFontSize`, `#editorFreeHighlightThickness`) and their ranges, which `tools.js` repeats; that `web/annotation_editor_params.js` keeps them in step with the tool and the selected drawing; that `src/display/editor/color_picker.js` marks the chosen swatch with `aria-selected` and `data-color`; `#editorModeButtons`, the icon variables `--toolbarButton-editorHighlight-icon`, `--toolbarButton-editorFreeText-icon` and `--toolbarButton-editorInk-icon`, and `FAVOURITE_TOOLS` against `AnnotationEditorType` and `AnnotationEditorParamsType`; that `updateParams()` dispatches no `annotationeditorparamschanged`, that `updateMode()` returns for the tool that's on and clears the selection only after an `await`, and that `#editorModeChanged()` in `web/toolbar.js` opens a tool's option box; the Stamp menu's classes and `web/menu.js`'s keys, which the ★ menu copies; and that `web/event_utils.js` calls external listeners after internal ones.
      - **Toolbar width:** that `#toolbarViewer`'s three groups keep `flex: none`, and pdf.js's media queries in `web/viewer.css` against `PDFJS_STEPS` and the rules `overrides.css` repeats for them (`.hiddenMediumView`, `.visibleMediumView`, `.hiddenSmallView`, `#scaleSelectContainer`).
+     - **Home's thumbnails:** `pdfDocument.getPage()`, the page's `getViewport()` and `render()` with `annotationMode` (`AnnotationMode.ENABLE_STORAGE`) and `background`, and the `pagerendered` event (`web/base_pdf_page_view.js`). The Home button goes before `#viewsManagerToggleButton`.
      - **Styles and CSP:** the variables and selectors in `overrides.css` against `web/viewer.css`, and the CSP header in `protocol.js` against the `<meta>` CSP in `web/viewer.html`. Chromium enforces both, so the header mustn't be stricter.
   3. Check what pdf.js bundles (`vendor/pdf.js/external/`, and the license files in the build's `web/` folders) against "pdf.js includes" in `credits.js` and README's Credits.
   4. Run the unit and end-to-end tests. The pull request's CI runs them on all three platforms.
@@ -124,16 +130,29 @@ Everything a window loads comes from the privileged scheme `pdflion://app/` (sta
 | `/viewer/…` | the pdf.js build. Into `web/viewer.html` the handler injects `overrides.css`, `geometry.js` and `bridge.js`, and adds a CSP header |
 | `/pdflion/…` | `src/viewer/` |
 | `/tabs/…` | `src/tabs/`, with a CSP header of its own for `tabs.html` |
+| `/home/…` | `src/home/`, with the same CSP header for `home.html` |
 | `/lib/…` | @cantoo/pdf-lib's `dist/`, of which only `pdf-lib.min.js` is packaged |
 | `/doc/<token>/<name>.pdf` | a file the user opened, or an untitled document, whole or as byte ranges. Main mints the tokens, so the renderer reads only what the user chose |
+| `/thumb/<id>.png` | a recent document's thumbnail, as `image/png` with `nosniff` |
 
-- A window is a `BrowserWindow` whose page is the tab strip. Each tab is a `WebContentsView` that loads `viewer/web/viewer.html?file=/doc/<token>/<name>.pdf`, below the strip, or over the whole window with one tab or in full screen. Moving a tab to another window moves its view, unsaved changes included. Main keys documents, edited state and commands by tab, not by window.
+- A window is a `BrowserWindow` whose page is the tab strip. Each tab is a `WebContentsView` that loads `viewer/web/viewer.html?file=/doc/<token>/<name>.pdf`, or `home/home.html` for a home tab, below the strip, or over the whole window with one tab or in full screen. Moving a tab to another window moves its view, unsaved changes included. Main keys documents, edited state and commands by tab, not by window.
 - The document must be same-origin: the generic viewer rejects a `file=` from another origin.
 - `bridge.js` is a classic script, so its `webviewerloaded` listener is in place before the viewer's modules initialise. It sets `defaultUrl` to `""`, so pdf.js's demo PDF never opens.
 - `bridge.js` works out `/lib/` and `/doc/` from the viewer's own URL, `../../lib/` and `../../doc/`, so that it works below another path than the origin's root too. `overrides.css` names its icons from the root (`/pdflion/icons/`).
 - pdf.js makes range requests only for http(s), so `bridge.js` opens `/doc/` through a `PDFDataRangeTransport`, with `If-Match`, so that a changed file gets 412.
 - The handler resolves every path against its root, and answers 404 for anything that escapes it.
 - An untitled document from File > New lives in main's memory until its first save. Save on it always means Save As (`runCommand()` sends `saveAs`, also for the save prompts' Save), which turns its token into a file token.
+
+## Home
+
+Home lists the recent documents, newest first, with their first pages, and has Open… and New. It's a tab of a kind of its own (`kind: "home"` in `tabs.js`): no token, never edited, its own preload, and titled Home in the strip and PDFLion in the title bar.
+
+- It shows at a launch without documents, or whose files all failed to open, on the Dock icon with no window open, for a second instance without files, and with File > Home (⇧⌘H, Ctrl+Shift+H) and the toolbar's Home button. `showHome()` selects the window's home tab, or adds one after the active tab.
+- A document opened in a window whose active tab is Home takes the home tab's place (`openTab()`): from a card, Open…, New, a drop, Finder or a second instance alike. A card whose document is open shows its tab instead.
+- PDFLion keeps its own recent list on every platform (`recent.js`, `recentlist.js`), 30 for Home and 10 for Open Recent on Windows and Linux, in `state.json` under `recent`. It still feeds macOS's list and the Windows jump list. Each entry has a random id, which is all the page knows: it never sends a path.
+- Thumbnails: `bridge.js` renders page 1 to fit 180 × 240 CSS pixels at the screen's pixel ratio, once the viewer has shown a page and after each save, and sends it as a PNG (`setThumbnail()`). Main keeps it only for a document on the list, and only a PNG of at most 512 × 512 pixels and 256 KiB by its header (`isThumbnail()`), without decoding it. Only Home's sandboxed page decodes it.
+- The context menu (Open, Show in Finder, Explorer or Files, Remove from Recent) is main's. Delete or Backspace removes the focused card, and a document whose file is gone shows as missing, and offers to come off the list.
+- `home.css` repeats the viewer's colour roles, as `tabs.css` does. Its labels are English.
 
 ## Page changes
 
@@ -178,7 +197,7 @@ A favourite is a drawing tool with its settings, such as a blue pencil 1 pt wide
 
 ## The toolbar's width
 
-The toolbar's width depends on the language, the page count, the favourites and a signed document's button. So `layoutToolbar()` gives up as little as it can as a window narrows, one step at a time, each keeping those before it (classes of `#toolbarContainer`, `TOOLBAR_STEPS`): 32 px buttons, favourites into the ★ menu from the last, pdf.js's medium view (Print into the ⋮ menu, every favourite into ★), pdf.js's small view (no previous and next page buttons), and no zoom menu.
+The toolbar's width depends on the language, the page count, the favourites and a signed document's button. So `layoutToolbar()` gives up as little as it can as a window narrows, one step at a time, each keeping those before it (classes of `#toolbarContainer`, `TOOLBAR_STEPS`): 32 px buttons, favourites into the ★ menu from the last, pdf.js's medium view (Print into the ⋮ menu, every favourite into ★), pdf.js's small view (no previous and next page buttons), no zoom menu, and no Home button, for which File > Home stands in.
 
 - It never takes fewer steps than pdf.js's own media queries at that width (`PDFJS_STEPS`: 750, 690 and 560 px), and as the window narrows, the toolbar only ever loses more. `overrides.css` repeats pdf.js's rules for those views under the classes, in `:where()`.
 - A `ResizeObserver` lays it out again, on everything but the right group, which the favourites change.
@@ -186,9 +205,9 @@ The toolbar's width depends on the language, the page count, the favourites and 
 
 ## Menu commands
 
-- Items that act on the document come from `commandItem()` in `menu.js`. A click calls `runCommand(tab, command)` (`ipc.js`), which sends the command to the tab's `bridge.js`, where `COMMANDS` maps it to pdf.js. A new command needs all three, and an end-to-end test.
+- Items that act on the document come from `commandItem()` in `menu.js`, and are enabled only while the focused window's active tab is a document, not Home. A click calls `runCommand(tab, command)` (`ipc.js`), which sends the command to the tab's `bridge.js`, where `COMMANDS` maps it to pdf.js. A new command needs all three, and an end-to-end test.
 - Items that act on tabs come from `tabItem()`, and run in main: in the Window menu on macOS, at the end of View on Windows and Linux.
-- PDFLion's own shortcuts follow Preview: Page Overview ⌥⌘6, its Contact Sheet, Insert Blank Page ⇧⌘N and Eraser ⇧⌘E. On Windows and Linux they're Ctrl+Shift+O, since Ctrl+Alt+6 is AltGr+6, Ctrl+Shift+N and Ctrl+Shift+E.
+- PDFLion's own shortcuts follow Preview: Page Overview ⌥⌘6, its Contact Sheet, Insert Blank Page ⇧⌘N and Eraser ⇧⌘E, and Home ⇧⌘H. On Windows and Linux they're Ctrl+Shift+O, since Ctrl+Alt+6 is AltGr+6, Ctrl+Shift+N, Ctrl+Shift+E and Ctrl+Shift+H.
 - The page sees keys before the native menu. `isMenuShortcut` in `bridge.js` keeps pdf.js from acting on the shortcuts it shares with the menu, so a new shortcut that pdf.js also binds needs adding there. It takes ⌘ or Ctrl as the preload's `commandKey` says (`meta` on macOS), and F4 with Ctrl. pdf.js binds none of the tab shortcuts, nor PDFLion's own above.
 - Edit > Undo and Redo aren't roles, whose undo reaches editable text only. `undoItem()` asks `bridge.js` first, which dispatches pdf.js's `editingaction` while a drawing tool is on and no text is being typed. Otherwise main calls `webContents.undo()` or `redo()`.
 - A click on the native menu gives the page no user activation, so `runCommand()` grants it for `COMMANDS_NEEDING_ACTIVATION`, such as Presentation Mode's `requestFullscreen()`.
@@ -210,12 +229,13 @@ The packaged app updates from the GitHub releases, through electron-updater (`up
 ## Security rules
 
 - Every window and tab view uses `contextIsolation: true`, `sandbox: true` and `nodeIntegration: false`, and `app.enableSandbox()` sandboxes every renderer.
-- The preloads expose small APIs through `contextBridge`, never `ipcRenderer`: `window.pdflion` only on the viewer page, and `window.pdflionTabs` only on the tab strip, since a preload runs in every page its `webContents` shows.
-- Main validates the sender and the payload of every IPC message. The sender must be the top frame, with the viewer's URL (`ipc.js`) or, for the strip's channels, the strip's (`strip.js`). A strip message must also come from a window's own `webContents`, with tab ids of that window and indexes in range. Don't compare origins instead, as Electron's checklist suggests: an `about:blank` page the viewer opens has its origin, and the strip shares it too.
+- The preloads expose small APIs through `contextBridge`, never `ipcRenderer`: `window.pdflion` only on the viewer page, `window.pdflionTabs` only on the tab strip, and `window.pdflionHome` only on Home, since a preload runs in every page its `webContents` shows.
+- Main validates the sender and the payload of every IPC message. The sender must be the top frame, with the viewer's URL (`ipc.js`), for the strip's channels the strip's (`strip.js`), or for `pdflion-home:*` Home's, in a home tab (`home.js`). Home names documents only by ids of the recent list. A strip message must also come from a window's own `webContents`, with tab ids of that window and indexes in range. Don't compare origins instead, as Electron's checklist suggests: an `about:blank` page the viewer opens has its origin, and the strip shares it too.
 - The tool settings' channels (`toolsettings.js`) take only what `tools.js` accepts, rebuilt from known fields, so nothing else reaches `state.json`. `pdflion:page-dialog` takes only a reason and items from `wording.js`'s fixed lists (`isPageDialog()`).
 - Tab ids are random and unrelated to document tokens, since drags carry them out of the app. Main takes a dropped tab only after a strip reported dragging it.
-- Tabs can't navigate away from `pdflion://app/viewer/`, and the strip can't navigate at all. Only `http`, `https` and `mailto` links open, with `shell.openExternal`, and every other `window.open` is denied.
-- `viewer.html` gets a CSP without `unsafe-eval`, with `wasm-unsafe-eval` for pdf.js's image decoders.
+- Tabs can't navigate away from `pdflion://app/viewer/`, home tabs not from Home, and the strip can't navigate at all. Only `http`, `https` and `mailto` links open, with `shell.openExternal`, and every other `window.open` is denied.
+- `viewer.html` gets a CSP without `unsafe-eval`, with `wasm-unsafe-eval` for pdf.js's image decoders. `tabs.html` and `home.html` get only their own scripts, styles and images.
+- `pdflion:thumbnail` takes only a PNG of at most 512 × 512 pixels and 256 KiB, by its header, from a document with a file on the recent list, and main never decodes it.
 - @cantoo/pdf-lib parses untrusted documents, so it runs only in the sandboxed viewer, never in main.
 - Permissions are denied, except `fullscreen` and `clipboard-sanitized-write` for the viewer (`permissions.js`).
 - The updater's requests to GitHub, over HTTPS, are PDFLion's only network requests of its own. Releases aren't signed, and only the SHA-512 in the same release checks a download: `NsisUpdater` checks no Authenticode signature without a `publisherName`, and Squirrel's check of the designated requirement proves nothing, since any app can claim the bundle ID. So whoever can publish a release can run code on every installed copy, and the workflow's permissions and the ruleset on `main` guard that. Release text is never shown.
@@ -244,7 +264,7 @@ Against Electron's [security checklist](https://www.electronjs.org/docs/latest/t
 - `npm test` runs `node --test "test/unit/**/*.test.js"`, quoted so that Node expands the glob. Modules that unit tests import stay free of Electron, and those in `src/shared/` of Node too.
 - `bridge.test.js` runs `bridge.js` in `node:vm`, after `geometry.js`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge uses something new from the page, add it to the stand-ins. The test also checks that the bridge knows every `commandItem()` command in `menu.js`. `geometry.js` answers `Float32Array`s from its own realm, so its tests compare them as arrays.
 - The end-to-end tests drive the dev app with Playwright, each launch with its own `--user-data-dir`. `pdfs.js` writes the test PDFs, and the few that would be hard to write come from the pdf.js submodule. The suite is the safety net for pdf.js updates, so it must cover every bridge command.
-- Playwright lists each tab's viewer and each window's strip as pages. The helpers in `pdflion.js` find a document's page by its URL (`documentPage`), and a page's strip by its window (`stripOf`). A tab that isn't shown doesn't render, so tests open tabs one at a time. `setSize()` and `setWidth()` wait until the page has laid itself out.
+- Playwright lists each tab's viewer or Home and each window's strip as pages. The helpers in `pdflion.js` find a document's page by its URL (`documentPage`), Home's once it has drawn (`homePage`), and a page's strip by its window (`stripOf`). `launch([])` starts with Home. A tab that isn't shown doesn't render, so tests open tabs one at a time. `setSize()` and `setWidth()` wait until the page has laid itself out.
 - `launch()` makes the first window's content 1000 × 640 (`WINDOW_SIZE`), which fits CI's smallest screen. Whatever a test points at must be in view at that size.
 - `page.evaluate()` counts as a user gesture. Where user activation matters, read the page from main with `readFromMain()`.
 - Playwright can't drag between windows, so `tabs.spec.js` sends the strip's messages itself.
@@ -259,7 +279,8 @@ These were settled on purpose. Change them only on purpose.
 - The bundle ID is `io.github.xlion-ch.pdflion`: `appId` in `electron-builder.yml`, and `APP_ID` in `main.js`. Changing it resets preferences and file associations. On Windows it's also the AppUserModelID, which groups the taskbar buttons with the Start menu shortcut.
 - One build per Mac architecture, half the size of a universal build. Windows x64 only, which Windows on Arm runs emulated. On Linux only a `.deb` for x64, for Ubuntu 22.04 and Linux Mint 21 and later: AppImage would lose the sandbox on Ubuntu 24.04, and Flatpak and Snap bring confinement and stores of their own.
 - File > New makes an untitled document in memory with one blank page: US Letter in the regions CLDR lists for it, A4 everywhere else and where the region is unknown. It counts as edited only once it changes.
-- Launching without a file shows the Open panel, like Preview. On Windows and Linux, cancelling it quits, since an app there without windows has nothing to show.
+- Launching without a file shows Home, rather than the Open panel. Home is a tab, which a document opened from it replaces. When a window's last tab closes, the window closes, as before: macOS keeps running in the Dock, and Windows and Linux quit.
+- PDFLion keeps its own recent list on every platform, since Electron's has no dates and no Linux version, and on Windows fills only once PDFs are associated with PDFLion. The thumbnails are first pages the viewer renders, which main never decodes.
 - No code signing and no notarization. Every push to `main` that passes CI on all three platforms is a release, so `main` takes only changes whose CI passed, after the checks by hand.
 - Installed copies update themselves: in the background, installing on quit on macOS and Windows, and only with Restart Now on Linux, where installing asks for a password. Automatic checks are on until turned off. On macOS that rests on the bundle ID as the designated requirement rather than a Developer ID, and a copy downloaded from GitHub and allowed with Open Anyway updates too, with no further prompt (checked on macOS 27).
 - The viewer follows Material Design 3, as CSS over pdf.js's own UI: Material's monochrome scheme, the system font, and colours only outside forced-colors mode, which keeps pdf.js's high contrast styles.

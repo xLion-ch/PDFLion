@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   isPageDialog,
+  missingRecent,
   openError,
   pageDialog,
   saveError,
@@ -128,6 +129,16 @@ describe("wording saving and opening", () => {
     assert.deepEqual(openError("a.pdf", { code: "toString", message: "it broke" }), {
       message: "The file “a.pdf” couldn’t be opened.",
       detail: "it broke",
+    });
+  });
+});
+
+describe("wording Home", () => {
+  it("offers to remove a recent document whose file is gone", () => {
+    assert.deepEqual(missingRecent("a.pdf"), {
+      message: "The file “a.pdf” couldn’t be opened because there is no such file.",
+      detail:
+        "It may have been moved, renamed or deleted. Do you want to remove it from the recent documents?",
     });
   });
 });

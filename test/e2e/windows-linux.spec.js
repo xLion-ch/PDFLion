@@ -5,6 +5,7 @@ import {
   documentPage,
   documentPages,
   expect,
+  homePage,
   rendered,
   tempDir,
   test,
@@ -43,5 +44,20 @@ test("hands a file opened while it runs to the running process", async ({ pdflio
   await rendered(page);
   await expect(page).toHaveTitle("second.pdf");
   expect(documentPages(app)).toHaveLength(2);
+  expect(await windowCount(app)).toBe(1);
+});
+
+test("a second launch without documents shows Home in the running process's window", async ({
+  pdflion,
+}) => {
+  const { app, userData } = await pdflion([await tracemonkey(await tempDir())]);
+  const other = spawn(/** @type {string} */ (/** @type {unknown} */ (electronPath)), [
+    ROOT,
+    `--user-data-dir=${userData}`,
+  ]);
+  const exitCode = await new Promise((resolve) => other.on("exit", resolve));
+  expect(exitCode).toBe(0);
+  await homePage(app);
+  expect(documentPages(app)).toHaveLength(1);
   expect(await windowCount(app)).toBe(1);
 });

@@ -1,7 +1,9 @@
 /**
- * One tab per document. A tab is a WebContentsView showing the viewer, in a
- * window whose own page is the tab strip. Moving a tab to another window
- * moves its view, and its page, with any unsaved changes, comes along.
+ * One tab per document, and home tabs. A tab is a WebContentsView showing the
+ * viewer, or Home, in a window whose own page is the tab strip. Moving a tab
+ * to another window moves its view, and its page, with any unsaved changes,
+ * comes along. A document opened in a window whose active tab is Home takes
+ * the home tab's place.
  *
  * This module lays out each window's views, titles the window after its
  * active tab, and tells the strip what to show. Closing a tab here never asks
@@ -11,11 +13,11 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { app, BrowserWindow, WebContentsView, shell } from "electron";
 import { blankPdf, paperSize } from "../shared/blank.js";
-import * as documents from "./documents.js";
-import { preloadPath } from "./paths.js";
-import { addRecentDocument } from "./recent.js";
-import { isViewerUrl, viewerUrl } from "./routes.js";
 import { TabList } from "../shared/tablist.js";
+import * as documents from "./documents.js";
+import { homePreloadPath, preloadPath } from "./paths.js";
+import { addRecentDocument } from "./recent.js";
+import { HOME_URL, isHomeUrl, isViewerUrl, viewerUrl } from "./routes.js";
 
 const isMac = process.platform === "darwin";
 
@@ -25,11 +27,16 @@ const STRIP_HEIGHT = 36;
 /** Link schemes that open in the default browser or mail app. */
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
+/** What the strip and the window's title call a home tab. */
+const HOME_NAME = "Home";
+
 /**
  * @typedef {object} Tab
  * @property {string} id random and unrelated to the token, since the strip
  *   and drags between windows carry it
- * @property {string} token the document's, from documents.js
+ * @property {"document" | "home"} kind
+ * @property {string | null} token the document's, from documents.js, or null
+ *   for Home
  * @property {WebContentsView} view
  * @property {Electron.WebContents} webContents the view's page. The view
  *   forgets it once it's destroyed, and this keeps answering isDestroyed()
@@ -51,26 +58,56 @@ const adopted = new WeakSet();
 const listeners = new Set();
 
 /**
- * Opens a document in a new tab of `win`, and selects it.
+ * Opens a document in a new tab of `win`, and selects it. If the window's
+ * active tab is Home, the document takes its place.
  *
  * @param {BrowserWindow} win
  * @param {string} token from documents.register()
  * @returns {Tab}
  */
 export function openTab(win, token) {
+  const active = win.isDestroyed() ? undefined : activeTab(win);
+  const home = active?.kind === "home" ? active : undefined;
+  const index = home ? list.tabsOf(win.id).indexOf(home.id) : undefined;
+  const tab = addTab(win, "document", token, index);
+  if (home) closeTab(home);
+  return tab;
+}
+
+/**
+ * Opens Home in a new tab of `win`, after its active tab, and selects it.
+ *
+ * @param {BrowserWindow} win
+ * @returns {Tab}
+ */
+export function openHomeTab(win) {
+  const active = win.isDestroyed() ? undefined : activeTab(win);
+  const index = active ? list.tabsOf(win.id).indexOf(active.id) + 1 : undefined;
+  return addTab(win, "home", null, index);
+}
+
+/**
+ * @param {BrowserWindow} win
+ * @param {"document" | "home"} kind
+ * @param {string | null} token the document's, or null for Home
+ * @param {number} [index] where the tab goes; defaults to the end
+ * @returns {Tab}
+ */
+function addTab(win, kind, token, index) {
   adopt(win);
   const view = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      preload: preloadPath,
+      preload: kind === "home" ? homePreloadPath : preloadPath,
     },
   });
   const { webContents } = view;
   /** @type {Tab} */
   const tab = {
     id: randomUUID(),
+    kind,
     token,
     view,
     webContents,
@@ -80,9 +117,10 @@ export function openTab(win, token) {
   };
   tab.title = documentName(tab);
   tabs.set(tab.id, tab);
-  list.add(win.id, tab.id);
+  list.add(win.id, tab.id, index);
 
-  keepOnViewer(webContents);
+  if (kind === "home") keepOnHome(webContents);
+  else keepOnViewer(webContents);
   // pdf.js zooms the pages on a pinch. Chromium's own pinch zoom, which
   // Electron leaves off by default, would scale the whole viewer. Setting the
   // limits fails until there's a page to apply them to.
@@ -92,6 +130,7 @@ export function openTab(win, token) {
   // replace it.
   webContents.on("will-prevent-unload", (event) => event.preventDefault());
   webContents.on("page-title-updated", (_event, title) => {
+    if (kind === "home") return;
     tab.title = title;
     const tabWindow = windowOf(tab);
     if (tabWindow && activeTab(tabWindow) === tab) updateTitle(tabWindow);
@@ -110,7 +149,7 @@ export function openTab(win, token) {
 
   win.contentView.addChildView(view);
   selectTab(tab);
-  webContents.loadURL(viewerUrl(token, documentName(tab)));
+  webContents.loadURL(token === null ? HOME_URL : viewerUrl(token, documentName(tab)));
   changed();
   return tab;
 }
@@ -261,6 +300,22 @@ export function windowOf(tab) {
 }
 
 /**
+ * @param {Tab} tab
+ * @returns {boolean} whether the tab shows Home rather than a document
+ */
+export function isHome(tab) {
+  return tab.kind === "home";
+}
+
+/**
+ * @param {BrowserWindow} win
+ * @returns {Tab | undefined} a home tab of `win`, the leftmost
+ */
+export function homeTabOf(win) {
+  return tabsOf(win).find(isHome);
+}
+
+/**
  * @param {string} file real path
  * @returns {Tab | undefined} the tab showing `file`
  */
@@ -279,20 +334,20 @@ export function isOpen(tab) {
 }
 
 /**
- * @param {Tab} tab
+ * @param {Tab} tab a document's
  * @returns {string}
  */
 export function documentToken(tab) {
-  return tab.token;
+  return tab.token ?? "";
 }
 
 /**
  * @param {Tab} tab
  * @returns {string | undefined} the path of the file the tab shows, or
- *   undefined for an untitled document
+ *   undefined for an untitled document and for Home
  */
 export function documentFile(tab) {
-  return documents.resolve(tab.token);
+  return tab.token === null ? undefined : documents.resolve(tab.token);
 }
 
 /**
@@ -301,15 +356,16 @@ export function documentFile(tab) {
  *   hasn't been saved yet
  */
 export function isUntitled(tab) {
-  return documents.untitled(tab.token) !== undefined;
+  return tab.token !== null && documents.untitled(tab.token) !== undefined;
 }
 
 /**
  * @param {Tab} tab
  * @returns {string} the name the tab, the title and the save prompt show: the
- *   file's, or the untitled document's
+ *   file's, the untitled document's, or Home
  */
 export function documentName(tab) {
+  if (tab.token === null) return HOME_NAME;
   const file = documentFile(tab);
   return file ? path.basename(file) : (documents.untitled(tab.token)?.name ?? "");
 }
@@ -419,7 +475,7 @@ function discard(tab) {
   if (win) win.contentView.removeChildView(tab.view);
   list.remove(tab.id);
   tabs.delete(tab.id);
-  documents.unregister(tab.token);
+  if (tab.token !== null) documents.unregister(tab.token);
   // Without waiting for beforeunload, which pdf.js would use to block it.
   if (!tab.webContents.isDestroyed()) tab.webContents.close();
 }
@@ -474,11 +530,12 @@ function setFullScreen(tab, fullScreen) {
 }
 
 /**
- * Titles a window after its active tab's page. With one tab, the title also
- * shows unsaved changes: `name.pdf — Edited` on macOS, as Preview and TextEdit
- * do, and `*name.pdf` on Windows and Linux, as Notepad and gedit do. With
- * several, the strip shows them on each tab. On macOS the close button's dot
- * means that some tab in the window has changes, since closing would ask.
+ * Titles a window after its active tab's page, or PDFLion while it's Home.
+ * With one tab, the title also shows unsaved changes: `name.pdf — Edited` on
+ * macOS, as Preview and TextEdit do, and `*name.pdf` on Windows and Linux, as
+ * Notepad and gedit do. With several, the strip shows them on each tab. On
+ * macOS the close button's dot means that some tab in the window has changes,
+ * since closing would ask.
  *
  * @param {BrowserWindow} win
  */
@@ -487,7 +544,8 @@ function updateTitle(win) {
   const active = activeTab(win);
   if (!active) return;
   const edited = windowTabs.length === 1 && active.edited;
-  if (!edited) win.setTitle(active.title);
+  if (active.kind === "home") win.setTitle(app.name);
+  else if (!edited) win.setTitle(active.title);
   else win.setTitle(isMac ? `${active.title} — Edited` : `*${active.title}`);
   if (isMac) win.setDocumentEdited(windowTabs.some((tab) => tab.edited));
 }
@@ -505,10 +563,24 @@ function sendState(win) {
     tabsOf(win).map((tab) => ({
       id: tab.id,
       name: documentName(tab),
+      home: tab.kind === "home",
       edited: tab.edited,
       active: tab === active,
     })),
   );
+}
+
+/**
+ * Keeps a home tab on Home, so `window.pdflionHome` never reaches another
+ * page. Home has no links.
+ *
+ * @param {Electron.WebContents} webContents
+ */
+function keepOnHome(webContents) {
+  webContents.on("will-navigate", (event) => {
+    if (!isHomeUrl(event.url)) event.preventDefault();
+  });
+  webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
 /**

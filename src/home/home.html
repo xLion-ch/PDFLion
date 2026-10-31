@@ -1,0 +1,40 @@
+<!doctype html>
+<!--
+  Home: the recent documents, and Open and New. A home tab shows it, and a
+  document opened from it takes the tab's place. home.js draws it from what
+  main sends through window.pdflionHome (src/preload/home.cjs).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Home</title>
+    <link rel="stylesheet" href="home.css" />
+    <script src="home.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <h1>PDFLion</h1>
+      <div class="actions">
+        <button type="button" class="button filled open">Open…</button>
+        <button type="button" class="button outlined new">New</button>
+      </div>
+    </header>
+    <main>
+      <section id="recent" hidden>
+        <div class="heading">
+          <h2 id="recentHeading">Recent</h2>
+          <button type="button" class="button text" id="clear">Clear</button>
+        </div>
+        <ul id="documents" aria-labelledby="recentHeading"></ul>
+      </section>
+      <section id="empty" hidden>
+        <p class="message">No recent documents</p>
+        <p class="hint">Open a PDF or make a new one. You can also drop PDFs here.</p>
+        <div class="actions">
+          <button type="button" class="button filled large open">Open…</button>
+          <button type="button" class="button outlined large new">New</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

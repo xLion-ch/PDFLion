@@ -4,11 +4,15 @@ import { describe, it } from "node:test";
 import {
   docPath,
   docToken,
+  HOME_URL,
+  isHomeUrl,
   isTabsUrl,
   isViewerUrl,
   resolveInside,
   resolveUrl,
   TABS_URL,
+  thumbnailId,
+  thumbnailUrl,
   viewerUrl,
 } from "../../src/main/routes.js";
 
@@ -247,5 +251,40 @@ describe("resolveInside", () => {
     assert.equal(resolveInside(root, "a%00.txt"), null);
     assert.equal(resolveInside(root, "%E0%A4%A"), null);
     assert.equal(resolveInside(root, "%"), null);
+  });
+});
+
+describe("Home's URLs", () => {
+  it("knows Home, whatever its query and fragment, and nothing else", () => {
+    assert.equal(HOME_URL, "pdflion://app/home/home.html");
+    assert.ok(isHomeUrl(HOME_URL));
+    assert.ok(isHomeUrl(`${HOME_URL}?x#y`));
+    for (const url of [
+      TABS_URL,
+      "pdflion://app/home/other.html",
+      "https://app/home/home.html",
+      "pdflion://other/home/home.html",
+    ]) {
+      assert.ok(!isHomeUrl(url), url);
+    }
+  });
+
+  it("names a thumbnail by its document's id and when it was written", () => {
+    const url = thumbnailUrl(token, 1234);
+    assert.equal(url, `pdflion://app/thumb/${token}.png?v=1234`);
+    assert.equal(thumbnailId(url), token);
+  });
+
+  it("finds no thumbnail id in other URLs", () => {
+    for (const url of [
+      "pdflion://app/thumb/first.png",
+      `pdflion://app/thumb/${token}.jpg`,
+      `pdflion://app/thumb/${token}/x.png`,
+      "pdflion://app/thumb/..%2Fstate.json",
+      `pdflion://app/doc/${token}/a.pdf`,
+      `https://app/thumb/${token}.png`,
+    ]) {
+      assert.equal(thumbnailId(url), null, url);
+    }
   });
 });

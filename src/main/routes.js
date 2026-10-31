@@ -1,7 +1,8 @@
 /**
  * The URL layout of `pdflion://app/`: mounts at `/<mount>/<path>` map to files
- * below each mount's root, and `/doc/<token>/<name>` names an opened document.
- * Each window shows the tab strip, and each of its tabs the viewer.
+ * below each mount's root, `/doc/<token>/<name>` names an opened document, and
+ * `/thumb/<id>.png` a recent document's thumbnail. Each window shows the tab
+ * strip, and each of its tabs the viewer or Home.
  * Kept free of Electron imports so the unit tests can run it under plain Node.
  */
 import path from "node:path";
@@ -14,6 +15,9 @@ export const VIEWER_URL = `${ORIGIN}/viewer/web/viewer.html`;
 
 /** The page every window loads: its tab strip. */
 export const TABS_URL = `${ORIGIN}/tabs/tabs.html`;
+
+/** The page a home tab loads. */
+export const HOME_URL = `${ORIGIN}/home/home.html`;
 
 /**
  * The viewer URL for an opened document. `name` sits in the path so pdf.js
@@ -59,6 +63,39 @@ export function isViewerUrl(url) {
  */
 export function isTabsUrl(url) {
   return appPathname(url) === new URL(TABS_URL).pathname;
+}
+
+/**
+ * Whether `url` is Home, whatever its query and fragment.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isHomeUrl(url) {
+  return appPathname(url) === new URL(HOME_URL).pathname;
+}
+
+/**
+ * The URL of a recent document's thumbnail, which changes when it's written
+ * again, so that Home loads it afresh.
+ *
+ * @param {string} id the recent document's
+ * @param {number} version when the thumbnail was written, in ms
+ * @returns {string}
+ */
+export function thumbnailUrl(id, version) {
+  return `${ORIGIN}/thumb/${id}.png?v=${version}`;
+}
+
+/**
+ * Returns the id of a `/thumb/<id>.png` URL, or null for any other URL. The
+ * id must have the form of a recent document's: see recentlist.js.
+ *
+ * @param {string} url
+ * @returns {string | null}
+ */
+export function thumbnailId(url) {
+  return /^\/thumb\/([0-9a-f-]{36})\.png$/.exec(appPathname(url) ?? "")?.[1] ?? null;
 }
 
 /**

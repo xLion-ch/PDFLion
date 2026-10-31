@@ -9,10 +9,11 @@
  * id on it, and the strip or the document it lands on reports the drop. Main
  * accepts a drop only for the tab whose drag a strip reported starting.
  *
- * The channel names are repeated in src/preload/tabs.cjs and preload.cjs,
- * which can't import this module.
+ * The channel names are repeated in src/preload/tabs.cjs, preload.cjs and
+ * home.cjs, which can't import this module.
  */
 import { BrowserWindow, ipcMain, Menu, screen } from "electron";
+import { homeTab } from "./home.js";
 import { fromViewer, isPathList } from "./ipc.js";
 import { isTabsUrl } from "./routes.js";
 import * as tabs from "./tabs.js";
@@ -90,11 +91,18 @@ export function handleStrip() {
     if (win && tab && isIndex(index, otherTabs(win, tab))) drop(tab, win, index);
   });
 
-  // A tab dropped on a document, which adds it as the last tab of that
-  // document's window. Windows with one tab show no strip to drop on.
+  // A tab dropped on a document or Home, which adds it as the last tab of
+  // that window. Windows with one tab show no strip to drop on.
   ipcMain.on("pdflion:drop-tab", (event, id) => {
     const target = tabs.fromWebContents(event.sender);
     const win = target && fromViewer(event) ? tabs.windowOf(target) : null;
+    const tab = draggedTab(id);
+    if (win && tab) drop(tab, win, otherTabs(win, tab));
+  });
+
+  ipcMain.on("pdflion-home:drop-tab", (event, id) => {
+    const target = homeTab(event);
+    const win = target ? tabs.windowOf(target) : null;
     const tab = draggedTab(id);
     if (win && tab) drop(tab, win, otherTabs(win, tab));
   });

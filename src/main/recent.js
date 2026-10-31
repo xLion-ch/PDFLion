@@ -1,66 +1,104 @@
 /**
- * Recently opened documents. On macOS the system keeps the list, for the Dock
- * menu and File > Open Recent. On Windows, app.addRecentDocument() feeds only
- * the taskbar's jump list, and only once the installer has associated PDFs
- * with PDFLion. Linux has no such call in Electron. So on Windows and Linux
- * PDFLion keeps its own list in state.json, for File > Open Recent.
+ * Recently opened documents. PDFLion keeps its own list on every platform, in
+ * state.json, for Home and, on Windows and Linux, for File > Open Recent
+ * (recentlist.js). It feeds the system's lists too: on macOS the one the Dock
+ * menu and File > Open Recent show, and on Windows the taskbar's jump list,
+ * once the installer has associated PDFs with PDFLion. Electron has no such
+ * list on Linux.
  */
-import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { app } from "electron";
+import { addRecent, MAX_RECENT_IN_MENU, readRecentList, removeRecent } from "./recentlist.js";
 import { getState, setState } from "./state.js";
-
-const isMac = process.platform === "darwin";
+import { deleteThumbnail } from "./thumbnails.js";
 
 /** Whether Electron can add to the system's list: on macOS and Windows. */
-const hasSystemList = isMac || process.platform === "win32";
+const hasSystemList = process.platform === "darwin" || process.platform === "win32";
 
-const STATE_KEY = "recentDocuments";
+const STATE_KEY = "recent";
 
-/** As many as Windows apps usually list. */
-const MAX_RECENT_DOCUMENTS = 10;
+/**
+ * Where earlier versions kept the paths of their list, on Windows and Linux.
+ * It's read until there's a list of the new kind, and left as it is, for an
+ * earlier version to go on reading.
+ */
+const EARLIER_STATE_KEY = "recentDocuments";
+
+/** @type {import("./recentlist.js").RecentEntry[] | null} read on first use */
+let entries = null;
 
 /** @type {Set<() => void>} */
 const listeners = new Set();
 
-/** @param {string} file real path */
+/** @param {string} file real path, just opened or saved under a new name */
 export function addRecentDocument(file) {
   if (hasSystemList) app.addRecentDocument(file);
-  if (isMac) return;
-  const files = [file, ...recentDocuments().filter((other) => other !== file)];
-  update(files.slice(0, MAX_RECENT_DOCUMENTS));
+  const { entries: next, dropped } = addRecent(list(), file, Date.now(), randomUUID);
+  for (const entry of dropped) deleteThumbnail(entry.id);
+  update(next);
+}
+
+/** @returns {import("./recentlist.js").RecentEntry[]} most recent first */
+export function recentDocuments() {
+  return [...list()];
+}
+
+/** @returns {string[]} the paths File > Open Recent lists on Windows and Linux */
+export function menuDocuments() {
+  return list()
+    .slice(0, MAX_RECENT_IN_MENU)
+    .map((entry) => entry.path);
 }
 
 /**
- * Windows and Linux only. On macOS, File > Open Recent has the
- * clearRecentDocuments role.
+ * @param {unknown} id
+ * @returns {import("./recentlist.js").RecentEntry | undefined}
+ */
+export function findRecentDocument(id) {
+  return list().find((entry) => entry.id === id);
+}
+
+/**
+ * @param {string} file real path
+ * @returns {string | undefined} its recent id, if it's in the list
+ */
+export function recentIdOf(file) {
+  return list().find((entry) => entry.path === file)?.id;
+}
+
+/** @param {string} id removes that document from the list, with its thumbnail */
+export function removeRecentDocument(id) {
+  deleteThumbnail(id);
+  update(removeRecent(list(), id));
+}
+
+/**
+ * Empties PDFLion's list, with the thumbnails, and the system's. On macOS,
+ * File > Open Recent's own Clear Menu empties only the system's.
  */
 export function clearRecentDocuments() {
   if (hasSystemList) app.clearRecentDocuments();
+  for (const entry of list()) deleteThumbnail(entry.id);
   update([]);
 }
 
-/**
- * Windows and Linux only.
- * @returns {string[]} real paths, most recent first
- */
-export function recentDocuments() {
-  const files = getState(STATE_KEY);
-  if (!Array.isArray(files)) return [];
-  return files
-    .filter((file) => typeof file === "string" && path.isAbsolute(file))
-    .slice(0, MAX_RECENT_DOCUMENTS);
-}
-
-/**
- * Windows and Linux only.
- * @param {() => void} listener called whenever recentDocuments() changes
- */
+/** @param {() => void} listener called whenever the list changes */
 export function onRecentDocumentsChange(listener) {
   listeners.add(listener);
 }
 
-/** @param {string[]} files */
-function update(files) {
-  setState(STATE_KEY, files);
+/** @returns {import("./recentlist.js").RecentEntry[]} */
+function list() {
+  if (!entries) {
+    const stored = getState(STATE_KEY);
+    entries = readRecentList(stored ?? getState(EARLIER_STATE_KEY), randomUUID);
+  }
+  return entries;
+}
+
+/** @param {import("./recentlist.js").RecentEntry[]} next */
+function update(next) {
+  entries = next;
+  setState(STATE_KEY, next);
   for (const listener of listeners) listener();
 }

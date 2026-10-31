@@ -264,7 +264,24 @@ function loadBridge({
     addEventListener(type, listener) {
       this.listeners[type] = listener;
     }
+    /** A canvas's context, which page.render() draws on. */
+    getContext() {
+      return {};
+    }
+    /**
+     * A canvas's PNG, of as many bytes as `canvas.bytes()` says.
+     * @param {(blob: Blob) => void} callback
+     * @param {string} type
+     */
+    toBlob(callback, type) {
+      calls.push(["toBlob", this.width, this.height, type]);
+      const size = canvas.bytes(this.width, this.height);
+      setImmediate(() => callback(new Blob([new Uint8Array(size)], { type })));
+    }
   }
+
+  /** What a canvas's PNG weighs. */
+  const canvas = { bytes: (/** @type {number} */ _width, /** @type {number} */ _height) => 1000 };
 
   const sidebarButton = Object.assign(new Element("button"), { id: "viewsManagerToggleButton" });
   const separator = Object.assign(new Element("div"), { id: "editorModeSeparator" });
@@ -602,7 +619,15 @@ function loadBridge({
       getPageLayout: async () => held.pageLayout,
       getMarkInfo: async () => held.markInfo,
       getPageLabels: async () => held.pageLabels,
-      getPage: async () => ({}),
+      // A US Letter page, which records what renders it.
+      getPage: async () => ({
+        getViewport: ({ scale }) => ({ width: 612 * scale, height: 792 * scale }),
+        render: (/** @type {any} */ params) => {
+          const { viewport, annotationMode, background } = params;
+          calls.push(["render", viewport.width, annotationMode, background]);
+          return { promise: Promise.resolve() };
+        },
+      }),
       isPureXfa,
       extractPages: async (pageInfos, copyLevels) => {
         calls.push(["extractPages", pageInfos, copyLevels]);
@@ -796,6 +821,7 @@ function loadBridge({
     pdflion,
     app,
     calls,
+    canvas,
     /** Dispatches webviewerloaded and waits for the viewer to "initialise". */
     async load() {
       document.listeners.webviewerloaded();
@@ -1221,6 +1247,150 @@ describe("bridge.js range loading", () => {
     const args = { url: "/doc/t/gone.pdf" };
     await bridge.app.open(args);
     assert.equal(bridge.calls.at(-1)?.[1], args);
+  });
+});
+
+describe("bridge.js Home", () => {
+  /** Lets the thumbnail's render, PNG and bytes come through. */
+  const settleThumbnail = async () => {
+    for (let i = 0; i < 10; i++) await settle();
+  };
+
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @returns {Uint8Array[]} the thumbnails the bridge hands the host
+   */
+  const thumbnails = (bridge) => {
+    /** @type {Uint8Array[]} */
+    const sent = [];
+    bridge.pdflion.setThumbnail = (/** @type {Uint8Array} */ png) => sent.push(png);
+    return sent;
+  };
+
+  it("adds Home left of the sidebar's button, which shows Home", async () => {
+    const bridge = loadBridge();
+    let shown = 0;
+    bridge.pdflion.showHome = () => shown++;
+    await bridge.load();
+    const [home, sidebar, overview] = bridge.toolbar;
+    assert.equal(home.id, "pdflionHomeButton");
+    assert.equal(home.className, "toolbarButton");
+    assert.equal(home.title, "Home");
+    assert.equal(sidebar.id, "viewsManagerToggleButton");
+    assert.equal(overview.id, "pdflionPageOverview");
+    home.listeners.click();
+    assert.equal(shown, 1);
+  });
+
+  it("adds no Home button for a host without Home", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.ok(!bridge.toolbar.some(({ id }) => id === "pdflionHomeButton"));
+  });
+
+  it("hands over the first page as a PNG once the viewer has shown a page", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    await bridge.load();
+    bridge.openDocument();
+    await settleThumbnail();
+    assert.deepEqual(sent, []);
+
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 3 });
+    await settleThumbnail();
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].length, 1000);
+    // US Letter, fitting 180 × 240 CSS pixels, with its annotations as they are.
+    assert.deepEqual(named(bridge.calls, "toBlob"), [["toBlob", 180, 233, "image/png"]]);
+    assert.deepEqual(
+      named(bridge.calls, "render").map(([name, width, mode, background]) => [
+        name,
+        Math.round(width),
+        mode,
+        background,
+      ]),
+      [["render", 180, 3, "white"]],
+    );
+
+    // Once per document.
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 4 });
+    await settleThumbnail();
+    assert.equal(sent.length, 1);
+  });
+
+  it("fits 180 × 240 CSS pixels at the screen's pixel ratio, and 512 pixels", async () => {
+    for (const [ratio, size] of [
+      [2, [360, 466]],
+      [3, [396, 512]],
+    ]) {
+      const bridge = loadBridge();
+      bridge.page.devicePixelRatio = ratio;
+      thumbnails(bridge);
+      await bridge.load();
+      bridge.openDocument();
+      bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+      await settleThumbnail();
+      const made = named(bridge.calls, "toBlob");
+      assert.deepEqual(made, [["toBlob", ...size, "image/png"]], `${ratio}x`);
+    }
+  });
+
+  it("renders smaller until the PNG is small enough to keep", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    bridge.canvas.bytes = (width) => (width > 130 ? 300 * 1024 : 2000);
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.deepEqual(
+      named(bridge.calls, "toBlob").map(([, width]) => width),
+      [180, 126],
+    );
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].length, 2000);
+  });
+
+  it("gives up after three tries at a PNG too large to keep", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    bridge.canvas.bytes = () => 300 * 1024;
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.equal(named(bridge.calls, "toBlob").length, 3);
+    assert.deepEqual(sent, []);
+  });
+
+  it("hands over a thumbnail after each save, and none for a page change", async () => {
+    const bridge = loadBridge();
+    const sent = thumbnails(bridge);
+    await bridge.load();
+    const storage = bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.equal(sent.length, 1);
+
+    storage.onSetModified();
+    assert.equal(await bridge.run("save"), true);
+    await settleThumbnail();
+    assert.equal(sent.length, 2);
+
+    // Inserting a page reopens the document, which isn't saved yet.
+    await bridge.run("insertBlankPage");
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.equal(sent.length, 2);
+  });
+
+  it("hands over nothing to a host without thumbnails", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.eventBus.dispatch("pagerendered", { pageNumber: 1 });
+    await settleThumbnail();
+    assert.deepEqual(named(bridge.calls, "render"), []);
   });
 });
 

@@ -27,7 +27,9 @@
  * eraser end src/display/editor/tools.js (updateMode enables the layers
  * before web/pdf_viewer.js dispatches annotationeditormodechanged) and
  * src/display/editor/annotation_editor_layer.js (presses other than button 0
- * draw nothing).
+ * draw nothing); for Home's thumbnails src/display/api.js (getPage,
+ * getViewport, and render's annotationMode and background) and
+ * web/base_pdf_page_view.js (pagerendered).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. The page overview shows those thumbnails across the
@@ -154,14 +156,16 @@
    * The toolbar's steps for narrower windows, as classes of #toolbarContainer
    * that overrides.css styles: 32 px buttons, then pdf.js's medium view,
    * which hides Print, its small view, which hides the previous and next page
-   * buttons, and its hidden zoom menu. Each step keeps those before it.
-   * layoutToolbar() takes the first at which the toolbar fits.
+   * buttons, its hidden zoom menu, and last no Home button, which File > Home
+   * stands in for. Each step keeps those before it. layoutToolbar() takes the
+   * first at which the toolbar fits.
    */
   const TOOLBAR_STEPS = [
     "pdflionToolbarCompact",
     "pdflionToolbarMedium",
     "pdflionToolbarSmall",
     "pdflionToolbarNarrow",
+    "pdflionToolbarWithoutHome",
   ];
 
   /**
@@ -174,6 +178,21 @@
     ["(max-width: 690px)", 3],
     ["(max-width: 750px)", 2],
   ];
+
+  /**
+   * Home's thumbnail of a document: its first page, fitting this many CSS
+   * pixels at the screen's pixel ratio, and at most THUMBNAIL_MAX_PIXELS each
+   * way and THUMBNAIL_MAX_BYTES, as src/shared/thumbnail.js checks it.
+   */
+  const THUMBNAIL_BOX = { width: 180, height: 240 };
+  const THUMBNAIL_MAX_PIXELS = 512;
+  const THUMBNAIL_MAX_BYTES = 256 * 1024;
+
+  /**
+   * `AnnotationMode.ENABLE_STORAGE` in src/shared/util.js: form values and
+   * annotations as they are.
+   */
+  const ANNOTATIONS_AS_THEY_ARE = 3;
 
   /** The step of pdf.js's medium view, from which all favourites are in the ★ menu. */
   const MEDIUM_STEP = 2;
@@ -455,6 +474,7 @@
       // pdf.js hasn't bound its events yet.
       addFilesAsPageChanges(app);
       // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
+      addHomeButton();
       overviewButton = addOverviewButton(app);
       pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
       eraserTool = addEraserTool(app);
@@ -476,7 +496,10 @@
           trackEdits(app);
           checkLocked(app);
           // A reopened document shows changes to the file, not the file.
-          if (!reopening) noteDroppable(app);
+          if (!reopening) {
+            noteDroppable(app);
+            thumbnailOnceShown(app);
+          }
         });
         // Pages moved, copied or deleted in the thumbnails, or that change undone.
         app.eventBus.on("pagesedited", () => {
@@ -770,10 +793,73 @@
         updateEdited(app);
       }
       noteDroppable(app);
+      sendThumbnail(app);
       return true;
     } finally {
       busy = false;
       updatePageButtons(app);
+    }
+  }
+
+  /**
+   * Has Home's thumbnail made once the viewer has shown a page, so that it
+   * doesn't hold up the first one.
+   *
+   * @param {any} app
+   */
+  function thumbnailOnceShown(app) {
+    if (typeof window.pdflion.setThumbnail !== "function") return;
+    const { pdfDocument } = app;
+    app.eventBus.on(
+      "pagerendered",
+      () => {
+        if (app.pdfDocument === pdfDocument) sendThumbnail(app);
+      },
+      { once: true },
+    );
+  }
+
+  /**
+   * Renders the first page for Home, as a PNG, with its form values and
+   * annotations as they are, and hands it to the host, which keeps it for a
+   * document with a file. A PNG too large to keep is rendered smaller.
+   *
+   * @param {any} app
+   */
+  async function sendThumbnail(app) {
+    const { pdfDocument } = app;
+    if (typeof window.pdflion.setThumbnail !== "function" || !pdfDocument) return;
+    try {
+      const page = await pdfDocument.getPage(1);
+      const { width, height } = page.getViewport({ scale: 1 });
+      const ratio = window.devicePixelRatio || 1;
+      let scale = Math.min(
+        Math.min(THUMBNAIL_BOX.width * ratio, THUMBNAIL_MAX_PIXELS) / width,
+        Math.min(THUMBNAIL_BOX.height * ratio, THUMBNAIL_MAX_PIXELS) / height,
+      );
+      for (let attempt = 0; attempt < 3; attempt++, scale *= 0.7) {
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        // Rounded, not floored, since 612 × (180 / 612) is a hair under 180.
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        await page.render({
+          canvasContext: canvas.getContext("2d"),
+          viewport,
+          annotationMode: ANNOTATIONS_AS_THEY_ARE,
+          background: "white",
+        }).promise;
+        /** @type {Blob | null} */
+        const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        // Another document may have come meanwhile.
+        if (app.pdfDocument !== pdfDocument || !png) return;
+        if (png.size <= THUMBNAIL_MAX_BYTES) {
+          window.pdflion.setThumbnail(new Uint8Array(await png.arrayBuffer()));
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn("Couldn't make the thumbnail:", error);
     }
   }
 
@@ -1502,6 +1588,21 @@
     button.disabled = true;
     button.addEventListener("click", () => insertBlankPage(app));
     separator.before(button);
+    return button;
+  }
+
+  /**
+   * Adds Home to the toolbar, left of the sidebar's button, where the host
+   * shows Home: main's home tab on the desktop.
+   *
+   * @returns {HTMLButtonElement | null}
+   */
+  function addHomeButton() {
+    const sidebarButton = document.getElementById("viewsManagerToggleButton");
+    if (!sidebarButton || typeof window.pdflion.showHome !== "function") return null;
+    const button = makeButton("pdflionHomeButton", "toolbarButton", "Home");
+    button.addEventListener("click", () => window.pdflion.showHome());
+    sidebarButton.before(button);
     return button;
   }
 

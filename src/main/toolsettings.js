@@ -68,7 +68,7 @@ function update({ eraser, penOnly, favourites }) {
   if (favourites) setState("favourites", favourites);
   const settings = toolSettings();
   for (const tab of tabs.allTabs()) {
-    if (!tab.webContents.isDestroyed()) {
+    if (!tabs.isHome(tab) && !tab.webContents.isDestroyed()) {
       tab.webContents.send("pdflion:tool-settings-changed", settings);
     }
   }

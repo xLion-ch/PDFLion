@@ -52,6 +52,7 @@ Check for Updates… and Check for Updates Automatically are in the PDFLion menu
 |---|---|---|---|
 | New | ⌘N | Ctrl+N | Ctrl+N |
 | Open… | ⌘O | Ctrl+O | Ctrl+O |
+| Home | ⇧⌘H | Ctrl+Shift+H | Ctrl+Shift+H |
 | Save / Save As… | ⌘S / ⇧⌘S | Ctrl+S / Ctrl+Shift+S | Ctrl+S / Ctrl+Shift+S |
 | Print… | ⌘P | Ctrl+P | Ctrl+P |
 | Close Tab | ⌘W | Ctrl+W | Ctrl+W |
@@ -140,6 +141,7 @@ On a Mac with Apple silicon:
 - The DMG installs on a Mac that has never run PDFLion, and the app starts once allowed under Privacy & Security. Made the default in Finder's Open With, it opens PDFs.
 - The shortcuts work from the keyboard, without pdf.js also acting on them: ⌘S saves without a download, ⇧⌘F starts Presentation Mode, ⇧⌘N inserts one page, ⌥⌘6 opens and closes the page overview, also with a Swiss German or French keyboard layout, and ⇧⌘E turns the eraser on and off, also with the overview open or Pencil on.
 - The title bar's proxy icon follows the selected tab, and opened files appear in the Dock menu's recent documents.
+- Clicking the Dock icon with no window open shows Home, and so does ⇧⌘H.
 - With "Prefer tabs when opening documents" set to Always, windows still don't become macOS's own tabs.
 - The viewer follows the appearance setting, Print shows the native dialog with every page, and a trackpad pinch zooms the pages, not the window.
 - The previous release, downloaded from GitHub and installed in Applications, offers the latest about 10 seconds after it starts. Restart Now with an edited document asks about it first, then installs and starts the new version, with no prompt about modifying apps and no other Gatekeeper warning. Later, then ⌘Q, installs it without starting PDFLion again. Started from Downloads without moving it, Check for Updates… says it can't be installed there.
@@ -152,7 +154,7 @@ On a Windows PC:
 - Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down, Ctrl+Page Up, Ctrl+Shift+N, Ctrl+Shift+O and Ctrl+Shift+E each do one thing, and pdf.js doesn't also act on them. AltGr characters can still be typed into form fields, and Alt+F opens the File menu.
 - Editing a form puts `*` before the title, and closing the window, Exit, and closing the last window each ask about it.
 - A PDF opened from Explorer while PDFLion runs opens as a tab of its front window, in front of other windows, or selects its tab if it's open already. A PDF dropped from Explorer onto a window opens as a tab there.
-- Cancelling the Open dialog at launch quits the app, and so does a launch with a file that can't be read.
+- A launch without a file shows Home, and so does a launch with a file that can't be read, once it has said so. Started again without a file, PDFLion brings its window forward with Home.
 - Saving a file another app has open, and saving to a network share, either works or shows an error and keeps the changes. If antivirus scanning makes saving fail with `EPERM` or `EBUSY`, saving needs a short retry. A large PDF on a network share shows its first page before the rest has loaded.
 - Shutting down or signing out with unsaved changes waits while PDFLion asks about them.
 - The taskbar button groups with the pinned or Start menu shortcut, and the jump list shows recent files.
@@ -168,7 +170,7 @@ On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, w
 - A PDF opened from the file manager while PDFLion runs opens as a tab of its front window, or selects its tab if it's open already.
 - Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+F, Ctrl+Shift+F, Ctrl++, Ctrl+=, Ctrl+−, Ctrl+0, F4, F11, Ctrl+Q, Ctrl+W, Ctrl+Shift+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+Page Down, Ctrl+Page Up, Ctrl+Shift+N, Ctrl+Shift+O and Ctrl+Shift+E each do one thing, and pdf.js doesn't also act on them, also in a text field while an input method such as IBus runs. Alt+F opens the File menu.
 - Editing a form puts `*` before the title, and closing the window, File > Quit, and closing the last window each ask about it, with Save as the rightmost button. Shutting down with unsaved changes shows that prompt for as long as systemd waits.
-- Cancelling the Open dialog at launch quits the app.
+- A launch from the app menu shows Home, and starting it again brings its window forward with Home.
 - File > Open Recent lists opened files, and Help > About PDFLion shows the version, the icon and the credits.
 - On Wayland and on X11, the viewer follows the light or dark style, Print shows every page, and a touchpad pinch zooms the pages.
 - The previous release's `.deb` offers the latest about 10 seconds after it starts. Restart Now with an edited document asks about it first, then shows the password prompt, installs and starts the new version, with its sandbox on. Cancelling the prompt, which electron-updater then shows again, for `apt-get install -f`, leaves PDFLion running, and it says the update wasn't installed. Answering only the second prompt mustn't restart the old version as if it had updated. Quitting installs nothing.
@@ -190,6 +192,8 @@ On every platform, and on Linux both on Wayland and on X11:
 - Favourites in pale and dark colours show in light and dark mode, with legible sizes. With twenty, the toolbar shows as many as fit, and the ★ menu the rest, scrolling in a short window, and both follow the window as it's resized. The ★ menu works with Tab, the arrow keys, Enter and Esc. A favourite picks its tool with the tool's options closed, and picking one with a drawing selected leaves the drawing as it was.
 - A favourite dragged onto another, with a mouse or a trackpad, shows a line where it'll go, and moves there in every window: in the toolbar, in the ★ menu, and from the menu onto the toolbar.
 - In system languages other than English and German, the toolbar fits as a window narrows a little at a time: its buttons get smaller, then favourites move into the ★ menu, Print into the ⋮ menu, the previous and next page buttons go, and last the zoom menu. Nothing comes back until the window gets wider.
+- Home lists the documents opened, newest first, with their first pages, folders and times, and marks those open in a tab. A card opens its document in Home's place, and Open…, New and a PDF dragged from the file manager do too. The context menu's Show in Finder, Explorer or Files shows the file, and Remove from Recent and Clear take documents off. The arrow keys, Return and Delete (Backspace on macOS) work on the cards, and VoiceOver, Narrator or Orca reads each card's name, folder and time. Home follows the light or dark appearance and high contrast, and fits a window 560 pixels wide.
+- The toolbar's Home button shows the window's home tab, or adds one, and goes in the narrowest windows, where File > Home stays.
 - File > New gives a US Letter page with the region set to the United States or Canada, and an A4 page with Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Closing an edited new document asks about saving, and Save asks where.
 
 ## License

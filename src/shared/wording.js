@@ -22,6 +22,7 @@ export const DONT_SAVE = "Don’t Save";
 export const RESTART_NOW = "Restart Now";
 export const LATER = "Later";
 export const RELEASE_NOTES = "Release Notes";
+export const REMOVE = "Remove";
 
 /**
  * What a save that rewrites the document drops, for `rewrite`, as its detail
@@ -177,6 +178,20 @@ export function openError(name, { code, message }) {
     return { message: `The file “${name}” couldn’t be opened because ${OPEN_ERRORS[code]}.` };
   }
   return { message: `The file “${name}” couldn’t be opened.`, detail: message };
+}
+
+/**
+ * The prompt for a recent document whose file is gone, which offers to take
+ * it off the list, with Remove and Cancel.
+ *
+ * @param {string} name the file's
+ * @returns {Text}
+ */
+export function missingRecent(name) {
+  return {
+    message: openError(name, { code: "ENOENT", message: "" }).message,
+    detail: "It may have been moved, renamed or deleted. Do you want to remove it from the recent documents?",
+  };
 }
 
 /**
