@@ -187,6 +187,10 @@
     true,
   );
 
+  // A pinch zooms nothing, as in an app: Safari ignores the viewport's
+  // maximum-scale.
+  document.addEventListener("gesturestart", (event) => event.preventDefault());
+
   /**
    * The test pdf.js uses for a PDF drag, as in home.cjs.
    *

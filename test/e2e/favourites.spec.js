@@ -50,6 +50,7 @@ test("tool settings reach every tab, and last until the next launch", async ({ p
   expect(await toolSettings(page)).toEqual({
     eraser: { mode: "object", size: 10 },
     penOnly: false,
+    penOnlyChosen: false,
     favourites: [],
   });
 
@@ -61,12 +62,14 @@ test("tool settings reach every tab, and last until the next launch", async ({ p
   await listen(page);
   await listen(other);
 
-  const settings = {
+  const changes = {
     eraser: { mode: "line", size: 20 },
     penOnly: true,
     favourites: [pencil, text],
   };
-  await setToolSettings(page, settings);
+  await setToolSettings(page, changes);
+  // Setting pen-only drawing chooses it, so that a pen no longer turns it on.
+  const settings = { ...changes, penOnlyChosen: true };
   await expect.poll(() => heard(other)).toEqual([settings]);
   expect(await heard(page)).toEqual([settings]);
   expect(await toolSettings(other)).toEqual(settings);
@@ -421,7 +424,14 @@ test("a favourite's context menu removes it", async ({ pdflion }) => {
   await app.evaluate(() => /** @type {any} */ (globalThis).contextMenu.items[0].click());
   await expect
     .poll(() => heard(page))
-    .toEqual([{ eraser: { mode: "object", size: 10 }, penOnly: false, favourites: [text] }]);
+    .toEqual([
+      {
+        eraser: { mode: "object", size: 10 },
+        penOnly: false,
+        penOnlyChosen: false,
+        favourites: [text],
+      },
+    ]);
 });
 
 test("takes only tool settings that are right, and shows no menu for anything else", async ({

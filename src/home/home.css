@@ -344,3 +344,29 @@ h2 {
     justify-content: center;
   }
 }
+
+/*
+ * A double tap or a pinch zooms nothing, and a long press on a card opens its
+ * menu (home.js) rather than iPadOS's callout. With a finger, the buttons are
+ * 44px high, as Apple asks of touch targets.
+ */
+html {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+}
+
+@media (pointer: coarse) {
+  .button:not(.large) {
+    height: 44px;
+  }
+
+  .icon {
+    width: 44px;
+    height: 44px;
+
+    &::before {
+      margin: 12px;
+    }
+  }
+}

@@ -15,6 +15,7 @@ A PDF viewer for macOS, Windows and Linux. It's based on Mozilla's [pdf.js](http
 - Documents with a password can't have their pages changed, and signed documents ask first.
 - The Eraser, after Pencil, erases the parts of lines it passes over, or whole drawings, also those another app left in the file. A pen's eraser end erases too, without picking the Eraser.
 - Save as Favourite, in the options of Highlight, Text and Pencil, keeps the tool's settings, such as a blue pencil 1 point wide, as a button in the toolbar of every window.
+- With a pen, such as a Surface Pen, only the pen draws once it has touched a page, as on an iPad: fingers scroll and zoom while Pencil, Highlight or the Eraser is on. Draw Only with a Pen, in the options of Pencil and the Eraser, turns that off.
 - Zoom, rotation, search, sidebar, Presentation Mode and printing, from the menus and the platform's usual shortcuts.
 - Follows the system's light or dark appearance, and in the viewer its language. The menus are in English.
 - Remembers the last window's place and recently opened files, and updates itself from the releases on GitHub.
@@ -203,6 +204,7 @@ On every platform, and on Linux both on Wayland and on X11:
 - While the page overview is open, its toolbar button shows on and the sidebar's off, and in the narrowest window, 560 pixels wide, it shows one column with its header's buttons inside. Closing it leaves the document and the sidebar as they were.
 - The Eraser works with a mouse, a trackpad, a touchscreen and a pen, with its circle as large as the eraser at every zoom. A fast Line drag across many strokes cuts them all where it passed, without lag, and what's left keeps its look, also in Preview or Acrobat after saving. It erases another app's drawing, such as Preview's markup, and saving removes it there too. While it's on, the Eraser shows on and Pencil off, and Pencil turns it off and draws. Edit > Undo and Redo, clicked in the menu, undo and redo erasing, and in a form field ⌘Z (Ctrl+Z) still undoes typing.
 - A pen's eraser end, such as a Surface Pen's, erases with Pencil on, which then draws on, with Highlight on, and with no tool on, which turns the Eraser on, and its drag doesn't scroll the page.
+- On a touchscreen with a pen, such as a Surface's: the pen's first stroke turns Draw Only with a Pen on in Pencil's and the Eraser's options, after which a finger scrolls and pinches with Pencil, Highlight or the Eraser on, and draws or erases nothing. A palm resting on the screen while the pen draws neither scrolls nor ends the stroke. Turned off, it stays off, also after a restart. A long press of a finger on a favourite shows its menu once, without picking the favourite, and the toolbar's buttons stay large enough to tap.
 - Save as Favourite shows as an outlined button, which Tab reaches, and says Saved, then Already a Favourite when clicked again.
 - Favourites in pale and dark colours show in light and dark mode, with legible sizes. With twenty, the toolbar shows as many as fit, and the ★ menu the rest, scrolling in a short window, and both follow the window as it's resized. The ★ menu works with Tab, the arrow keys, Enter and Esc. A favourite picks its tool with the tool's options closed, and picking one with a drawing selected leaves the drawing as it was.
 - A favourite dragged onto another, with a mouse or a trackpad, shows a line where it'll go, and moves there in every window: in the toolbar, in the ★ menu, and from the menu onto the toolbar.
@@ -221,7 +223,10 @@ The web app, on an iPad with iPadOS 18 and one with iPadOS 26, in Safari and as 
 - Drawing, then going to the Home Screen and ending PDFLion in the app switcher, then opening it again, keeps the drawing in the document.
 - A page deleted in the sidebar asks first if the document has XMP metadata, and is saved once another tab shows or the app is left, and not while pdf.js offers to undo it.
 - With a hardware keyboard, ⌘O, ⌘N, ⌘W, ⌘S, ⇧⌘S, ⇧⌘N, ⌥⌘6, ⇧⌘E, ⇧⌘H, ⌃Tab and ⌃⇧Tab each do one thing, where iPadOS lets them through, and ⌘P, ⌘F and the zoom keys stay pdf.js's.
-- With a trackpad, a card's context menu renames and deletes its document, which asks first, and a tab's closes it or the others.
+- With a trackpad, or a long press of a finger or the Pencil, a card's context menu renames and deletes its document, which asks first, and a tab's closes it or the others. A long press on a favourite shows Remove Favourite, and dragging it on moves it among the others.
+- Drawing with each kind of Apple Pencil keeps up with it, without gaps. The first stroke turns Draw Only with a Pen on, after which fingers scroll and pinch the pages with Pencil, Highlight or the Eraser on, and a palm resting on the screen neither scrolls nor draws. On an iPad with Pencil hover, the Eraser's circle follows the hovering Pencil. Scribble writes into form fields and text boxes.
+- A pinch or a double tap on the toolbar, the strip or Home zooms nothing, and a long press there shows no callout. Buttons, tabs, menu items and cards are easy to tap.
+- In Split View, Slide Over, Stage Manager and iPadOS 26's windows at their smallest, the toolbar fits, putting the drawing tools into one button and Find, Page Overview and Insert Blank Page into the ⋮ menu as it narrows, and nothing is under the window controls.
 - Home's ⓘ menu shows About, with the versions and credits, the pen setting, and the storage the documents take.
 - Links in a document open in Safari, and the viewer and Home opened on their own show nothing.
 

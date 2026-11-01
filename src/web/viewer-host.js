@@ -159,6 +159,8 @@
     },
     /** @param {object} favourite */
     showFavouriteMenu: (favourite) => send("favouriteMenu", favourite, menuAt.x, menuAt.y),
+    /** Closes the shell's menu, once a long press that opened it drags its favourite. */
+    closeMenu: () => send("closeMenu"),
     showHome: () => send("showHome"),
     /** @param {Uint8Array} png */
     setThumbnail: (png) => send("thumbnail", png),
@@ -217,6 +219,13 @@
     },
     true,
   );
+
+  // A pinch outside the pages zooms nothing, as in an app: Safari ignores
+  // the viewport's maximum-scale. On the pages, pdf.js zooms the document.
+  document.addEventListener("gesturestart", (event) => {
+    const target = /** @type {Element | null} */ (event.target);
+    if (!target?.closest?.("#viewerContainer")) event.preventDefault();
+  });
 
   /**
    * The test pdf.js uses for a PDF drag, as in preload.cjs.

@@ -1,7 +1,7 @@
 /**
  * The tool settings PDFLion remembers, which every tab shares: the eraser's
- * mode and size, whether only a pen draws, and the favourites, each a drawing
- * tool with its settings.
+ * mode and size, whether only a pen draws, and whether that was ever chosen,
+ * and the favourites, each a drawing tool with its settings.
  * They come from the viewer, whose messages main checks, and from
  * state.json, which an earlier version or a hand edit may have left, so this
  * module checks them, and rebuilds each from its known fields.
@@ -60,6 +60,10 @@ export const MAX_FAVOURITES = 500;
  * @property {EraserSettings} eraser
  * @property {boolean} penOnly whether only a pen draws in the drawing tools,
  *   while fingers scroll and zoom, as iPadOS's "Only Draw with Apple Pencil"
+ * @property {boolean} penOnlyChosen whether pen-only drawing was ever turned
+ *   on or off: by hand, by an import, or by the first pen to press on a
+ *   page, which turns it on only until then. Main and the web app's shell
+ *   set it with any change to `penOnly`, and the viewer can't.
  * @property {Favourite[]} favourites
  */
 
@@ -140,22 +144,42 @@ export function parseToolSettings(value) {
 /**
  * Reads the tool settings as state.json stores them. Whatever's wrong is
  * left out: the eraser's settings fall back to the defaults, pen-only drawing
- * is off unless it's on, and favourites that aren't are dropped.
+ * is off and unchosen unless it's on or chosen, and favourites that aren't
+ * are dropped.
  *
- * @param {unknown} toolSettings the `toolSettings` key: `{ eraser, penOnly }`
+ * @param {unknown} toolSettings the `toolSettings` key: `{ eraser, penOnly,
+ *   penOnlyChosen }`
  * @param {unknown} favourites the `favourites` key
  * @returns {ToolSettings}
  */
 export function readToolSettings(toolSettings, favourites) {
-  const eraser = isRecord(toolSettings) ? parseEraser(toolSettings.eraser) : null;
+  const settings = isRecord(toolSettings) ? toolSettings : {};
+  const eraser = parseEraser(settings.eraser);
   const list = Array.isArray(favourites) ? favourites.map(parseFavourite) : [];
   return {
     eraser: eraser ?? { ...DEFAULT_ERASER },
-    penOnly: isRecord(toolSettings) && toolSettings.penOnly === true,
+    penOnly: settings.penOnly === true,
+    penOnlyChosen: settings.penOnlyChosen === true,
     favourites: withoutRepeats(list.filter((favourite) => favourite !== null)).slice(
       0,
       MAX_FAVOURITES,
     ),
+  };
+}
+
+/**
+ * @param {ToolSettings} current
+ * @param {Partial<ToolSettings>} changes checked with parseToolSettings(),
+ *   or read from a settings file
+ * @returns {ToolSettings} the settings with the changes, with pen-only
+ *   drawing chosen once a change sets it
+ */
+export function changeToolSettings(current, { eraser, penOnly, favourites }) {
+  return {
+    eraser: eraser ?? current.eraser,
+    penOnly: penOnly ?? current.penOnly,
+    penOnlyChosen: current.penOnlyChosen || penOnly !== undefined,
+    favourites: favourites ?? current.favourites,
   };
 }
 

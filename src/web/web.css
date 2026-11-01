@@ -324,3 +324,64 @@ body.oneTab #tabs {
     border: 1px solid CanvasText;
   }
 }
+
+/*
+ * On the strip, dialogs, menus and snackbars, a double tap or a pinch zooms
+ * nothing, a long press shows no callout, and only text fields select text,
+ * as in an app. shell.js stops pinches outside the frames.
+ */
+body {
+  touch-action: manipulation;
+}
+
+#tabs,
+.dialog,
+.menu,
+.snackbar {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.dialog .field {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/*
+ * With a finger, touch targets are at least 44px, as Apple asks: the tabs and
+ * their close buttons, buttons, menu items and the snackbar's action.
+ */
+@media (pointer: coarse) {
+  #tabs {
+    --strip-height: 48px;
+    --tab-min-width: 120px;
+  }
+
+  .tab {
+    padding-inline-end: 0;
+
+    .close,
+    .dot {
+      width: 44px;
+      height: 44px;
+    }
+
+    .close::before {
+      margin: 14px;
+    }
+
+    .dot::before {
+      margin: 18px;
+    }
+  }
+
+  .button,
+  .snackbar .action {
+    height: 44px;
+  }
+
+  .menu .item {
+    min-height: 44px;
+  }
+}

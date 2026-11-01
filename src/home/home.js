@@ -33,6 +33,14 @@
   const recent = /** @type {HTMLElement} */ (document.getElementById("recent"));
   const empty = /** @type {HTMLElement} */ (document.getElementById("empty"));
 
+  /**
+   * A long press with a finger or a pen, which opens a card's menu, as iPadOS
+   * sends no contextmenu for one: this long, in ms, moving at most this far,
+   * in CSS pixels.
+   */
+  const LONG_PRESS_TIME = 500;
+  const LONG_PRESS_SLOP = 10;
+
   /** English, like PDFLion's other own labels. */
   const relativeTime = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
@@ -229,6 +237,8 @@
     api.contextMenu(target.dataset.id);
   });
 
+  followLongPresses(list, ".card");
+
   list.addEventListener("focusin", (event) => {
     const target = cardAt(event.target);
     if (target) moveTo(target);
@@ -288,6 +298,80 @@
     const top = cards[0]?.getBoundingClientRect().top;
     const inFirstRow = cards.findIndex((card) => card.getBoundingClientRect().top !== top);
     return inFirstRow === -1 ? Math.max(cards.length, 1) : inFirstRow;
+  }
+
+  /**
+   * Opens the context menu of an element after a long press with a finger or
+   * a pen, of LONG_PRESS_TIME without moving more than LONG_PRESS_SLOP, which
+   * iPadOS doesn't: it sends a contextmenu event where the press is. The
+   * browser's own, as Chromium sends after a touch's long press, and a click
+   * after the press, are dropped. As addLongPress() in src/viewer/bridge.js
+   * does for favourites.
+   *
+   * @param {HTMLElement} container
+   * @param {string} selector the elements in it with menus
+   */
+  function followLongPresses(container, selector) {
+    /** Whether the last press opened a menu, until the next. */
+    let opened = false;
+    container.addEventListener("pointerdown", (down) => {
+      opened = false;
+      const target = down.target instanceof Element ? down.target.closest(selector) : null;
+      if (!target || down.pointerType === "mouse" || down.button !== 0) return;
+      const pressing = new AbortController();
+      const { signal } = pressing;
+      const stop = () => pressing.abort();
+      const timer = setTimeout(() => {
+        stop();
+        opened = true;
+        const { clientX, clientY } = down;
+        const menu = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+        });
+        target.dispatchEvent(menu);
+      }, LONG_PRESS_TIME);
+      signal.addEventListener("abort", () => clearTimeout(timer));
+      /** @param {PointerEvent} event */
+      const moved = ({ pointerId, clientX, clientY }) => {
+        const far = Math.hypot(clientX - down.clientX, clientY - down.clientY) > LONG_PRESS_SLOP;
+        if (pointerId === down.pointerId && far) stop();
+      };
+      /** @param {PointerEvent} event */
+      const ended = ({ pointerId }) => {
+        if (pointerId === down.pointerId) stop();
+      };
+      window.addEventListener("pointermove", moved, { signal });
+      window.addEventListener("pointerup", ended, { signal });
+      window.addEventListener("pointercancel", ended, { signal });
+      container.addEventListener("dragstart", stop, { signal });
+      container.addEventListener("contextmenu", (event) => event.isTrusted && stop(), { signal });
+    });
+    // Before the page's own listeners.
+    container.addEventListener(
+      "contextmenu",
+      (event) => {
+        if (!event.isTrusted || !opened) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+    container.addEventListener(
+      "click",
+      (event) => {
+        if (!opened) return;
+        opened = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+    container.addEventListener("keydown", () => {
+      opened = false;
+    });
   }
 
   // Shows where PDFs dragged from the file manager would go. The preload

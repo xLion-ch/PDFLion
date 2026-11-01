@@ -13,6 +13,14 @@
   /** The drag data type of a tab. The viewer's preload accepts it too. */
   const TAB_TYPE = "application/x-pdflion-tab";
 
+  /**
+   * A long press with a finger or a pen, which opens a tab's menu, as iPadOS
+   * sends no contextmenu for one: this long, in ms, moving at most this far,
+   * in CSS pixels.
+   */
+  const LONG_PRESS_TIME = 500;
+  const LONG_PRESS_SLOP = 10;
+
   const api = window.pdflionTabs;
   const strip = /** @type {HTMLElement} */ (document.getElementById("tabs"));
 
@@ -137,6 +145,8 @@
     if (tab) api.contextMenu(/** @type {string} */ (tab.dataset.id));
   });
 
+  followLongPresses(strip, ".tab", () => api.closeMenu?.());
+
   // Arrow keys, Home and End move between tabs and select them, keeping the
   // keys in the strip. Enter and Space send them to the tab's document.
   strip.addEventListener("keydown", (event) => {
@@ -250,5 +260,84 @@
 
   function clearDropMarker() {
     for (const child of strip.children) child.classList.remove("drop-before", "drop-after");
+  }
+
+  /**
+   * Opens the context menu of an element after a long press with a finger or
+   * a pen, of LONG_PRESS_TIME without moving more than LONG_PRESS_SLOP, which
+   * iPadOS doesn't: it sends a contextmenu event where the press is. The
+   * browser's own, as Chromium sends after a touch's long press, and a click
+   * after the press, are dropped. A drag after it closes the menu, since
+   * iPadOS starts one with a long press too. As addLongPress() in src/viewer/bridge.js
+   * does for favourites.
+   *
+   * @param {HTMLElement} container
+   * @param {string} selector the elements in it with menus
+   * @param {() => void} [closeMenu] the host's, for its menu
+   */
+  function followLongPresses(container, selector, closeMenu) {
+    /** Whether the last press opened a menu, until the next. */
+    let opened = false;
+    container.addEventListener("pointerdown", (down) => {
+      opened = false;
+      const target = down.target instanceof Element ? down.target.closest(selector) : null;
+      if (!target || down.pointerType === "mouse" || down.button !== 0) return;
+      const pressing = new AbortController();
+      const { signal } = pressing;
+      const stop = () => pressing.abort();
+      const timer = setTimeout(() => {
+        stop();
+        opened = true;
+        const { clientX, clientY } = down;
+        const menu = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+        });
+        target.dispatchEvent(menu);
+      }, LONG_PRESS_TIME);
+      signal.addEventListener("abort", () => clearTimeout(timer));
+      /** @param {PointerEvent} event */
+      const moved = ({ pointerId, clientX, clientY }) => {
+        const far = Math.hypot(clientX - down.clientX, clientY - down.clientY) > LONG_PRESS_SLOP;
+        if (pointerId === down.pointerId && far) stop();
+      };
+      /** @param {PointerEvent} event */
+      const ended = ({ pointerId }) => {
+        if (pointerId === down.pointerId) stop();
+      };
+      window.addEventListener("pointermove", moved, { signal });
+      window.addEventListener("pointerup", ended, { signal });
+      window.addEventListener("pointercancel", ended, { signal });
+      container.addEventListener("dragstart", stop, { signal });
+      container.addEventListener("contextmenu", (event) => event.isTrusted && stop(), { signal });
+    });
+    // Before the page's own listeners.
+    container.addEventListener(
+      "contextmenu",
+      (event) => {
+        if (!event.isTrusted || !opened) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+    container.addEventListener(
+      "click",
+      (event) => {
+        if (!opened) return;
+        opened = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+    container.addEventListener("keydown", () => {
+      opened = false;
+    });
+    container.addEventListener("dragstart", () => {
+      if (opened) closeMenu?.();
+    });
   }
 })();

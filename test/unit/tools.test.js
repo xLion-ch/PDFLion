@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   addFavourites,
+  changeToolSettings,
   DEFAULT_ERASER,
   MAX_FAVOURITES,
   parseEraser,
@@ -192,11 +193,10 @@ describe("tools parseToolSettings", () => {
 describe("tools readToolSettings", () => {
   it("reads what state.json holds", () => {
     const eraser = { mode: "line", size: 30 };
-    assert.deepEqual(readToolSettings({ eraser, penOnly: true }, [pencil, highlight]), {
-      eraser,
-      penOnly: true,
-      favourites: [pencil, highlight],
-    });
+    assert.deepEqual(
+      readToolSettings({ eraser, penOnly: true, penOnlyChosen: true }, [pencil, highlight]),
+      { eraser, penOnly: true, penOnlyChosen: true, favourites: [pencil, highlight] },
+    );
   });
 
   it("starts with the default eraser, pen-only drawing off, and no favourites", () => {
@@ -204,6 +204,7 @@ describe("tools readToolSettings", () => {
     assert.deepEqual(settings, {
       eraser: { mode: "object", size: 10 },
       penOnly: false,
+      penOnlyChosen: false,
       favourites: [],
     });
     // A copy, which the caller may change.
@@ -217,6 +218,15 @@ describe("tools readToolSettings", () => {
   it("turns pen-only drawing on only for true", () => {
     for (const penOnly of [1, "true", null, {}]) {
       assert.equal(readToolSettings({ penOnly }, []).penOnly, false, String(penOnly));
+    }
+  });
+
+  it("has pen-only drawing chosen only for true, as earlier versions never chose it", () => {
+    assert.equal(readToolSettings({ penOnly: false }, []).penOnlyChosen, false);
+    assert.equal(readToolSettings({ penOnly: false, penOnlyChosen: true }, []).penOnlyChosen, true);
+    for (const penOnlyChosen of [1, "true", null, {}]) {
+      const { penOnlyChosen: chosen } = readToolSettings({ penOnlyChosen }, []);
+      assert.equal(chosen, false, String(penOnlyChosen));
     }
   });
 
@@ -240,6 +250,32 @@ describe("tools readToolSettings", () => {
       readToolSettings(undefined, favourites).favourites,
       favourites.slice(0, MAX_FAVOURITES),
     );
+  });
+});
+
+describe("tools changeToolSettings", () => {
+  const current = readToolSettings({ eraser: DEFAULT_ERASER }, [pencil]);
+
+  it("changes what the changes have, and leaves the rest", () => {
+    const eraser = { mode: "line", size: 20 };
+    assert.deepEqual(changeToolSettings(current, { eraser }), { ...current, eraser });
+    assert.deepEqual(changeToolSettings(current, { favourites: [text] }), {
+      ...current,
+      favourites: [text],
+    });
+  });
+
+  it("has pen-only drawing chosen once a change sets it, on or off", () => {
+    for (const penOnly of [true, false]) {
+      const changed = changeToolSettings(current, { penOnly });
+      assert.deepEqual(changed, { ...current, penOnly, penOnlyChosen: true });
+      assert.equal(changeToolSettings(changed, { favourites: [] }).penOnlyChosen, true, "for good");
+    }
+  });
+
+  it("takes nothing else, such as a change that says it's chosen", () => {
+    const changes = /** @type {any} */ ({ penOnlyChosen: true });
+    assert.deepEqual(changeToolSettings(current, changes), current);
   });
 });
 

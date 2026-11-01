@@ -53,7 +53,22 @@ const NOTHING_HELD = {
 class SyntheticEvent {
   /** @param {string} type @param {object} [init] */
   constructor(type, init = {}) {
-    Object.assign(this, { type, ...init });
+    Object.assign(this, {
+      type,
+      defaultPrevented: false,
+      stopped: false,
+      immediateStopped: false,
+      ...init,
+    });
+  }
+  preventDefault() {
+    this.defaultPrevented = true;
+  }
+  stopPropagation() {
+    this.stopped = true;
+  }
+  stopImmediatePropagation() {
+    this.stopped = this.immediateStopped = true;
   }
 }
 
@@ -211,8 +226,14 @@ function loadBridge({
       this.tagName = tagName.toUpperCase();
       /** @type {Element[]} */
       this.children = [];
-      /** @type {Record<string, Function>} */
+      /**
+       * Each type's listeners, as one function, which runs those that capture
+       * first, until one stops the event's propagation at once.
+       * @type {Record<string, Function>}
+       */
       this.listeners = {};
+      /** @type {Record<string, { listener: Function, capture: boolean }[]>} */
+      this.added = {};
       /** @type {Record<string, string>} */
       this.attributes = {};
       this.classes = new Set();
@@ -286,8 +307,54 @@ function loadBridge({
     setAttribute(name, value) {
       this.attributes[name] = value;
     }
-    addEventListener(type, listener) {
-      this.listeners[type] = listener;
+    /** @param {string} name */
+    removeAttribute(name) {
+      delete this.attributes[name];
+    }
+    /**
+     * @param {string} type
+     * @param {Function} listener
+     * @param {boolean | { capture?: boolean }} [options]
+     */
+    addEventListener(type, listener, options) {
+      const capture = options === true || (typeof options === "object" && options.capture === true);
+      const added = (this.added[type] ??= []);
+      added.push({ listener, capture });
+      const ordered = [
+        ...added.filter((entry) => entry.capture),
+        ...added.filter((entry) => !entry.capture),
+      ];
+      this.listeners[type] =
+        ordered.length === 1
+          ? listener
+          : (/** @type {any} */ event, /** @type {any[]} */ ...rest) => {
+              for (const entry of ordered) {
+                entry.listener(event, ...rest);
+                if (event?.immediateStopped) break;
+              }
+            };
+    }
+    /**
+     * @param {any} event
+     * @returns {boolean} whether no listener prevented its default
+     */
+    dispatchEvent(event) {
+      this.listeners[event.type]?.(event);
+      return !event.defaultPrevented;
+    }
+    /** A click, as on a button, which runs its click listeners. */
+    click() {
+      this.clicks = (this.clicks ?? 0) + 1;
+      this.listeners.click?.(new SyntheticEvent("click"));
+    }
+    /**
+     * @param {string} selector only `:scope > .toolbarButton`, the button of
+     *   a tool's container
+     * @returns {Element | null}
+     */
+    querySelector(selector) {
+      if (selector !== ":scope > .toolbarButton") return null;
+      return this.children.find((child) => /\btoolbarButton\b/.test(child.className ?? "")) ?? null;
     }
     /** A canvas's context, which page.render() draws on. */
     getContext() {
@@ -403,9 +470,15 @@ function loadBridge({
    * which pdf.js's toolbar shows open with their tool.
    */
   const toolButtons = {
-    Highlight: Object.assign(new Element("button"), { id: "editorHighlightButton" }),
-    FreeText: Object.assign(new Element("button"), { id: "editorFreeTextButton" }),
-    Ink: pencilButton,
+    Highlight: Object.assign(new Element("button"), {
+      id: "editorHighlightButton",
+      textContent: "Highlight",
+    }),
+    FreeText: Object.assign(new Element("button"), {
+      id: "editorFreeTextButton",
+      textContent: "Text",
+    }),
+    Ink: Object.assign(pencilButton, { textContent: "Draw" }),
   };
   const toolBoxes = {
     Highlight: new Element("div"),
@@ -493,12 +566,28 @@ function loadBridge({
       const [, box] =
         /^#editor(\w+)ParamsToolbar > \.editorParamsToolbarContainer$/.exec(selector) ?? [];
       if (box) return (toolbar && optionBoxes[box]) || null;
+      // The eraser's, once the bridge has added it after Pencil.
+      if (selector === "#pdflionEditorEraserParamsToolbar > .editorParamsToolbarContainer") {
+        const eraser = this.toolbar.find((element) => element.id === "pdflionEditorEraser");
+        return eraser?.children[1].children[0] ?? null;
+      }
       const [, number] =
         /^#thumbnailsView > \.thumbnail\[page-number="(\d+)"\] > input$/.exec(selector) ?? [];
       return number ? checkbox(Number(number)) : null;
     },
     /** @param {string} selector */
     querySelectorAll(selector) {
+      // The drawing tools' containers, each with its button: pdf.js's, and the eraser's.
+      if (selector.startsWith("#editorModeButtons > .toolbarButtonWithContainer")) {
+        const eraser = this.toolbar.find((element) => element.id === "pdflionEditorEraser");
+        const tool = (/** @type {Element} */ button) => ({ querySelector: () => button });
+        return [
+          tool(toolButtons.Highlight),
+          tool(toolButtons.FreeText),
+          tool(pencilButton),
+          ...(eraser ? [eraser] : []),
+        ];
+      }
       if (selector !== CHECKED_THUMBNAIL) return [];
       return this.checkedPages.map((number) => ({
         parentElement: { getAttribute: (name) => (name === "page-number" ? String(number) : null) },
@@ -851,6 +940,7 @@ function loadBridge({
     },
     DragEvent: SyntheticEvent,
     KeyboardEvent: SyntheticEvent,
+    MouseEvent: SyntheticEvent,
     Event: SyntheticEvent,
     // Node gives custom schemes an opaque origin, where Chromium treats the
     // registered pdflion: scheme as standard. An https origin stands in.
@@ -2624,7 +2714,10 @@ describe("bridge.js Save as Favourite", () => {
    * @param {ReturnType<typeof loadBridge>} bridge
    * @param {"Highlight" | "FreeText" | "Ink"} name the tool's, in its option box's id
    */
-  const buttonOf = (bridge, name) => bridge.optionBoxes[name].children.at(-1);
+  const buttonOf = (bridge, name) =>
+    bridge.optionBoxes[name].children.find(
+      (/** @type {any} */ child) => child.id === `pdflionSave${name}Favourite`,
+    );
 
   /**
    * Clicks a tool's Save as Favourite.
@@ -2834,7 +2927,12 @@ describe("bridge.js favourites in the toolbar", () => {
     const bridge = await withFavourites([]);
     const { group, separator } = barOf(bridge);
     const at = (/** @type {any} */ element) => bridge.toolbar.indexOf(element);
-    assert.deepEqual([at(group) + 1, at(separator) + 1], [at(separator), at(bridge.editorModeButtons)]);
+    // Then the tools' button, for the toolbar's narrow steps.
+    const tools = bridge.toolbar.find((element) => element.id === "pdflionTools");
+    assert.deepEqual(
+      [at(group) + 1, at(separator) + 1, at(tools) + 1],
+      [at(separator), at(tools), at(bridge.editorModeButtons)],
+    );
     assert.equal(separator.className, "verticalToolbarSeparator");
     assert.deepEqual([group.hidden, separator.hidden], [true, true]);
 
@@ -3916,7 +4014,13 @@ describe("bridge.js without a native menu", () => {
     const bridge = loadBridge({ host: WEB });
     await bridge.load();
     const group = bridge.toolbar.find((element) => element.id === "pdflionUndoRedo");
-    assert.equal(bridge.toolbar.indexOf(group) + 1, bridge.toolbar.indexOf(bridge.editorModeButtons));
+    // Then the tools' button, for the toolbar's narrow steps.
+    const tools = bridge.toolbar.find((element) => element.id === "pdflionTools");
+    assert.equal(bridge.toolbar.indexOf(group) + 1, bridge.toolbar.indexOf(tools));
+    assert.equal(
+      bridge.toolbar.indexOf(tools) + 1,
+      bridge.toolbar.indexOf(bridge.editorModeButtons),
+    );
     assert.equal(group.hidden, true);
     const [undo, redo] = group.children;
     assert.deepEqual([undo.id, redo.id], ["pdflionUndo", "pdflionRedo"]);
@@ -3955,6 +4059,9 @@ describe("bridge.js without a native menu", () => {
     const items = bridge.menuContainer.children;
     const ids = items.map((item) => item.id ?? item.className);
     assert.deepEqual(ids, [
+      // What the toolbar's narrowest steps move there.
+      "pdflionVisibleTiny",
+      "horizontalToolbarSeparator pdflionVisibleWithoutHome",
       "pdflionSecondaryOpen",
       "pdflionSecondaryNew",
       "horizontalToolbarSeparator",
@@ -4223,5 +4330,501 @@ describe("bridge.js autosave", () => {
     await settle();
     assert.deepEqual(bridge.pdflion.dialogs, [["rewrite", ["xmp"]]]);
     assert.equal(item.clicks, 0);
+  });
+});
+
+describe("bridge.js pen-only drawing", () => {
+  /** A page of the document, as pdf.js shows it. */
+  const PAGE = "#viewerContainer .page[data-page-number]";
+
+  /**
+   * @param {object} [settings] what main has of pen-only drawing
+   * @returns {Promise<ReturnType<typeof loadBridge>>}
+   */
+  const withPenOnly = async (settings = {}) => {
+    const bridge = loadBridge();
+    bridge.pdflion.toolSettings = {
+      eraser: { mode: "object", size: 10 },
+      favourites: [],
+      ...settings,
+    };
+    await bridge.load();
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    await settle();
+    return bridge;
+  };
+
+  /**
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @param {object} pointer the press's
+   * @param {boolean} [onPage]
+   * @returns {any} the press, which records whether it was stopped
+   */
+  const press = (bridge, pointer, onPage = true) => {
+    const down = {
+      target: Object.assign(element(...(onPage ? [PAGE] : [])), { dataset: { pageNumber: "1" } }),
+      button: 0,
+      pointerId: 4,
+      clientX: 10,
+      clientY: 10,
+      stopped: false,
+      prevented: false,
+      ...pointer,
+    };
+    Object.assign(down, {
+      stopPropagation: () => (down.stopped = true),
+      preventDefault: () => (down.prevented = true),
+    });
+    bridge.viewerContainer.listeners.pointerdown(down);
+    return down;
+  };
+
+  /** @param {ReturnType<typeof loadBridge>} bridge @param {number} mode */
+  const switchTool = (bridge, mode) =>
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode });
+
+  /**
+   * @param {any} container an option box's container
+   * @returns {any} pen-only drawing's switch at its end
+   */
+  const switchIn = (container) => {
+    const setter = container.children.at(-1);
+    assert.equal(setter.className, "pdflionPenOnlySetter");
+    const [divider, toggler] = setter.children;
+    assert.equal(divider.className, "divider");
+    const [label, button] = toggler.children;
+    assert.equal(label.textContent, "Draw Only with a Pen");
+    assert.equal(label.htmlFor, button.id);
+    assert.equal(button.className, "toggle-button");
+    return button;
+  };
+
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const switches = (bridge) => {
+    const eraser = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser");
+    const [, box] = eraser.children;
+    return [switchIn(bridge.optionBoxes.Ink), switchIn(box.children[0])];
+  };
+
+  it("adds a switch to Pencil's and the eraser's option boxes, which shows main's setting and changes it", async () => {
+    const bridge = await withPenOnly();
+    const [ink, eraser] = switches(bridge);
+    assert.deepEqual([ink.id, eraser.id], ["pdflionInkPenOnly", "pdflionEraserPenOnly"]);
+    assert.deepEqual(
+      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
+      ["false", "false"],
+    );
+
+    bridge.pdflion.toolSettingsListener?.({
+      eraser: { mode: "object", size: 10 },
+      penOnly: true,
+      favourites: [],
+    });
+    assert.deepEqual(
+      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
+      ["true", "true"],
+    );
+    assert.ok(bridge.outerContainer.classes.has("pdflionPenOnly"));
+
+    eraser.listeners.click();
+    assert.deepEqual(bridge.pdflion.storedToolSettings, [{ penOnly: false }]);
+    assert.deepEqual(
+      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
+      ["false", "false"],
+    );
+    assert.ok(!bridge.outerContainer.classes.has("pdflionPenOnly"));
+  });
+
+  it("turns on with the first pen to press on a page, unless it was ever chosen", async () => {
+    let bridge = await withPenOnly();
+    press(bridge, { pointerType: "pen" }, false);
+    press(bridge, { pointerType: "touch" });
+    press(bridge, { pointerType: "mouse" });
+    assert.deepEqual(
+      bridge.pdflion.storedToolSettings,
+      [],
+      "not off the pages, nor for other pointers",
+    );
+    const down = press(bridge, { pointerType: "pen" });
+    assert.equal(down.stopped, false, "pdf.js gets it");
+    assert.deepEqual(bridge.pdflion.storedToolSettings, [{ penOnly: true }]);
+    assert.ok(bridge.outerContainer.classes.has("pdflionPenOnly"));
+    press(bridge, { pointerType: "pen" });
+    assert.equal(bridge.pdflion.storedToolSettings.length, 1, "once");
+
+    bridge = await withPenOnly({ penOnly: false, penOnlyChosen: true });
+    press(bridge, { pointerType: "pen" });
+    assert.deepEqual(bridge.pdflion.storedToolSettings, []);
+  });
+
+  it("keeps a finger's presses on pages from pdf.js while it's on, with Pencil, Highlight or the eraser", async () => {
+    const bridge = await withPenOnly({ penOnly: true, penOnlyChosen: true });
+    for (const [mode, kept] of [
+      [0, false],
+      [3, false],
+      [9, true],
+      [15, true],
+    ]) {
+      switchTool(bridge, mode);
+      assert.equal(press(bridge, { pointerType: "touch" }).stopped, kept, `mode ${mode}`);
+      assert.equal(
+        press(bridge, { pointerType: "touch" }, false).stopped,
+        false,
+        `mode ${mode}, off the pages`,
+      );
+      assert.equal(press(bridge, { pointerType: "pen" }).stopped, false, `mode ${mode}, a pen`);
+      assert.equal(press(bridge, { pointerType: "mouse" }).stopped, false, `mode ${mode}, a mouse`);
+      bridge.fire("pointerup", { pointerId: 4 });
+    }
+    // The browser still scrolls and pinches with it.
+    switchTool(bridge, 15);
+    assert.equal(press(bridge, { pointerType: "touch" }).prevented, false);
+
+    bridge.pdflion.toolSettingsListener?.({
+      eraser: { mode: "object", size: 10 },
+      penOnly: false,
+      favourites: [],
+    });
+    assert.equal(press(bridge, { pointerType: "touch" }).stopped, false, "once it's off");
+  });
+
+  it("leaves a finger to scroll while the eraser is on, and doesn't show the eraser's circle for it", async () => {
+    const bridge = await withPenOnly({ penOnly: true, penOnlyChosen: true });
+    const eraser = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser");
+    eraser.children[0].listeners.click();
+    assert.equal(bridge.app.pdfViewer.annotationEditorMode, 15);
+    bridge.app.pdfViewer.pageDiv = {
+      dataset: { pageNumber: "1" },
+      clientLeft: 0,
+      clientTop: 0,
+      getBoundingClientRect: () => ({ left: 0, top: 0 }),
+      closest: (/** @type {string} */ selector) =>
+        selector === PAGE ? bridge.app.pdfViewer.pageDiv : null,
+    };
+    bridge.app.pdfViewer.viewport = {
+      scale: 1,
+      convertToPdfPoint: (/** @type {number} */ x, /** @type {number} */ y) => [x, y],
+    };
+    const target = bridge.app.pdfViewer.pageDiv;
+    const finger = press(bridge, { pointerType: "touch", target });
+    assert.equal(finger.prevented, false, "no drag of the eraser, which would stop scrolling");
+    assert.equal(
+      bridge.fire("pointermove", { pointerType: "touch", pointerId: 4, target }).stopped,
+      false,
+    );
+    const cursor = bridge.outerContainer.children.find(
+      (child) => child.id === "pdflionEraserCursor",
+    );
+    bridge.viewerContainer.listeners.pointermove({
+      pointerType: "touch",
+      target,
+      clientX: 5,
+      clientY: 5,
+    });
+    assert.equal(cursor.hidden, true);
+    // A pen, also hovering, shows it.
+    bridge.viewerContainer.listeners.pointermove({
+      pointerType: "pen",
+      buttons: 0,
+      target,
+      clientX: 5,
+      clientY: 5,
+    });
+    assert.equal(cursor.hidden, false);
+  });
+
+  it("cancels touchmoves while a pen draws, and keeps palms and the pen's own touches from pdf.js's pinching", async () => {
+    const bridge = await withPenOnly({ penOnly: false, penOnlyChosen: true });
+    const finger = { changedTouches: [{ touchType: "direct" }], cancelable: true };
+    const stylus = { changedTouches: [{ touchType: "stylus" }], cancelable: true };
+    const touchmove = () => bridge.fire("touchmove", { cancelable: true }).prevented;
+
+    // A pen down with no tool on draws nothing, and changes nothing.
+    press(bridge, { pointerType: "pen", pointerId: 7 });
+    assert.equal(touchmove(), false);
+    assert.equal(bridge.fire("touchstart", finger).stopped, false);
+    assert.equal(bridge.fire("touchstart", stylus).stopped, false);
+    bridge.fire("pointerup", { pointerId: 7 });
+
+    switchTool(bridge, 15);
+    // The pen's own touch, as Safari sends it, never pinches with Pencil on.
+    assert.equal(bridge.fire("touchstart", stylus).stopped, true);
+    assert.equal(bridge.fire("touchstart", finger).stopped, false);
+    press(bridge, { pointerType: "pen", pointerId: 7 });
+    assert.equal(touchmove(), true);
+    assert.equal(
+      bridge.fire("touchmove", { cancelable: false }).prevented,
+      false,
+      "not once it can't be",
+    );
+    assert.equal(bridge.fire("touchstart", finger).stopped, true, "a palm");
+    bridge.fire("pointerup", { pointerId: 8 });
+    assert.equal(touchmove(), true, "until the pen lifts");
+    bridge.fire("pointercancel", { pointerId: 7 });
+    assert.equal(touchmove(), false);
+    assert.equal(bridge.fire("touchstart", finger).stopped, false);
+
+    // A pen's eraser end, with any tool on.
+    switchTool(bridge, 3);
+    press(bridge, { pointerType: "pen", pointerId: 7, button: 5 });
+    assert.equal(touchmove(), true);
+    bridge.fire("pointerup", { pointerId: 7 });
+    assert.equal(touchmove(), false);
+  });
+});
+
+describe("bridge.js long presses", () => {
+  const pencil = { tool: "ink", color: "#1e66f5", thickness: 5, opacity: 0.35 };
+
+  /**
+   * @param {object} [host] more of the host
+   * @returns {Promise<{ bridge: ReturnType<typeof loadBridge>, button: any, item: any }>}
+   *   a favourite's button in the toolbar and its item in the ★ menu
+   */
+  const withFavourite = async (host = {}) => {
+    const bridge = loadBridge({ host });
+    bridge.pdflion.toolSettings = { eraser: { mode: "object", size: 10 }, favourites: [pencil] };
+    await bridge.load();
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    await settle();
+    const group = bridge.toolbar.find((element) => element.id === "pdflionFavourites");
+    const [button, more] = group.children;
+    const [, menu] = more.children;
+    return { bridge, button, item: menu.children[0].children[0] };
+  };
+
+  /**
+   * @param {any} button
+   * @param {object} [pointer]
+   */
+  const pressOn = (button, pointer = {}) =>
+    button.listeners.pointerdown({
+      pointerType: "touch",
+      button: 0,
+      pointerId: 9,
+      clientX: 30,
+      clientY: 12,
+      ...pointer,
+    });
+
+  it("show a favourite's menu once, after half a second, and drop the click after them", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const pointerType of ["touch", "pen"]) {
+      const { bridge, button, item } = await withFavourite();
+      for (const target of [button, item]) {
+        bridge.pdflion.favouriteMenus.length = 0;
+        pressOn(target, { pointerType });
+        t.mock.timers.tick(499);
+        assert.deepEqual(bridge.pdflion.favouriteMenus, []);
+        t.mock.timers.tick(1);
+        assert.deepEqual(bridge.pdflion.favouriteMenus, [pencil], pointerType);
+        t.mock.timers.tick(1000);
+        assert.equal(bridge.pdflion.favouriteMenus.length, 1, "once");
+
+        bridge.fire("pointerup", { pointerId: 9 });
+        const click = new SyntheticEvent("click");
+        target.listeners.click(click);
+        assert.ok(click.defaultPrevented);
+        assert.equal(bridge.app.pdfViewer.annotationEditorMode, 0, "the favourite isn't used");
+        target.listeners.click(new SyntheticEvent("click"));
+        assert.equal(bridge.app.pdfViewer.annotationEditorMode, 15, "the next click uses it");
+        bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 0 });
+      }
+    }
+  });
+
+  it("aren't a mouse's, nor a press that moves or lifts first", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { bridge, button } = await withFavourite();
+    pressOn(button, { pointerType: "mouse" });
+    t.mock.timers.tick(600);
+    pressOn(button);
+    bridge.fire("pointermove", { pointerId: 9, clientX: 37, clientY: 19 });
+    t.mock.timers.tick(200);
+    bridge.fire("pointermove", { pointerId: 2, clientX: 300, clientY: 12 });
+    bridge.fire("pointermove", { pointerId: 9, clientX: 41, clientY: 12 });
+    t.mock.timers.tick(400);
+    pressOn(button);
+    t.mock.timers.tick(300);
+    bridge.fire("pointerup", { pointerId: 9 });
+    t.mock.timers.tick(300);
+    pressOn(button);
+    button.listeners.dragstart?.(new SyntheticEvent("dragstart", { dataTransfer: null }));
+    t.mock.timers.tick(600);
+    assert.deepEqual(bridge.pdflion.favouriteMenus, []);
+  });
+
+  it("leave the browser's own long press alone, and drop it after theirs", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { bridge, button } = await withFavourite();
+    // Chromium's, during the press: the menu shows for it alone.
+    pressOn(button);
+    t.mock.timers.tick(300);
+    button.listeners.contextmenu(new SyntheticEvent("contextmenu", { isTrusted: true }));
+    t.mock.timers.tick(600);
+    assert.equal(bridge.pdflion.favouriteMenus.length, 1);
+
+    // After the long press's own.
+    pressOn(button);
+    t.mock.timers.tick(500);
+    const late = new SyntheticEvent("contextmenu", { isTrusted: true });
+    button.listeners.contextmenu(late);
+    assert.ok(late.defaultPrevented && late.immediateStopped);
+    assert.equal(bridge.pdflion.favouriteMenus.length, 2);
+  });
+
+  it("close the host's menu once the favourite is dragged after them", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let closed = 0;
+    const { bridge, button } = await withFavourite({ closeMenu: () => closed++ });
+    const drag = () =>
+      new SyntheticEvent("dragstart", { dataTransfer: { types: [], setData() {} } });
+    button.listeners.dragstart(drag());
+    assert.equal(closed, 0, "not without a long press");
+    pressOn(button);
+    t.mock.timers.tick(500);
+    assert.equal(bridge.pdflion.favouriteMenus.length, 1);
+    button.listeners.dragstart(drag());
+    assert.equal(closed, 1);
+  });
+});
+
+describe("bridge.js the toolbar's narrowest steps", () => {
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const toolsOf = (bridge) => {
+    const container = bridge.toolbar.find((element) => element.id === "pdflionTools");
+    const [button, menu] = container.children;
+    return { container, button, menu, items: () => menu.children[0].children };
+  };
+
+  it("have a button for the drawing tools, with a menu of them, which shows the one that's on", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const { button, menu, items } = toolsOf(bridge);
+    assert.equal(button.id, "pdflionToolsButton");
+    assert.equal(button.title, "Drawing Tools");
+    assert.equal(menu.id, "pdflionToolsMenu");
+    assert.equal(button.attributes["aria-controls"], "pdflionToolsMenu");
+    assert.equal(button.disabled, true, "until pdf.js's tools work");
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    assert.equal(button.disabled, false);
+    assert.equal(button.attributes["data-tool"], undefined);
+
+    button.listeners.click();
+    const labels = () =>
+      items().map((/** @type {any} */ item) => [
+        item.children[0].textContent,
+        item.attributes["aria-checked"],
+      ]);
+    assert.deepEqual(labels(), [
+      ["Highlight", "false"],
+      ["Text", "false"],
+      ["Draw", "false"],
+      ["Eraser", "false"],
+    ]);
+    assert.deepEqual(
+      items().map((/** @type {any} */ item) => [
+        item.attributes.role,
+        item.attributes["data-tool"],
+      ]),
+      [
+        ["menuitemradio", "editorHighlightButton"],
+        ["menuitemradio", "editorFreeTextButton"],
+        ["menuitemradio", "editorInkButton"],
+        ["menuitemradio", "pdflionEditorEraserButton"],
+      ],
+    );
+
+    // Choosing one clicks its button.
+    items()[3].listeners.click();
+    assert.ok(bridge.outerContainer.classes.has("pdflionErasing"));
+    assert.equal(
+      button.attributes["data-tool"],
+      "pdflionEditorEraserButton",
+      "the eraser, not Pencil",
+    );
+    assert.ok(button.classes.has("toggled"));
+    button.listeners.click();
+    assert.deepEqual(labels()[2], ["Draw", "false"]);
+    assert.deepEqual(labels()[3], ["Eraser", "true"]);
+
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 9 });
+    assert.equal(button.attributes["data-tool"], "editorHighlightButton");
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 0 });
+    assert.equal(button.attributes["data-tool"], undefined);
+    assert.ok(!button.classes.has("toggled"));
+  });
+
+  it("put Undo and Redo first in the tools' menu at the last step, while they show", async () => {
+    const bridge = loadBridge({ host: { nativeMenu: false } });
+    await bridge.load();
+    const container = Object.assign(bridge.document.createElement("div"), {
+      id: "toolbarContainer",
+    });
+    bridge.toolbar.push(container);
+    const { button, items } = toolsOf(bridge);
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 15 });
+
+    button.listeners.click();
+    assert.equal(
+      items()[0].attributes["data-tool"],
+      "editorHighlightButton",
+      "not before the last step",
+    );
+    container.classes.add("pdflionToolbarMinimal");
+    button.listeners.click();
+    const [undo, redo, separator] = items();
+    assert.deepEqual(
+      [undo.id, redo.id, separator.className],
+      ["pdflionUndoItem", "pdflionRedoItem", "horizontalToolbarSeparator"],
+    );
+    undo.listeners.click();
+    redo.listeners.click();
+    const actions = bridge.app.eventBus.dispatched.filter(([name]) => name === "editingaction");
+    assert.deepEqual(
+      actions.map(([, data]) => data.name),
+      ["undo", "redo"],
+    );
+
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 0 });
+    button.listeners.click();
+    assert.equal(
+      items()[0].attributes["data-tool"],
+      "editorHighlightButton",
+      "not with no tool on",
+    );
+  });
+
+  it("have Home, Find…, Page Overview and Insert Blank Page in the ⋮ menu", async () => {
+    let homes = 0;
+    const bridge = loadBridge({ host: { showHome: () => homes++ } });
+    await bridge.load();
+    const [home, tiny, separator] = bridge.menuContainer.children;
+    assert.equal(home.id, "pdflionSecondaryHome");
+    assert.equal(tiny.className, "pdflionVisibleTiny");
+    assert.equal(separator.className, "horizontalToolbarSeparator pdflionVisibleWithoutHome");
+    const [find, overview, insert] = tiny.children;
+    assert.deepEqual(
+      [find, overview, insert].map((item) => [item.id, item.children[0].textContent]),
+      [
+        ["pdflionSecondaryFind", "Find…"],
+        ["pdflionSecondaryPageOverview", "Page Overview"],
+        ["pdflionSecondaryInsertBlankPage", "Insert Blank Page"],
+      ],
+    );
+
+    home.listeners.click();
+    find.listeners.click();
+    overview.listeners.click();
+    assert.equal(homes, 1);
+    assert.equal(named(bridge.calls, "findBar.open").length, 1);
+    assert.ok(bridge.outerContainer.classes.has("pdflionPageOverview"));
+    assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 3);
+
+    // Insert Blank Page works as its button does.
+    assert.equal(insert.disabled, true);
+    bridge.openDocument();
+    await settle();
+    assert.equal(insert.disabled, false);
   });
 });

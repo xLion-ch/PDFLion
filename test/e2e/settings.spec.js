@@ -164,6 +164,7 @@ test("Import Settings gives every tab of every window the settings, and the new 
   const imported = {
     eraser: { mode: "line", size: 30 },
     penOnly: true,
+    penOnlyChosen: true,
     favourites: [pencil, text, highlight],
   };
   await expect.poll(() => toolSettings(first)).toEqual(imported);

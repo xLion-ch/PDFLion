@@ -164,6 +164,22 @@ test("after the explanation, each document's first save says so once a session",
   await expect(page.locator("dialog")).toHaveCount(0);
 });
 
+/**
+ * Shares the document from the toolbar, or from the ⋮ menu, where Share goes
+ * once the toolbar has no room for it.
+ *
+ * @param {import("./pdflion.js").Frame} viewer
+ */
+async function share(viewer) {
+  const button = viewer.locator("#pdflionShareButton");
+  if (await button.isVisible()) {
+    await button.click();
+    return;
+  }
+  await viewer.locator("#secondaryToolbarToggleButton").click();
+  await viewer.locator("#pdflionSecondaryShare").click();
+}
+
 test("Share hands over the stored document, after which it's in Files", async ({ page }) => {
   await openApp(page);
   await openFromHome(page, [TRACEMONKEY]);
@@ -176,12 +192,12 @@ test("Share hands over the stored document, after which it's in Files", async ({
 
   // Closing the share sheet changes nothing.
   await stubShare(page, "cancel");
-  await viewer.locator("#pdflionShareButton").click();
+  await share(viewer);
   await expect.poll(() => page.evaluate(() => window.shareCalls)).toBe(1);
   await expect(status).toBeVisible();
 
   await stubShare(page, "share");
-  await viewer.locator("#pdflionShareButton").click();
+  await share(viewer);
   await expect.poll(() => page.evaluate(() => window.shared)).toEqual([
     {
       name: "compressed.tracemonkey-pldi-09.pdf",

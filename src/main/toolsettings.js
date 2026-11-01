@@ -1,7 +1,7 @@
 /**
  * The tool settings every tab shares, kept in state.json: the eraser's mode
- * and size and whether only a pen draws, under `toolSettings`, and the
- * favourites, under `favourites`.
+ * and size, whether only a pen draws and whether that was ever chosen, under
+ * `toolSettings`, and the favourites, under `favourites`.
  * tools.js checks them. A change from one tab reaches every tab, so that all
  * windows show the same favourites. A favourite's context menu is native.
  *
@@ -13,6 +13,7 @@ import { fromViewer } from "./ipc.js";
 import { getState, setState } from "./state.js";
 import * as tabs from "./tabs.js";
 import {
+  changeToolSettings,
   parseFavourite,
   parseToolSettings,
   readToolSettings,
@@ -62,12 +63,14 @@ export function currentToolSettings() {
  * @param {Partial<import("../shared/tools.js").ToolSettings>} changes checked
  *   with tools.js
  */
-export function updateToolSettings({ eraser, penOnly, favourites }) {
+export function updateToolSettings(changes) {
+  const { eraser, penOnly, favourites } = changes;
+  const changed = changeToolSettings(currentToolSettings(), changes);
   if (eraser || penOnly !== undefined) {
-    const current = currentToolSettings();
     setState("toolSettings", {
-      eraser: eraser ?? current.eraser,
-      penOnly: penOnly ?? current.penOnly,
+      eraser: changed.eraser,
+      penOnly: changed.penOnly,
+      penOnlyChosen: changed.penOnlyChosen,
     });
   }
   if (favourites) setState("favourites", favourites);

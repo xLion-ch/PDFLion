@@ -20,6 +20,7 @@ import { CREDITS } from "../shared/credits.js";
 import { isThumbnail } from "../shared/thumbnail.js";
 import { TabList } from "../shared/tablist.js";
 import {
+  changeToolSettings,
   parseFavourite,
   parseToolSettings,
   readToolSettings,
@@ -170,6 +171,7 @@ async function start() {
   for (const id of (await library.thumbnails()).keys()) thumbnailVersions.set(id, 1);
   followKeys();
   followDrops();
+  stopPinching();
   showHome();
 }
 
@@ -225,6 +227,10 @@ function stripApi() {
     contextMenu(id) {
       const tab = tabs.get(id);
       if (tab) showTabMenu(tab, stripMenuAt);
+    },
+    /** Closes the tab's menu, once a long press that opened it drags the tab. */
+    closeMenu() {
+      dialogs.closeMenus();
     },
     /**
      * @param {string} id
@@ -546,6 +552,7 @@ const VIEWER_MESSAGES = {
       updateToolSettings({ favourites: removeFavourite(toolSettings.favourites, favourite) });
     dialogs.showMenu([{ label: "Remove Favourite", action: remove }], inFrame(tab, x, y));
   },
+  closeMenu: () => dialogs.closeMenus(),
   showHome: () => showHome(),
   thumbnail(tab, png) {
     if (tab.documentId && isThumbnail(png)) keepThumbnail(tab.documentId, png);
@@ -1042,12 +1049,9 @@ function formatSize(bytes) {
  *
  * @param {Partial<ToolSettings>} changes checked with tools.js
  */
-async function updateToolSettings({ eraser, penOnly, favourites }) {
-  toolSettings = {
-    eraser: eraser ?? toolSettings.eraser,
-    penOnly: penOnly ?? toolSettings.penOnly,
-    favourites: favourites ?? toolSettings.favourites,
-  };
+async function updateToolSettings(changes) {
+  const { eraser, penOnly, favourites } = changes;
+  toolSettings = changeToolSettings(toolSettings, changes);
   for (const tab of tabs.values()) {
     if (tab.kind === "document") tab.port?.postMessage({ type: "toolSettings", settings: toolSettings });
   }
@@ -1055,6 +1059,7 @@ async function updateToolSettings({ eraser, penOnly, favourites }) {
     await library.setSetting("toolSettings", {
       eraser: toolSettings.eraser,
       penOnly: toolSettings.penOnly,
+      penOnlyChosen: toolSettings.penOnlyChosen,
     });
   }
   if (favourites) await library.setSetting("favourites", favourites);
@@ -1190,6 +1195,14 @@ function isPdfDrag(event) {
   return [...(event.dataTransfer?.items ?? [])].some(
     (item) => item.kind === "file" && item.type === "application/pdf",
   );
+}
+
+/**
+ * A pinch on the strip zooms nothing, as in an app: Safari ignores the
+ * viewport's maximum-scale. The frames stop their own.
+ */
+function stopPinching() {
+  document.addEventListener("gesturestart", (event) => event.preventDefault());
 }
 
 /** PDFs dropped on the strip open as tabs. The frames take their own. */

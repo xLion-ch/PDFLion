@@ -42,10 +42,11 @@ const CONTEXT_OPTIONS = [
  * `dir`, a folder for the test's files.
  */
 export const test = base.extend({
-  context: async ({ playwright, browserName }, use, testInfo) => {
+  // A test's own locale, from test.use(), comes as a fixture.
+  context: async ({ playwright, browserName, locale }, use, testInfo) => {
     const profile = await fs.mkdtemp(path.join(os.tmpdir(), "pdflion-web-"));
     /** @type {Record<string, unknown>} */
-    const projectOptions = testInfo.project.use;
+    const projectOptions = { ...testInfo.project.use, ...(locale ? { locale } : {}) };
     const options = Object.fromEntries(
       CONTEXT_OPTIONS.filter((key) => projectOptions[key] !== undefined).map((key) => [
         key,
@@ -75,6 +76,34 @@ export const test = base.extend({
  */
 export async function openApp(page) {
   await page.goto("./");
+  return homeFrame(page);
+}
+
+/**
+ * Opens the app as one that has already explained where its saves go, so
+ * that the explanation's dialog, which takes every press while it shows,
+ * doesn't come in the way of a test's taps.
+ *
+ * @param {Page} page
+ * @returns {Promise<Frame>} Home's frame
+ */
+export async function openAppExplained(page) {
+  await openApp(page);
+  await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const open = indexedDB.open("pdflion");
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction("settings", "readwrite");
+      transaction.objectStore("settings").put(true, "notInFilesExplained");
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  });
+  await page.reload();
   return homeFrame(page);
 }
 
@@ -111,8 +140,10 @@ export async function homeFrame(page) {
  */
 export async function documentFrame(page, name) {
   const frame = await frameWhere(page, (url) => {
-    const parsed = new URL(url);
+    // A frame that's still loading has no URL yet.
+    const parsed = URL.parse(url);
     return (
+      !!parsed &&
       parsed.pathname.endsWith("/viewer/web/viewer.html") &&
       (parsed.searchParams.get("file") ?? "").endsWith(`/${encodeURIComponent(name)}`)
     );
@@ -231,7 +262,8 @@ export async function commandKey(page) {
 }
 
 /**
- * Draws a stroke with Pencil across the first page.
+ * Draws a stroke with Pencil across the left of the first page, away from
+ * Pencil's option box, which pdf.js would take the lift of the mouse.
  *
  * @param {Page} page
  * @param {Frame} frame the document's
@@ -246,10 +278,10 @@ export async function drawStroke(page, frame, offset = 0.3) {
   );
   const bottom = Math.min(box.y + box.height, /** @type {{ height: number }} */ (page.viewportSize()).height);
   const y = box.y + (bottom - box.y) * offset;
-  await page.mouse.move(box.x + box.width * 0.2, y);
+  await page.mouse.move(box.x + box.width * 0.1, y);
   await page.mouse.down();
   for (let step = 1; step <= 10; step++) {
-    await page.mouse.move(box.x + box.width * (0.2 + 0.04 * step), y + step * 2);
+    await page.mouse.move(box.x + box.width * (0.1 + 0.03 * step), y + step * 2);
   }
   await page.mouse.up();
 }

@@ -259,6 +259,16 @@ export function showMenu(items, { x, y }) {
 }
 
 /**
+ * Closes the menus showMenu() shows, as when what one is for is dragged
+ * away after the long press that opened it.
+ */
+export function closeMenus() {
+  for (const menu of document.querySelectorAll(".menu:popover-open")) {
+    /** @type {HTMLElement} */ (menu).hidePopover();
+  }
+}
+
+/**
  * @typedef {object} AboutText
  * @property {string} version PDFLion's
  * @property {string | null} pdfjsVersion
