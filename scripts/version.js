@@ -13,22 +13,18 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const USAGE = `Usage:
-  node scripts/version.js              print the release version of the checked-out commit
-  node scripts/version.js --pr <n>     print the version of pull request n's build
+  node scripts/version.js   print the release version of the checked-out commit
 
-A release version is <major>.<minor>.<commits>, such as 1.0.412. A pull request
-builds <major>.<minor>.<commits>-pr.<n>, which sorts before the release of the
-same commit count, so a pull request's build updates to the next release.`;
+A release version is <major>.<minor>.<commits>, such as 1.0.412.`;
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 
 /**
  * @param {string} packageVersion package.json's, such as "1.0.0"
  * @param {number} commits how many commits the checked-out history has
- * @param {number} [pullRequest] the pull request's number, for its build
- * @returns {string} such as "1.0.412", or "1.0.412-pr.7" for pull request 7
+ * @returns {string} such as "1.0.412"
  */
-export function formatVersion(packageVersion, commits, pullRequest) {
+export function formatVersion(packageVersion, commits) {
   const match = /^(\d+)\.(\d+)\.0$/.exec(packageVersion);
   if (!match) {
     throw new Error(`package.json's version is ${packageVersion}, not <major>.<minor>.0`);
@@ -36,11 +32,7 @@ export function formatVersion(packageVersion, commits, pullRequest) {
   if (!Number.isSafeInteger(commits) || commits < 1) {
     throw new Error(`${commits} isn't a number of commits`);
   }
-  if (pullRequest !== undefined && (!Number.isSafeInteger(pullRequest) || pullRequest < 1)) {
-    throw new Error(`${pullRequest} isn't a pull request's number`);
-  }
-  const version = `${match[1]}.${match[2]}.${commits}`;
-  return pullRequest === undefined ? version : `${version}-pr.${pullRequest}`;
+  return `${match[1]}.${match[2]}.${commits}`;
 }
 
 /**
@@ -57,11 +49,7 @@ function main(args) {
     console.log(USAGE);
     return;
   }
-  let pullRequest;
-  if (args[0] === "--pr" && args.length === 2) {
-    if (!/^\d+$/.test(args[1])) throw new Error(`${args[1]} isn't a pull request's number`);
-    pullRequest = Number(args[1]);
-  } else if (args.length > 0) {
+  if (args.length > 0) {
     throw new Error(`unknown arguments: ${args.join(" ")}\n\n${USAGE}`);
   }
 
@@ -71,7 +59,7 @@ function main(args) {
   }
   const commits = Number(git(["rev-list", "--count", "HEAD"]));
   const { version } = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  console.log(formatVersion(version, commits, pullRequest));
+  console.log(formatVersion(version, commits));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

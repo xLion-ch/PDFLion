@@ -286,9 +286,11 @@ test("the context menu and Delete remove a document, Clear all, with their thumb
   await home.locator("#clear").click();
   await expect(home.locator("#empty")).toBeVisible();
   await expect.poll(() => thumbnailFiles(userData)).toEqual([]);
-  // state.js writes a moment later.
-  const stored = async () =>
-    JSON.parse(await fs.readFile(path.join(userData, "state.json"), "utf8")).recent;
+  // state.js writes a moment later, the first time 1 s after the first change.
+  const stored = async () => {
+    const text = await fs.readFile(path.join(userData, "state.json"), "utf8").catch(() => null);
+    return text === null ? undefined : JSON.parse(text).recent;
+  };
   await expect.poll(stored).toEqual([]);
 });
 

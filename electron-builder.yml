@@ -8,6 +8,8 @@ directories:
   output: dist
 files:
   - src/**
+  # The web app's own, which scripts/build-web.js builds into dist/web/.
+  - "!src/web/**"
   - package.json
   - LICENSE
   - resources/about-icon.png # Windows' About box

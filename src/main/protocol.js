@@ -12,6 +12,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { net, protocol } from "electron";
+import { PAGE_CSP, VIEWER_CSP } from "../shared/csp.js";
 import { answerRange } from "../shared/ranges.js";
 import * as documents from "./documents.js";
 import { homeRoot, pdfLibRoot, pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
@@ -45,34 +46,6 @@ const VIEWER_INJECTION = [
   '<script src="/pdflion/geometry.js"></script>',
   '<script src="/pdflion/bridge.js"></script>',
 ].join("");
-
-/**
- * Sent with viewer.html. The `<meta>` CSP in pdf.js's viewer.html stays, and
- * Chromium enforces both, so this mirrors that policy. The one difference is
- * connect-src: pdf.js allows `*`, but documents only ever come from our origin.
- */
-const VIEWER_CSP = [
-  "default-src 'none'",
-  "script-src 'self' 'wasm-unsafe-eval'",
-  "worker-src 'self' blob:",
-  "style-src 'self'",
-  "img-src 'self' blob: data:",
-  "media-src blob:",
-  "font-src 'self' data:",
-  "connect-src 'self' blob: data:",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join("; ");
-
-/**
- * Sent with tabs.html. The strip needs nothing but its own script, styles and
- * the icons it shares with the viewer.
- */
-const TABS_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'";
-
-/** Sent with home.html, which shows the icons and the thumbnails too. */
-const HOME_CSP = TABS_CSP;
 
 /**
  * Extensions Chromium has no mapping for. It sniffs their content instead, so
@@ -120,8 +93,8 @@ async function serve(request) {
   const file = resolveUrl(request.url, mounts);
   if (!file) return notFound();
   if (file === viewerHtml) return serveViewerHtml();
-  if (file === tabsHtml) return serveFile(file, { "Content-Security-Policy": TABS_CSP });
-  if (file === homeHtml) return serveFile(file, { "Content-Security-Policy": HOME_CSP });
+  if (file === tabsHtml) return serveFile(file, { "Content-Security-Policy": PAGE_CSP });
+  if (file === homeHtml) return serveFile(file, { "Content-Security-Policy": PAGE_CSP });
 
   const type = CONTENT_TYPES[path.extname(file)];
   return serveFile(file, type ? { "Content-Type": type } : {});

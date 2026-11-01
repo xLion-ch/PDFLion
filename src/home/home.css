@@ -78,7 +78,7 @@ h1 {
   font-weight: 400;
 }
 
-body.empty header .actions {
+body.empty header .actions > .button {
   visibility: hidden;
 }
 
@@ -147,7 +147,41 @@ body.empty header .actions {
   }
 }
 
+/* The web app's ⓘ, as Material's standard icon button. */
+.icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: var(--md-shape-full);
+  background-color: transparent;
+  color: var(--secondary-text-color, ButtonText);
+
+  &::before {
+    content: "";
+    display: block;
+    width: 20px;
+    height: 20px;
+    margin: 10px;
+    background-color: currentColor;
+    mask: url(/pdflion/icons/info.svg) center / contain no-repeat;
+  }
+
+  &:hover {
+    background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
+  }
+
+  &:active {
+    background-color: color-mix(in srgb, currentColor var(--md-pressed), transparent);
+  }
+
+  &[hidden] {
+    display: none;
+  }
+}
+
 .button:focus-visible,
+.icon:focus-visible,
 .card:focus-visible {
   outline: 2px solid var(--focus-ring-color, Highlight);
   outline-offset: 2px;
@@ -308,5 +342,31 @@ h2 {
 
   & .actions {
     justify-content: center;
+  }
+}
+
+/*
+ * A double tap or a pinch zooms nothing, and a long press on a card opens its
+ * menu (home.js) rather than iPadOS's callout. With a finger, the buttons are
+ * 44px high, as Apple asks of touch targets.
+ */
+html {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+}
+
+@media (pointer: coarse) {
+  .button:not(.large) {
+    height: 44px;
+  }
+
+  .icon {
+    width: 44px;
+    height: 44px;
+
+    &::before {
+      margin: 12px;
+    }
   }
 }

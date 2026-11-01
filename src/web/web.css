@@ -1,0 +1,387 @@
+/*
+ * The web app's shell (index.html): the tab strip, which tabs.css styles,
+ * above the tabs' frames, and the dialogs, menus and snackbars of
+ * dialogs.js, in the viewer's Material Design 3 style, with the colour roles
+ * they need repeated here, as tabs.css and home.css do. Colours apply only
+ * outside forced-colors mode, which uses the system's.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --md-shape-extra-small: 4px;
+  --md-shape-extra-large: 28px;
+  --md-shape-full: 9999px;
+  --md-hover: 8%;
+  --md-pressed: 10%;
+}
+
+@media not (forced-colors: active) {
+  :root {
+    /* The viewer's surface-dim, surface-container and the others. */
+    --shell-bg-color: light-dark(#dadada, #131313);
+    --dialog-bg-color: light-dark(#e8e8e8, #2a2a2a);
+    --menu-bg-color: light-dark(#eeeeee, #1f1f1f);
+    --text-color: light-dark(#1b1b1b, #e2e2e2);
+    --secondary-text-color: light-dark(#474747, #c6c6c6);
+    --outline-color: light-dark(#777777, #919191);
+    --outline-variant-color: light-dark(#c6c6c6, #474747);
+    --primary-color: light-dark(#1b1b1b, #e2e2e2);
+    --on-primary-color: light-dark(#f9f9f9, #1b1b1b);
+    --error-color: light-dark(#ba1a1a, #ffb4ab);
+    --on-error-color: light-dark(#ffffff, #690005);
+    --inverse-surface-color: light-dark(#303030, #e2e2e2);
+    --inverse-on-surface-color: light-dark(#f1f1f1, #303030);
+    --inverse-primary-color: light-dark(#c6c6c6, #474747);
+    --scrim-color: rgb(0 0 0 / 0.32);
+    --focus-ring-color: light-dark(#5e5e5e, #c6c6c6);
+    --elevation-2: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 6px 2px rgb(0 0 0 / 0.15);
+    --elevation-3: 0 1px 3px rgb(0 0 0 / 0.3), 0 4px 8px 3px rgb(0 0 0 / 0.15);
+  }
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* The strip and the frames, inside the safe area, as below iPadOS's status bar. */
+body {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  background-color: var(--shell-bg-color, Canvas);
+  color: var(--text-color, CanvasText);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+}
+
+#tabs {
+  flex: none;
+}
+
+/* As on the desktop, the strip shows only for two tabs or more. */
+body.oneTab #tabs {
+  display: none;
+}
+
+#frames {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Each tab's frame, all in one place: the active one shows. */
+.page {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  visibility: hidden;
+
+  &.active {
+    visibility: visible;
+  }
+}
+
+/* Material's common buttons: filled and text. */
+.button {
+  height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--md-shape-full);
+  background-color: transparent;
+  color: var(--primary-color, ButtonText);
+  font: inherit;
+  font-weight: 500;
+
+  &.filled {
+    padding: 0 24px;
+    background-color: var(--primary-color, ButtonFace);
+    color: var(--on-primary-color, ButtonText);
+  }
+
+  &.filled.destructive {
+    background-color: var(--error-color, ButtonFace);
+    color: var(--on-error-color, ButtonText);
+  }
+
+  &:hover {
+    background-image: linear-gradient(
+      color-mix(in srgb, currentColor var(--md-hover), transparent) 0 0
+    );
+  }
+
+  &:active {
+    background-image: linear-gradient(
+      color-mix(in srgb, currentColor var(--md-pressed), transparent) 0 0
+    );
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--focus-ring-color, Highlight);
+    outline-offset: 2px;
+  }
+}
+
+/* Material's basic dialog. */
+.dialog {
+  box-sizing: border-box;
+  min-width: min(280px, calc(100vw - 32px));
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 24px;
+  border: none;
+  border-radius: var(--md-shape-extra-large);
+  background-color: var(--dialog-bg-color, Canvas);
+  color: var(--text-color, CanvasText);
+  box-shadow: var(--elevation-3);
+
+  &::backdrop {
+    background-color: var(--scrim-color, transparent);
+  }
+
+  & .message {
+    margin: 0 0 16px;
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 28px;
+  }
+
+  & .detail {
+    margin: 0 0 16px;
+    color: var(--secondary-text-color, CanvasText);
+    line-height: 20px;
+  }
+
+  & .field {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: 48px;
+    margin-bottom: 16px;
+    padding: 0 16px;
+    border: 1px solid var(--outline-color, CanvasText);
+    border-radius: var(--md-shape-extra-small);
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 16px;
+
+    &:focus {
+      outline: 2px solid var(--primary-color, Highlight);
+      outline-offset: -2px;
+    }
+  }
+
+  & .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+  }
+}
+
+/* About: the versions, and the credits, which scroll. */
+.dialog.about .credits {
+  max-height: 40vh;
+  overflow: auto;
+
+  & h3 {
+    margin: 12px 0 4px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  & ul {
+    margin: 0;
+    padding-inline-start: 20px;
+    color: var(--secondary-text-color, CanvasText);
+  }
+
+  & a {
+    color: var(--text-color, LinkText);
+  }
+}
+
+/* Material's menu, as a popover at a place in the page. */
+.menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  min-width: 200px;
+  max-width: calc(100vw - 8px);
+  padding: 8px 0;
+  border: none;
+  border-radius: var(--md-shape-extra-small);
+  background-color: var(--menu-bg-color, Canvas);
+  color: var(--text-color, CanvasText);
+  box-shadow: var(--elevation-2);
+
+  & .item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 40px;
+    padding: 0 16px;
+    border: none;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    white-space: nowrap;
+
+    &:hover,
+    &:focus-visible {
+      background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
+      outline: none;
+    }
+
+    &:disabled {
+      opacity: 0.38;
+    }
+  }
+
+  /* A setting that's on or off shows a check while it's on. */
+  & .item[role="menuitemcheckbox"]::before {
+    content: "";
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+
+  & .item[aria-checked="true"]::before {
+    background-color: currentColor;
+    mask: url(/pdflion/icons/check.svg) center / contain no-repeat;
+  }
+
+  & .info {
+    padding: 8px 16px;
+    color: var(--secondary-text-color, CanvasText);
+    font-size: 12px;
+  }
+
+  & .separator {
+    margin: 8px 0;
+    border-top: 1px solid var(--outline-variant-color, CanvasText);
+  }
+}
+
+/* Material's snackbar, at the bottom, above the safe area. */
+.snackbar {
+  position: fixed;
+  inset-inline: 0;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: min(600px, calc(100vw - 32px));
+  min-height: 48px;
+  margin-inline: auto;
+  padding: 6px 8px 6px 16px;
+  border-radius: var(--md-shape-extra-small);
+  background-color: var(--inverse-surface-color, Canvas);
+  color: var(--inverse-on-surface-color, CanvasText);
+  box-shadow: var(--elevation-3);
+
+  & .text {
+    flex: 1;
+    padding-inline-end: 8px;
+    line-height: 20px;
+  }
+
+  & .action {
+    flex: none;
+    height: 36px;
+    padding: 0 12px;
+    border: none;
+    border-radius: var(--md-shape-full);
+    background-color: transparent;
+    color: var(--inverse-primary-color, LinkText);
+    font: inherit;
+    font-weight: 500;
+
+    &:hover {
+      background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .menu,
+  .snackbar,
+  .dialog {
+    border: 1px solid CanvasText;
+  }
+}
+
+/*
+ * On the strip, dialogs, menus and snackbars, a double tap or a pinch zooms
+ * nothing, a long press shows no callout, and only text fields select text,
+ * as in an app. shell.js stops pinches outside the frames.
+ */
+body {
+  touch-action: manipulation;
+}
+
+#tabs,
+.dialog,
+.menu,
+.snackbar {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.dialog .field {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/*
+ * With a finger, touch targets are at least 44px, as Apple asks: the tabs and
+ * their close buttons, buttons, menu items and the snackbar's action.
+ */
+@media (pointer: coarse) {
+  #tabs {
+    --strip-height: 48px;
+    --tab-min-width: 120px;
+  }
+
+  .tab {
+    padding-inline-end: 0;
+
+    .close,
+    .dot {
+      width: 44px;
+      height: 44px;
+    }
+
+    .close::before {
+      margin: 14px;
+    }
+
+    .dot::before {
+      margin: 18px;
+    }
+  }
+
+  .button,
+  .snackbar .action {
+    height: 44px;
+  }
+
+  .menu .item {
+    min-height: 44px;
+  }
+}

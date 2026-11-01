@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import zlib from "node:zlib";
-import { BASE } from "../../scripts/serve-web.js";
+import { copyTree, isLeftOut, listFiles, prefixIcons } from "../../scripts/build-web.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
@@ -28,20 +28,6 @@ export const OUT = path.join(ROOT, "dist", "trials");
 
 /** Of the trials' folder, what isn't served. */
 const NOT_SERVED = new Set(["build.js", "run.js", "results.jsonl"]);
-
-/**
- * What the packaged app leaves out of pdf.js's build too (extraResources in
- * electron-builder.yml).
- *
- * @param {string} relative path in the build, with `/`
- */
-function isLeftOut(relative) {
-  return (
-    relative.endsWith(".map") ||
-    relative.startsWith("web/debugger.") ||
-    relative === "web/compressed.tracemonkey-pldi-09.pdf"
-  );
-}
 
 /**
  * Added before `</head>` of viewer.html, as src/main/protocol.js adds its
@@ -70,11 +56,7 @@ export function build() {
   // Relative ones wouldn't do: most are in custom properties, which
   // browsers resolve against viewer.css, which uses them.
   const overrides = path.join(OUT, "pdflion", "overrides.css");
-  const css = fs.readFileSync(overrides, "utf8");
-  if (!css.includes("url(/pdflion/icons/")) {
-    throw new Error("overrides.css has no /pdflion/icons/ URLs");
-  }
-  fs.writeFileSync(overrides, css.replaceAll("url(/pdflion/icons/", `url(${BASE}pdflion/icons/`));
+  fs.writeFileSync(overrides, prefixIcons(fs.readFileSync(overrides, "utf8"), "overrides.css"));
   copyTree(HERE, OUT, (relative) => !NOT_SERVED.has(relative));
   fs.copyFileSync(path.join(ROOT, "src", "shared", "ranges.js"), path.join(OUT, "ranges.js"));
   fs.mkdirSync(path.join(OUT, "lib"));
@@ -124,34 +106,6 @@ function writeServiceWorker() {
       fs.readFileSync(path.join(HERE, "sw.js"), "utf8"),
     ].join("\n"),
   );
-}
-
-/**
- * @param {string} from
- * @param {string} to
- * @param {(relative: string) => boolean} [keep] by the path below `from`, with `/`
- */
-function copyTree(from, to, keep = () => true) {
-  for (const relative of listFiles(from)) {
-    if (!keep(relative)) continue;
-    const target = path.join(to, relative);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(from, relative), target);
-  }
-}
-
-/**
- * @param {string} dir
- * @returns {string[]} the files below it, with `/`, in a stable order
- */
-function listFiles(dir) {
-  return fs
-    .readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name !== ".DS_Store")
-    .map((entry) =>
-      path.relative(dir, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
-    )
-    .sort();
 }
 
 /**

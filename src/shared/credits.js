@@ -292,7 +292,8 @@ export const CREDITS = [
         url: "https://github.com/jordansissel/fpm",
       },
       { name: "Playwright", by: "Microsoft", license: "Apache-2.0", url: "https://playwright.dev" },
-      // Playwright's build of it, which the web app's trials run in (test/trials/run.js).
+      // Playwright's build of it, which the web app's tests and trials run in
+      // (test/web/, test/trials/run.js).
       { name: "WebKit", license: "BSD-2-Clause and LGPL-2.1", url: "https://webkit.org" },
       // The steps of .github/workflows/ci.yml that aren't commands.
       {

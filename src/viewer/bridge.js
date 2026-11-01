@@ -29,7 +29,12 @@
  * src/display/editor/annotation_editor_layer.js (presses other than button 0
  * draw nothing); for Home's thumbnails src/display/api.js (getPage,
  * getViewport, and render's annotationMode and background) and
- * web/base_pdf_page_view.js (pagerendered).
+ * web/base_pdf_page_view.js (pagerendered); for pen-only drawing
+ * src/display/editor/annotation_editor_layer.js (where presses reach the
+ * layers), src/display/editor/draw.js (startDrawing, which cancels a pen's
+ * touchmoves and ignores a pointer of another type),
+ * src/display/touch_manager.js (pinching follows touch events on window) and
+ * web/text_layer_builder.css (Highlight's touch-action).
  *
  * pdf.js's page tools move, copy and delete pages in the thumbnails, and add
  * pages from other files. The page overview shows those thumbnails across the
@@ -40,6 +45,16 @@
  *
  * It works out /lib/ and /doc/ from where the viewer is, at /viewer/web/, so
  * that it works below another path than the origin's root too.
+ *
+ * The host, which gives it `window.pdflion`, is the desktop's preload, or the
+ * web app's src/web/viewer-host.js, in a frame of the web app's shell. What
+ * the host offers decides what it adds: a Home button for `showHome`, Share
+ * and the "not in Files" status for `share` and `onSaveStatus`, Open…, New
+ * and About in the ⋮ menu for `showOpenPanel`, `newDocument` and
+ * `showAbout`, and Undo and Redo buttons without `nativeMenu`. With
+ * `autosave`, it saves by itself, after changes and when the page is hidden.
+ * A host's `closeMenu` closes the menu a long press opened, once its
+ * favourite is dragged.
  */
 "use strict";
 
@@ -65,11 +80,45 @@
   const EDITOR_NONE = 0;
   const EDITOR_INK = 15;
 
+  /** `AnnotationEditorType.HIGHLIGHT` in src/shared/util.js. */
+  const EDITOR_HIGHLIGHT = 9;
+
+  /**
+   * The tools in which only a pen draws while pen-only drawing is on, and
+   * fingers scroll and zoom: Pencil, whose ink mode the eraser is in too,
+   * and Highlight.
+   */
+  const PEN_TOOLS = new Set([EDITOR_INK, EDITOR_HIGHLIGHT]);
+
+  /**
+   * `AnnotationEditorParamsType.DRAW_STEP` in src/shared/util.js: a stroke
+   * added to Pencil's open drawing, which becomes an annotation only once the
+   * drawing ends (endDrawing() in src/display/editor/draw.js).
+   */
+  const DRAW_STEP = 41;
+
+  /**
+   * A page's editing layer while a stroke is being drawn on it
+   * (toggleDrawing() in src/display/editor/annotation_editor_layer.js).
+   */
+  const DRAWING_LAYER = ".annotationEditorLayer.drawing";
+
   /**
    * A pen's eraser end, as Pointer Events number its button: a press with it
    * is a `pen` pointer's, with `button` 5.
    */
   const PEN_ERASER_BUTTON = 5;
+
+  /**
+   * A long press with a finger or a pen, which opens a favourite's menu, as
+   * iPadOS sends no contextmenu for one: this long, in ms, moving at most
+   * this far, in CSS pixels.
+   */
+  const LONG_PRESS_TIME = 500;
+  const LONG_PRESS_SLOP = 10;
+
+  /** A page of the document, as pdf.js shows it. */
+  const PAGE = "#viewerContainer .page[data-page-number]";
 
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
   const PDF_LIB_URL = new URL("../../lib/pdf-lib.min.js", location.href).href;
@@ -137,7 +186,7 @@
     highlight: {
       name: "Highlight",
       label: "Highlight",
-      mode: 9,
+      mode: EDITOR_HIGHLIGHT,
       params: { color: 31, thickness: 32 },
     },
     freetext: { name: "FreeText", label: "Text", mode: 3, params: { color: 12, size: 11 } },
@@ -156,9 +205,12 @@
    * The toolbar's steps for narrower windows, as classes of #toolbarContainer
    * that overrides.css styles: 32 px buttons, then pdf.js's medium view,
    * which hides Print, its small view, which hides the previous and next page
-   * buttons, its hidden zoom menu, and last no Home button, which File > Home
-   * stands in for. Each step keeps those before it. layoutToolbar() takes the
-   * first at which the toolbar fits.
+   * buttons, its hidden zoom menu, no Home button, which File > Home and the
+   * ⋮ menu stand in for, and the drawing tools in one button with a menu.
+   * Then, narrower than a desktop window gets, Find, Page Overview and Insert
+   * Blank Page go into the ⋮ menu, the zoom buttons and the status go, and
+   * last Undo and Redo go into the tools' menu. Each step keeps those before
+   * it. layoutToolbar() takes the first at which the toolbar fits.
    */
   const TOOLBAR_STEPS = [
     "pdflionToolbarCompact",
@@ -166,6 +218,10 @@
     "pdflionToolbarSmall",
     "pdflionToolbarNarrow",
     "pdflionToolbarWithoutHome",
+    "pdflionToolbarTools",
+    "pdflionToolbarTiny",
+    "pdflionToolbarWithoutZoom",
+    "pdflionToolbarMinimal",
   ];
 
   /**
@@ -205,10 +261,39 @@
   const FAVOURITE_NOTE_TIME = 2000;
 
   /**
+   * How long autosave waits after the last change to form values or
+   * annotations, in ms: longer for larger documents, since each save writes
+   * the whole file, by AUTOSAVE_DELAY_PER_10_MB for every 10 MB, up to
+   * AUTOSAVE_MAX_DELAY.
+   */
+  const AUTOSAVE_DELAY = 2000;
+  const AUTOSAVE_DELAY_PER_10_MB = 1000;
+  const AUTOSAVE_MAX_DELAY = 30_000;
+
+  /**
+   * How long autosave waits after the last change with pdf.js's page tools,
+   * in ms. Saving them reopens the document, which ends their undo.
+   */
+  const PAGE_CHANGES_DELAY = 30_000;
+
+  /** pdf.js's bar that offers to undo a page change (web/viewer.html). */
+  const UNDO_BAR = "viewsManagerStatusUndo";
+
+  /**
    * Whether shortcuts use ⌘, as on macOS and iPad keyboards, rather than
    * Ctrl, as on Windows and Linux, whose menus also have F4.
    */
   const usesCommandKey = window.pdflion.commandKey === "meta";
+
+  /**
+   * Whether a native menu has the shortcuts that pdf.js also binds, as on
+   * the desktop. The web app has none, so pdf.js keeps them there, and the
+   * toolbar gets Undo and Redo.
+   */
+  const hasNativeMenu = window.pdflion.nativeMenu !== false;
+
+  /** Whether the document saves by itself, as in the web app, rather than with Save. */
+  const autosaves = window.pdflion.autosave === true;
 
   /**
    * Whether the document has changes since it was opened or last saved, as
@@ -221,6 +306,9 @@
 
   /** Whether a page change reopened the document from bytes that aren't saved yet. */
   let reopenedEdited = false;
+
+  /** Whether the document was saved since it was opened, with its annotations. */
+  let savedSinceOpened = false;
 
   /** Whether a save or a page change is under way. Only one runs at a time. */
   let busy = false;
@@ -410,6 +498,53 @@
   let favouriteDrag = null;
 
   /**
+   * Which of DROPPABLE the file holds, once `droppable` has found out, for
+   * deciding at once whether a page change must ask first.
+   * @type {Set<string>}
+   */
+  let droppableHeld = new Set();
+
+  /** The document's size in bytes, as loaded or last saved, for autosave's delay. */
+  let documentSize = 0;
+
+  /** @type {ReturnType<typeof setTimeout> | null} the next autosave */
+  let autosaveTimer = null;
+
+  /** @type {HTMLButtonElement[]} Undo and Redo, while a drawing tool is on */
+  let undoButtons = [];
+
+  /**
+   * Whether only a pen draws in PEN_TOOLS, while fingers scroll and zoom, and
+   * whether that was ever chosen, as main keeps them: see followPen().
+   */
+  let penOnly = false;
+  let penOnlyChosen = false;
+
+  /**
+   * @type {HTMLButtonElement[]} pen-only drawing's switches, in Pencil's and
+   *   the eraser's option boxes
+   */
+  let penOnlySwitches = [];
+
+  /**
+   * The pointer of the pen that's down on a page with one of PEN_TOOLS on,
+   * or its eraser end with any tool, while it is.
+   * @type {number | null}
+   */
+  let penDown = null;
+
+  /**
+   * @typedef {object} ToolsMenu what addToolsMenu() adds: one button for the
+   *   drawing tools, which shows the one that's on, with a menu of them
+   * @property {HTMLButtonElement} button
+   * @property {HTMLElement} items the menu's items' container
+   * @property {() => void} closeMenu
+   */
+
+  /** @type {ToolsMenu | null} */
+  let toolsMenu = null;
+
+  /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
    * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
@@ -437,6 +572,9 @@
     // Edit > Undo and Redo. False leaves them to Chromium, which main asks next.
     undo: (app) => editingAction(app, "undo"),
     redo: (app) => editingAction(app, "redo"),
+    // The web app's: Share, and saving at once, as before a tab closes.
+    share: (app) => share(app),
+    saveNow: (app) => saveNow(app),
   };
 
   // The page gets key events before the native menu, on macOS and Windows
@@ -446,72 +584,116 @@
   window.addEventListener(
     "keydown",
     (event) => {
-      if (isMenuShortcut(event)) event.stopImmediatePropagation();
+      if (hasNativeMenu && isMenuShortcut(event)) event.stopImmediatePropagation();
     },
     true,
   );
 
-  // Dispatched once the viewer's scripts have loaded, before it initialises.
-  document.addEventListener(
-    "webviewerloaded",
-    () => {
-      window.PDFViewerApplicationOptions.setAll({
-        // Otherwise preferences stored by pdf.js override the options below.
-        disablePreferences: true,
-        // Never open pdf.js's demo PDF.
-        defaultUrl: "",
-        // Links go through window.open, which main's setWindowOpenHandler vets.
-        externalLinkTarget: LINK_TARGET_BLANK,
-        // pdf.js's page tools, which its generic build leaves off: selecting,
-        // moving, copying and deleting pages in the thumbnails, and adding the
-        // pages of other files.
-        enableSplitMerge: true,
-        enableMerge: true,
-      });
+  // Dispatched once the viewer's scripts have loaded, before it initialises,
+  // at the document of the page that embeds the viewer, if pdf.js can reach
+  // it, as it can from the web app's frames, and else at the viewer's own
+  // (web/viewer.js).
+  document.addEventListener("webviewerloaded", onViewerLoaded, { once: true });
+  const embedder = embeddingDocument();
+  embedder?.addEventListener("webviewerloaded", onViewerLoaded);
 
-      const app = window.PDFViewerApplication;
-      loadDocumentsInParts(app);
-      // pdf.js hasn't bound its events yet.
-      addFilesAsPageChanges(app);
-      // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
-      addHomeButton();
-      overviewButton = addOverviewButton(app);
-      pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
-      eraserTool = addEraserTool(app);
-      addSaveFavouriteButtons();
-      favouritesBar = addFavouritesBar();
-      toolSettingsLoaded = followToolSettings(app);
-      followToolbarWidth();
-      guardPageTools(app);
-      app.initializedPromise.then(() => {
-        window.pdflion.onCommand((command) =>
-          Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
-        );
-        // After pdf.js's own listeners, which come with the views manager.
-        followOverview(app);
-        // After the overview's, whose Esc comes first.
-        followEraser(app);
-        followFavourites(app);
-        app.eventBus.on("documentloaded", () => {
-          trackEdits(app);
-          checkLocked(app);
-          // A reopened document shows changes to the file, not the file.
-          if (!reopening) {
-            noteDroppable(app);
-            thumbnailOnceShown(app);
-          }
-        });
-        // Pages moved, copied or deleted in the thumbnails, or that change undone.
-        app.eventBus.on("pagesedited", () => {
-          if (busy) editedWhileSaving = true;
-          updateEdited(app);
-          recachePages(app);
-        });
-        hideChangesIndicator(app);
+  /**
+   * @returns {Document | null} the document of the page the viewer is in,
+   *   if it's in a frame of one it can reach
+   */
+  function embeddingDocument() {
+    try {
+      return window.parent && window.parent !== window ? window.parent.document : null;
+    } catch {
+      return null; // another origin's
+    }
+  }
+
+  /** Whether the viewer has initialised. */
+  let initialised = false;
+
+  /**
+   * @param {Event} [event] at the embedding page, from any of its frames'
+   *   viewers, each of which names its window as the event's source
+   */
+  function onViewerLoaded(event) {
+    const source = /** @type {CustomEvent | undefined} */ (event)?.detail?.source;
+    if ((source && source !== window) || initialised) return;
+    initialised = true;
+    embedder?.removeEventListener("webviewerloaded", onViewerLoaded);
+    initialise();
+  }
+
+  /** Sets pdf.js's options, and adds PDFLion's parts to the viewer. */
+  function initialise() {
+    window.PDFViewerApplicationOptions.setAll({
+      // Otherwise preferences stored by pdf.js override the options below.
+      disablePreferences: true,
+      // Never open pdf.js's demo PDF.
+      defaultUrl: "",
+      // Links open in a new window, which main's setWindowOpenHandler vets,
+      // or in the web app viewer-host.js.
+      externalLinkTarget: LINK_TARGET_BLANK,
+      // pdf.js's page tools, which its generic build leaves off: selecting,
+      // moving, copying and deleting pages in the thumbnails, and adding the
+      // pages of other files.
+      enableSplitMerge: true,
+      enableMerge: true,
+    });
+
+    const app = window.PDFViewerApplication;
+    loadDocumentsInParts(app);
+    // pdf.js hasn't bound its events yet.
+    addFilesAsPageChanges(app);
+    // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
+    addHomeButton();
+    overviewButton = addOverviewButton(app);
+    pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
+    eraserTool = addEraserTool(app);
+    addSaveFavouriteButtons();
+    penOnlySwitches = addPenOnlySwitches();
+    favouritesBar = addFavouritesBar();
+    undoButtons = addUndoButtons(app);
+    toolsMenu = addToolsMenu(app);
+    addShareButtons(app);
+    addSaveStatus(app);
+    addAppMenuItems(app);
+    pageButtons.push(...addNarrowMenuItems(app));
+    toolSettingsLoaded = followToolSettings(app);
+    followToolbarWidth();
+    guardPageTools(app);
+    app.initializedPromise.then(() => {
+      window.pdflion.onCommand((command) =>
+        Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
+      );
+      // After pdf.js's own listeners, which come with the views manager.
+      followOverview(app);
+      // After the overview's, whose Esc comes first.
+      followEraser(app);
+      followPen(app);
+      followFavourites(app);
+      followToolsMenu(app);
+      followEditorChanges(app);
+      app.eventBus.on("documentloaded", () => {
+        trackEdits(app);
+        checkLocked(app);
+        // A reopened document shows changes to the file, not the file.
+        if (!reopening) {
+          noteDroppable(app);
+          thumbnailOnceShown(app);
+        }
       });
-    },
-    { once: true },
-  );
+      // Pages moved, copied or deleted in the thumbnails, or that change undone.
+      app.eventBus.on("pagesedited", () => {
+        if (busy) editedWhileSaving = true;
+        updateEdited(app);
+        recachePages(app);
+      });
+      hideChangesIndicator(app);
+      if (!hasNativeMenu) followUndoButtons(app);
+      if (autosaves) followAutosave(app);
+    });
+  }
 
   /**
    * pdf.js loads a document in parts only from http(s) URLs: it streams the
@@ -571,6 +753,7 @@
       return null;
     }
 
+    documentSize = length;
     const transport = new window.pdfjsLib.PDFDataRangeTransport(length, null);
     /**
      * @param {number} begin
@@ -667,7 +850,7 @@
     const { onSetModified, onResetModified } = storage;
     storageEdited = false;
     // A reopened document keeps the changes it was reopened with.
-    if (!reopening) reopenedEdited = edited = false;
+    if (!reopening) reopenedEdited = edited = savedSinceOpened = false;
     storage.onSetModified = () => {
       onSetModified?.();
       if (busy) editedWhileSaving = true;
@@ -693,6 +876,7 @@
   function updateEdited(app) {
     edited = storageEdited || reopenedEdited || hasPageChanges(app);
     window.pdflion.setEdited(edited);
+    if (autosaves) scheduleAutosave(app);
   }
 
   /**
@@ -762,6 +946,7 @@
    */
   async function save(app, write) {
     if (busy) return false;
+    endPencilDrawing(app);
     busy = true;
     editedWhileSaving = false;
     updatePageButtons(app);
@@ -777,6 +962,8 @@
         await app.pdfScriptingManager.dispatchDidSave();
       }
       if (!url) return false; // Still edited, whatever saveDocument() reported.
+      documentSize = bytes.length;
+      savedSinceOpened = true;
       storageEdited = editedWhileSaving;
       reopenedEdited = false;
       if (pageChanges && !editedWhileSaving) {
@@ -798,6 +985,150 @@
     } finally {
       busy = false;
       updatePageButtons(app);
+    }
+  }
+
+  /**
+   * pdf.js's annotation storage counts as changed when an annotation joins
+   * it, but not when one in it changes: a drawing moved or recoloured, or a
+   * change undone or redone. Pencil's strokes join it only once its drawing
+   * ends, when the user leaves it. Once the document is saved, all those
+   * would go unsaved. Every such change goes through the editors' UI
+   * manager, whose addCommands(), undo() and redo() this follows, for each
+   * document's UI manager.
+   *
+   * @param {any} app
+   */
+  function followEditorChanges(app) {
+    app.eventBus.on("annotationeditoruimanager", (/** @type {{ uiManager: any }} */ { uiManager: ui }) => {
+      for (const name of ["addCommands", "undo", "redo"]) {
+        const original = ui[name];
+        if (typeof original !== "function") continue;
+        ui[name] = function (/** @type {any[]} */ ...args) {
+          const result = original.apply(this, args);
+          editorChanged(app, name === "addCommands" && args[0]?.type === DRAW_STEP);
+          return result;
+        };
+      }
+    });
+  }
+
+  /**
+   * An annotation changed. Before the first save, a document whose storage
+   * is empty again, as after undoing every change, is as it was opened,
+   * unless Pencil's drawing is open.
+   *
+   * @param {any} app
+   * @param {boolean} stroke whether it's a stroke of Pencil's open drawing
+   */
+  function editorChanged(app, stroke) {
+    const storage = app.pdfDocument?.annotationStorage;
+    if (!storage || (!stroke && storage.size === 0 && !savedSinceOpened)) return;
+    if (busy) editedWhileSaving = true;
+    storageEdited = true;
+    updateEdited(app);
+  }
+
+  /**
+   * Ends Pencil's open drawing, whose strokes join the annotations only
+   * then, as unselectAll() does first, but without unselecting anything
+   * (commitOrRemove() in src/display/editor/annotation_editor_layer.js).
+   *
+   * @param {any} app
+   */
+  function endPencilDrawing(app) {
+    const ui = uiManager(app);
+    if (!ui || !app.pdfDocument) return;
+    for (let index = 0; index < app.pdfViewer.pagesCount; index++) {
+      ui.getLayer(index)?.commitOrRemove();
+    }
+  }
+
+  /**
+   * Saves by itself, for a host that keeps the document, as the web app's
+   * does: a while after each change (scheduleAutosave()), and at once when
+   * the page is hidden, as when the app is left, since iPadOS may end it
+   * then.
+   *
+   * @param {any} app
+   */
+  function followAutosave(app) {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") saveNow(app);
+    });
+    window.addEventListener("pagehide", () => saveNow(app));
+  }
+
+  /**
+   * Saves a while after the last change: after AUTOSAVE_DELAY for form
+   * values, annotations and inserted or rotated pages, longer for larger
+   * documents, and after PAGE_CHANGES_DELAY for changes with pdf.js's page
+   * tools, which saving ends the undo of, and never while pdf.js offers to
+   * undo one.
+   *
+   * @param {any} app
+   */
+  function scheduleAutosave(app) {
+    if (autosaveTimer !== null) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    if (!edited) return;
+    const delay = hasPageChanges(app)
+      ? PAGE_CHANGES_DELAY
+      : Math.min(
+          AUTOSAVE_MAX_DELAY,
+          AUTOSAVE_DELAY + Math.floor(documentSize / 10_000_000) * AUTOSAVE_DELAY_PER_10_MB,
+        );
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      // Not in the middle of a stroke, which saving would end.
+      const later = (hasPageChanges(app) && isUndoBarShown()) || isDrawing();
+      if (later) scheduleAutosave(app);
+      else saveNow(app);
+    }, delay);
+  }
+
+  /** @returns {boolean} whether a stroke is being drawn */
+  function isDrawing() {
+    return document.querySelector(DRAWING_LAYER) !== null;
+  }
+
+  /** @returns {boolean} whether pdf.js offers to undo a page change */
+  function isUndoBarShown() {
+    const bar = document.getElementById(UNDO_BAR);
+    return !!bar && !bar.classList.contains("hidden");
+  }
+
+  /**
+   * Saves the document now, if it has changes, as before its tab closes or
+   * when the page is hidden. It waits for a save or a page change under way.
+   *
+   * @param {any} app
+   * @returns {Promise<boolean>} whether the document is saved now
+   */
+  async function saveNow(app) {
+    if (autosaveTimer !== null) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    while (busy) await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!edited || !app.pdfDocument) return true;
+    return save(app, window.pdflion.save);
+  }
+
+  /**
+   * Shares the document through the host, which shows the share sheet. It's
+   * saved first, so that what's shared is what the host keeps, as it keeps
+   * it. Only if that fails does the host get the document as it is here.
+   *
+   * @param {any} app
+   * @returns {Promise<boolean>} whether it was shared
+   */
+  async function share(app) {
+    if (!app.pdfDocument || typeof window.pdflion.share !== "function") return false;
+    try {
+      const saved = (await saveNow(app)) && !edited;
+      return (await window.pdflion.share(saved ? null : await currentBytes(app))) === true;
+    } catch (error) {
+      console.error("Couldn't share the document:", error);
+      return false;
     }
   }
 
@@ -875,16 +1206,35 @@
   async function confirmRewrite(app) {
     const pageChanges = hasPageChanges(app);
     if (!pageChanges && !newFile) return true;
-    const several = newFile === "several" || (pageChanges && fromSeveralCopies(app));
-    const held = await droppable;
-    const items = DROPPABLE.filter(
-      (item) =>
-        held.has(item) && !dropAgreed.has(item) && (several || !DROPPED_FROM_SEVERAL.has(item)),
-    );
+    return askToDrop(newFile === "several" || (pageChanges && fromSeveralCopies(app)));
+  }
+
+  /**
+   * Asks whether to drop what the file holds and a new file of its pages
+   * won't, unless the user agreed to already.
+   *
+   * @param {boolean} several whether the new file is made of several
+   * @returns {Promise<boolean>} whether to go ahead
+   */
+  async function askToDrop(several) {
+    const items = toDrop(await droppable, several);
     if (items.length === 0) return true;
     if (!(await window.pdflion.pageDialog("rewrite", items))) return false;
     for (const item of items) dropAgreed.add(item);
     return true;
+  }
+
+  /**
+   * @param {Set<string>} held which of DROPPABLE the file holds
+   * @param {boolean} several whether the new file is made of several
+   * @returns {string[]} what a new file would drop that the user hasn't
+   *   agreed to lose yet
+   */
+  function toDrop(held, several) {
+    return DROPPABLE.filter(
+      (item) =>
+        held.has(item) && !dropAgreed.has(item) && (several || !DROPPED_FROM_SEVERAL.has(item)),
+    );
   }
 
   /**
@@ -908,7 +1258,12 @@
    */
   function noteDroppable(app) {
     newFile = null;
-    droppable = findDroppable(app.pdfDocument);
+    const found = findDroppable(app.pdfDocument);
+    droppable = found;
+    droppableHeld = new Set();
+    found.then((held) => {
+      if (droppable === found) droppableHeld = held;
+    });
   }
 
   /**
@@ -1111,7 +1466,7 @@
       busy = true;
       updatePageButtons(app);
       try {
-        if (await confirmPageChange(app)) {
+        if (await confirmPageChange(app, "several")) {
           const { pdfDocument } = app;
           const insertAfter =
             pageInfos.find((info) => Number.isInteger(info.insertAfter))?.insertAfter ?? -1;
@@ -1249,6 +1604,7 @@
       app.initialBookmark = `page=${page}&zoom=${zoomParameter(currentScaleValue)}`;
       app.initialRotation = pagesRotation;
       await app.open({ data: bytes, filename });
+      documentSize = bytes.length;
       // open() resolves once pdf.js has the document, before it reads its
       // pages. pagesPromise rejects if it can't set them up, and then no
       // event comes. The page to show must load too.
@@ -1301,12 +1657,16 @@
 
   /**
    * Whether the document's pages may change. A locked document says why it
-   * can't. A signed document asks first, once.
+   * can't. A signed document asks first, once. With autosave, a change with
+   * pdf.js's page tools also asks first what saving it drops, since it saves
+   * without asking (see confirmRewrite()).
    *
    * @param {any} app
+   * @param {Rewrite} [rewrite] for a change with pdf.js's page tools, whose
+   *   saving writes a new file
    * @returns {Promise<boolean>}
    */
-  async function confirmPageChange(app) {
+  async function confirmPageChange(app, rewrite = null) {
     const { info } = await app.pdfDocument.getMetadata();
     const reason = lockReason(app.pdfDocument, info);
     if (reason) {
@@ -1317,8 +1677,14 @@
       if (!(await window.pdflion.pageDialog("signed"))) return false;
       signedChangesAllowed = true;
     }
-    return true;
+    return !autosaves || !rewrite || askToDrop(rewrite === "several");
   }
+
+  /**
+   * @typedef {"one" | "several" | null} Rewrite the new file a change with
+   *   pdf.js's page tools makes when it's saved: of the document alone, as
+   *   for moving, copying and deleting pages, or of several, as for Add file
+   */
 
   /**
    * Documents with a password (even an owner password only, which opens
@@ -1377,7 +1743,7 @@
       "pointerdown",
       (event) => {
         if (event.button !== 0 || !targetIn(event, THUMBNAIL_IMAGE)) return;
-        if (!locked && !mustAsk()) return;
+        if (!locked && !mustAsk("one")) return;
         // pdf.js would get ready to drag the page.
         event.stopPropagation();
         if (!locked) askOnceDragged(app, event);
@@ -1397,13 +1763,14 @@
       "drop",
       (event) => {
         const thumbnails = targetIn(event, `${THUMBNAILS}.isDraggingFile`);
-        if (!thumbnails || !mustAsk()) return;
+        if (!thumbnails || !mustAsk("several")) return;
         // Only readable while the event is dispatched.
         const files = [...(event.dataTransfer?.files ?? [])];
         const { clientX, clientY } = event;
         holdBack(
           app,
           event,
+          "several",
           () => {
             const dataTransfer = new DataTransfer();
             for (const file of files) dataTransfer.items.add(file);
@@ -1423,17 +1790,17 @@
       "click",
       (event) => {
         const item = targetIn(event, PAGE_CHANGE_ITEMS);
-        if (item && mustAsk()) holdBack(app, event, () => item.click());
+        if (item && mustAsk("one")) holdBack(app, event, "one", () => item.click());
       },
       true,
     );
     window.addEventListener(
       "keydown",
       (event) => {
-        if (!isPageChangeKey(event) || !mustAsk()) return;
+        if (!isPageChangeKey(event) || !mustAsk("one")) return;
         const { target, key, code, ctrlKey, metaKey, altKey, shiftKey } = event;
         const init = { key, code, ctrlKey, metaKey, altKey, shiftKey };
-        holdBack(app, event, () =>
+        holdBack(app, event, "one", () =>
           target?.dispatchEvent(
             new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true }),
           ),
@@ -1445,10 +1812,11 @@
       "change",
       (event) => {
         const picker = targetIn(event, ADD_FILE_PICKER);
-        if (!picker || !mustAsk()) return;
+        if (!picker || !mustAsk("several")) return;
         holdBack(
           app,
           event,
+          "several",
           () => picker.dispatchEvent(new Event("change")),
           // So that picking the same files again is a change.
           () => {
@@ -1460,9 +1828,17 @@
     );
   }
 
-  /** @returns {boolean} whether a page change must ask first, or say why it can't */
-  function mustAsk() {
-    return locked || (signed && !signedChangesAllowed);
+  /**
+   * @param {Rewrite} rewrite
+   * @returns {boolean} whether a change with pdf.js's page tools must ask
+   *   first, or say why it can't
+   */
+  function mustAsk(rewrite) {
+    return (
+      locked ||
+      (signed && !signedChangesAllowed) ||
+      (autosaves && toDrop(droppableHeld, rewrite === "several").length > 0)
+    );
   }
 
   /**
@@ -1500,13 +1876,14 @@
    *
    * @param {any} app
    * @param {Event} event
+   * @param {Rewrite} rewrite
    * @param {() => void} repeat
    * @param {() => void} [drop] when the user doesn't agree, or can't
    */
-  function holdBack(app, event, repeat, drop = () => {}) {
+  function holdBack(app, event, rewrite, repeat, drop = () => {}) {
     event.stopPropagation();
     event.preventDefault();
-    askToChangePages(app).then((agreed) => (agreed ? repeat() : drop()));
+    askToChangePages(app, rewrite).then((agreed) => (agreed ? repeat() : drop()));
   }
 
   /**
@@ -1527,7 +1904,7 @@
         const dy = Math.abs(event.clientY - clientY);
         if (dx <= DRAG_THRESHOLD && dy <= DRAG_THRESHOLD) return;
         controller.abort();
-        askToChangePages(app);
+        askToChangePages(app, "one");
       },
       { capture: true, signal },
     );
@@ -1546,10 +1923,11 @@
    * confirmPageChange(), unless it's already asking.
    *
    * @param {any} app
+   * @param {Rewrite} rewrite
    * @returns {Promise<boolean>} whether the pages may change
    */
-  function askToChangePages(app) {
-    asking ??= confirmPageChange(app)
+  function askToChangePages(app, rewrite) {
+    asking ??= confirmPageChange(app, rewrite)
       .catch((error) => {
         console.error("Couldn't check whether the pages may change:", error);
         return false;
@@ -1604,6 +1982,185 @@
     button.addEventListener("click", () => window.pdflion.showHome());
     sidebarButton.before(button);
     return button;
+  }
+
+  /**
+   * Adds Share, for a host that shares documents, where pdf.js's Download
+   * button is, which overrides.css hides: in the toolbar, and in the ⋮ menu
+   * from pdf.js's medium view on, as Download is.
+   *
+   * @param {any} app
+   */
+  function addShareButtons(app) {
+    if (typeof window.pdflion.share !== "function") return;
+    const download = document.getElementById("downloadButton");
+    if (download) {
+      const button = makeButton("pdflionShareButton", "toolbarButton", "Share");
+      button.addEventListener("click", () => share(app));
+      download.before(button);
+    }
+    const secondaryDownload = document.getElementById("secondaryDownload");
+    if (secondaryDownload) {
+      const item = makeButton("pdflionSecondaryShare", "toolbarButton labeled", "Share…");
+      item.addEventListener("click", () => {
+        app.secondaryToolbar?.close();
+        share(app);
+      });
+      secondaryDownload.before(item);
+    }
+  }
+
+  /**
+   * Adds the status a host can show of the document, such as the web app's
+   * "Not in Files", at the start of the toolbar's right group. A click
+   * shares the document, which ends that status.
+   *
+   * @param {any} app
+   */
+  function addSaveStatus(app) {
+    if (typeof window.pdflion.onSaveStatus !== "function") return;
+    const right = document.getElementById("toolbarViewerRight");
+    if (!right) return;
+    const button = makeButton("pdflionSaveStatus", "toolbarButton", "");
+    button.hidden = true;
+    button.addEventListener("click", () => share(app));
+    right.prepend(button);
+    window.pdflion.onSaveStatus((/** @type {string | null} */ status) => {
+      button.hidden = !status;
+      /** @type {HTMLElement} */ (button.firstElementChild).textContent = status ?? "";
+      button.title = status ? `${status}. Share…` : "";
+      layoutToolbar();
+    });
+  }
+
+  /**
+   * Adds Undo and Redo before the drawing tools, for a host without a native
+   * menu, as on an iPad without a keyboard. They show while a drawing tool
+   * is on, as Edit > Undo and Redo work for pdf.js then.
+   *
+   * @param {any} app
+   * @returns {HTMLButtonElement[]}
+   */
+  function addUndoButtons(app) {
+    const tools = document.getElementById("editorModeButtons");
+    if (hasNativeMenu || !tools) return [];
+    const undo = makeButton("pdflionUndo", "toolbarButton", "Undo");
+    const redo = makeButton("pdflionRedo", "toolbarButton", "Redo");
+    undo.addEventListener("click", () => editingAction(app, "undo"));
+    redo.addEventListener("click", () => editingAction(app, "redo"));
+    const group = createElement(
+      "div",
+      { id: "pdflionUndoRedo", className: "toolbarHorizontalGroup", hidden: true },
+      undo,
+      redo,
+    );
+    tools.before(group);
+    return [undo, redo];
+  }
+
+  /**
+   * Shows Undo and Redo while a drawing tool is on.
+   *
+   * @param {any} app
+   */
+  function followUndoButtons(app) {
+    app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+      const group = undoButtons[0]?.parentElement;
+      if (!group) return;
+      const hidden = mode === EDITOR_NONE || mode === EDITOR_DISABLE;
+      if (group.hidden === hidden) return;
+      group.hidden = hidden;
+      layoutToolbar();
+    });
+  }
+
+  /**
+   * Adds the host's Open…, New and About to the ⋮ menu: Open… and New at
+   * the top, where pdf.js's Open is, which overrides.css hides, and About at
+   * the end. Open… must run in the click, since iPadOS opens the file picker
+   * only then.
+   *
+   * @param {any} app
+   */
+  function addAppMenuItems(app) {
+    const container = document.getElementById("secondaryToolbarButtonContainer");
+    if (!container) return;
+    /**
+     * @param {string} id
+     * @param {string} label
+     * @param {() => void} action
+     */
+    const item = (id, label, action) => {
+      const button = makeButton(id, "toolbarButton labeled", label);
+      button.addEventListener("click", () => {
+        action();
+        app.secondaryToolbar?.close();
+      });
+      return button;
+    };
+    const { showOpenPanel, newDocument, showAbout } = window.pdflion;
+    const top = [];
+    if (typeof showOpenPanel === "function") {
+      top.push(item("pdflionSecondaryOpen", "Open…", () => window.pdflion.showOpenPanel()));
+    }
+    if (typeof newDocument === "function") {
+      top.push(item("pdflionSecondaryNew", "New", () => window.pdflion.newDocument()));
+    }
+    if (top.length > 0) {
+      container.prepend(...top, createElement("div", { className: "horizontalToolbarSeparator" }));
+    }
+    if (typeof showAbout === "function") {
+      container.append(
+        createElement("div", { className: "horizontalToolbarSeparator" }),
+        item("pdflionSecondaryAbout", "About PDFLion", () => window.pdflion.showAbout()),
+      );
+    }
+  }
+
+  /**
+   * Adds to the top of the ⋮ menu what the toolbar's narrow steps take from
+   * it, which overrides.css shows only then: Home, once the Home button goes,
+   * and Find…, Page Overview and Insert Blank Page, once they go.
+   *
+   * @param {any} app
+   * @returns {HTMLButtonElement[]} the items that change pages
+   */
+  function addNarrowMenuItems(app) {
+    const container = document.getElementById("secondaryToolbarButtonContainer");
+    if (!container) return [];
+    /**
+     * @param {string} id
+     * @param {string} label
+     * @param {() => void} action
+     */
+    const item = (id, label, action) => {
+      const button = makeButton(id, "toolbarButton labeled", label);
+      button.addEventListener("click", () => {
+        app.secondaryToolbar?.close();
+        action();
+      });
+      return button;
+    };
+    const insert = item("pdflionSecondaryInsertBlankPage", "Insert Blank Page", () =>
+      insertBlankPage(app),
+    );
+    insert.disabled = true;
+    const tiny = createElement(
+      "div",
+      { className: "pdflionVisibleTiny" },
+      item("pdflionSecondaryFind", "Find…", () => app.findBar?.open()),
+      item("pdflionSecondaryPageOverview", "Page Overview", () => toggleOverview(app)),
+      insert,
+    );
+    const items = [tiny];
+    if (typeof window.pdflion.showHome === "function") {
+      items.unshift(item("pdflionSecondaryHome", "Home", () => window.pdflion.showHome()));
+    }
+    container.prepend(
+      ...items,
+      createElement("div", { className: "horizontalToolbarSeparator pdflionVisibleWithoutHome" }),
+    );
+    return [insert];
   }
 
   /**
@@ -2056,6 +2613,7 @@
     button.setAttribute("aria-expanded", String(on));
     box.classList.toggle("hidden", !on);
     if (!on) cursor.hidden = true;
+    showActiveTool();
   }
 
   /**
@@ -2068,15 +2626,20 @@
 
   /**
    * Follows the tool settings main keeps for every tab, which it sends each
-   * tab after every change: the eraser's, and the favourites.
+   * tab after every change: the eraser's, pen-only drawing, and the
+   * favourites.
    *
    * @param {any} app
    * @returns {Promise<void>} once main has first sent them
    */
   function followToolSettings(app) {
-    /** @param {{ eraser: EraserSettings, favourites: Favourite[] }} settings */
+    /**
+     * @param {{ eraser: EraserSettings, penOnly: boolean, penOnlyChosen: boolean,
+     *   favourites: Favourite[] }} settings
+     */
     const show = (settings) => {
       showEraser(settings.eraser);
+      showPenOnly(settings);
       favourites = settings.favourites;
       showFavourites(app);
     };
@@ -2125,6 +2688,7 @@
   function startGesture(app, event) {
     const eraserEnd = event.pointerType === "pen" && event.button === PEN_ERASER_BUTTON;
     if (gesture || !(eraserEnd || (erasing && event.button === 0))) return;
+    if (isFingerKeptOff(app, event)) return;
     const ui = uiManager(app);
     const place = placeOf(app, event);
     const tool = app.pdfViewer.annotationEditorMode;
@@ -2440,13 +3004,14 @@
   /**
    * Shows the eraser's circle where the pointer is, as large as the eraser at
    * the page's zoom, or hides it off the pages: while the eraser is on, and
-   * while a pen's eraser end erases with another tool on.
+   * while a pen's eraser end erases with another tool on. A pen hovering
+   * over the page moves it too, but not a finger kept off the pages.
    *
    * @param {any} app
    * @param {PointerEvent} event
    */
   function moveCursor(app, event) {
-    if (!(erasing || gesture?.inPlace) || !eraserTool) return;
+    if (!(erasing || gesture?.inPlace) || !eraserTool || isFingerKeptOff(app, event)) return;
     const { cursor } = eraserTool;
     const place = placeOf(app, event);
     cursor.hidden = !place;
@@ -2468,7 +3033,7 @@
    *   coordinates, and how many pixels a point is there, or null off the pages
    */
   function placeOf(app, { target, clientX, clientY }) {
-    const div = /** @type {any} */ (target)?.closest?.("#viewerContainer .page[data-page-number]");
+    const div = /** @type {any} */ (target)?.closest?.(PAGE);
     if (!div) return null;
     const pageIndex = Number(div.dataset.pageNumber) - 1;
     const view = app.pdfViewer.getPageView(pageIndex);
@@ -2491,6 +3056,152 @@
   function commitDrawing(ui) {
     ui.unselectAll();
     ui.unselectAll();
+  }
+
+  /**
+   * Adds pen-only drawing's switch to the end of Pencil's and the eraser's
+   * option boxes, built like Highlight's Show All (#editorHighlightVisibility
+   * in web/viewer.html), which overrides.css repeats the styles of. Its label
+   * is English, like the native menus.
+   *
+   * @returns {HTMLButtonElement[]} the switches
+   */
+  function addPenOnlySwitches() {
+    /** @type {[string, string][]} each option box's id, and its switch's */
+    const boxes = [
+      ["editorInkParamsToolbar", "pdflionInkPenOnly"],
+      ["pdflionEditorEraserParamsToolbar", "pdflionEraserPenOnly"],
+    ];
+    return boxes.flatMap(([box, id]) => {
+      const container = document.querySelector(`#${box} > .editorParamsToolbarContainer`);
+      if (!container) return [];
+      const button = createElement("button", { type: "button", id, className: "toggle-button" });
+      button.setAttribute("aria-pressed", String(penOnly));
+      button.addEventListener("click", () => storePenOnly(!penOnly));
+      const label = createElement("label", {
+        className: "editorParamsLabel",
+        htmlFor: id,
+        textContent: "Draw Only with a Pen",
+      });
+      container.append(
+        createElement(
+          "div",
+          { className: "pdflionPenOnlySetter" },
+          createElement("div", { className: "divider" }),
+          createElement("div", { className: "toggler" }, label, button),
+        ),
+      );
+      return [button];
+    });
+  }
+
+  /**
+   * Shows whether only a pen draws, as main sends it: on its switches, and on
+   * #outerContainer, where overrides.css lets fingers scroll the pages under
+   * the eraser and Highlight.
+   *
+   * @param {{ penOnly?: boolean, penOnlyChosen?: boolean }} settings
+   */
+  function showPenOnly(settings) {
+    penOnly = settings.penOnly === true;
+    penOnlyChosen = settings.penOnlyChosen === true;
+    document.getElementById("outerContainer")?.classList.toggle("pdflionPenOnly", penOnly);
+    for (const button of penOnlySwitches) button.setAttribute("aria-pressed", String(penOnly));
+  }
+
+  /**
+   * Has main keep whether only a pen draws, which it sends every tab, and
+   * which counts as chosen from then on.
+   *
+   * @param {boolean} on
+   */
+  function storePenOnly(on) {
+    showPenOnly({ penOnly: on, penOnlyChosen: true });
+    window.pdflion.setToolSettings({ penOnly: on });
+  }
+
+  /**
+   * Pen-only drawing, as iPadOS's "Only Draw with Apple Pencil": the first
+   * pen to press on a page turns it on, unless it was ever turned on or off
+   * before, and its switches turn it off. While it's on and Pencil, Highlight
+   * or the eraser is on, a finger's press on a page never reaches pdf.js's
+   * layers, which would draw, select or erase with it. Its default stays, so
+   * the browser scrolls, and pdf.js's TouchManager, which follows touch
+   * events, pinches. The eraser and its circle leave such fingers alone too.
+   *
+   * While a pen is down on a page with one of those tools on, or its eraser
+   * end with any, a resting palm scrolls nothing: every touchmove is
+   * cancelled where it still can be, as pdf.js cancels the pen's own, which
+   * Safari sends too. Nor does a palm start pdf.js's pinch then, which would
+   * end the stroke, nor does the pen's own touch with a palm already down.
+   *
+   * @param {any} app
+   */
+  function followPen(app) {
+    const container = document.getElementById("viewerContainer");
+    if (!container) return;
+    container.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (!(/** @type {any} */ (event.target)?.closest?.(PAGE))) return;
+        if (event.pointerType === "pen") pressedWithPen(app, event);
+        else if (isFingerKeptOff(app, event)) event.stopPropagation();
+      },
+      true,
+    );
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(
+        type,
+        (event) => {
+          if (/** @type {PointerEvent} */ (event).pointerId === penDown) penDown = null;
+        },
+        true,
+      );
+    }
+    window.addEventListener(
+      "touchstart",
+      (event) => {
+        // Touch.touchType is Safari's, which has a pen's touches as `stylus`.
+        const stylus = [...event.changedTouches].every(
+          (touch) => /** @type {any} */ (touch).touchType === "stylus",
+        );
+        const tool = app.pdfViewer?.annotationEditorMode;
+        if (penDown !== null || (stylus && PEN_TOOLS.has(tool))) event.stopPropagation();
+      },
+      true,
+    );
+    window.addEventListener(
+      "touchmove",
+      (event) => {
+        if (penDown !== null && event.cancelable) event.preventDefault();
+      },
+      { capture: true, passive: false },
+    );
+  }
+
+  /**
+   * A pen pressed on a page: the first ever turns pen-only drawing on.
+   *
+   * @param {any} app
+   * @param {PointerEvent} event
+   */
+  function pressedWithPen(app, event) {
+    if (!penOnly && !penOnlyChosen) storePenOnly(true);
+    const tool = app.pdfViewer.annotationEditorMode;
+    const eraserEnd = event.button === PEN_ERASER_BUTTON && tool !== EDITOR_DISABLE;
+    if (PEN_TOOLS.has(tool) || eraserEnd) penDown = event.pointerId;
+  }
+
+  /**
+   * @param {any} app
+   * @param {PointerEvent} event
+   * @returns {boolean} whether it's a finger that only scrolls and zooms:
+   *   pen-only drawing is on, and so is Pencil, Highlight or the eraser
+   */
+  function isFingerKeptOff(app, event) {
+    return (
+      penOnly && event.pointerType === "touch" && PEN_TOOLS.has(app.pdfViewer?.annotationEditorMode)
+    );
   }
 
   /**
@@ -2685,7 +3396,7 @@
     };
     const choices = () =>
       /** @type {HTMLButtonElement[]} */ ([...items.children]).filter(
-        (item) => !item.hidden && !item.disabled,
+        (item) => item.tagName === "BUTTON" && !item.hidden && !item.disabled,
       );
     /** @param {"first" | "last"} [focus] which item takes the focus */
     const show = (focus) => {
@@ -2788,7 +3499,7 @@
   /**
    * A favourite's button: its tool's icon in its colour, which overrides.css
    * draws, and its size. A click uses it, a drag onto another favourite moves
-   * it there, and its context menu removes it.
+   * it there, and its context menu, also after a long press, removes it.
    *
    * @param {any} app
    * @param {Favourite} favourite
@@ -2819,6 +3530,7 @@
       event.preventDefault();
       window.pdflion.showFavouriteMenu(favourite);
     });
+    addLongPress(button);
     button.draggable = true;
     button.addEventListener("dragstart", (/** @type {DragEvent} */ event) => {
       favouriteDrag = { favourite, over: null, after: false };
@@ -2860,6 +3572,82 @@
       favouriteDrag = null;
     });
     return button;
+  }
+
+  /**
+   * Opens an element's context menu after a long press with a finger or a
+   * pen, of LONG_PRESS_TIME without moving more than LONG_PRESS_SLOP, which
+   * iPadOS doesn't: it sends a contextmenu event where the press is. The
+   * browser's own, as Chromium sends after a touch's long press, and a click
+   * after the press, are dropped. A drag after it closes the host's menu,
+   * since iPadOS starts one with a long press too. The same as in
+   * src/tabs/tabs.js and src/home/home.js.
+   *
+   * @param {HTMLElement} element
+   */
+  function addLongPress(element) {
+    /** Whether the last press opened the menu, until the next. */
+    let opened = false;
+    element.addEventListener("pointerdown", (down) => {
+      opened = false;
+      if (down.pointerType === "mouse" || down.button !== 0) return;
+      const pressing = new AbortController();
+      const { signal } = pressing;
+      const stop = () => pressing.abort();
+      const timer = setTimeout(() => {
+        stop();
+        opened = true;
+        const { clientX, clientY } = down;
+        const menu = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+        });
+        element.dispatchEvent(menu);
+      }, LONG_PRESS_TIME);
+      signal.addEventListener("abort", () => clearTimeout(timer));
+      /** @param {PointerEvent} event */
+      const moved = ({ pointerId, clientX, clientY }) => {
+        const far = Math.hypot(clientX - down.clientX, clientY - down.clientY) > LONG_PRESS_SLOP;
+        if (pointerId === down.pointerId && far) stop();
+      };
+      /** @param {PointerEvent} event */
+      const ended = ({ pointerId }) => {
+        if (pointerId === down.pointerId) stop();
+      };
+      window.addEventListener("pointermove", moved, { signal });
+      window.addEventListener("pointerup", ended, { signal });
+      window.addEventListener("pointercancel", ended, { signal });
+      element.addEventListener("dragstart", stop, { signal });
+      element.addEventListener("contextmenu", (event) => event.isTrusted && stop(), { signal });
+    });
+    // Before the element's own listeners.
+    element.addEventListener(
+      "contextmenu",
+      (event) => {
+        if (!event.isTrusted || !opened) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+    element.addEventListener(
+      "click",
+      (event) => {
+        if (!opened) return;
+        opened = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+    element.addEventListener("keydown", () => {
+      opened = false;
+    });
+    element.addEventListener("dragstart", () => {
+      if (opened && typeof window.pdflion.closeMenu === "function") window.pdflion.closeMenu();
+    });
   }
 
   /**
@@ -3043,13 +3831,17 @@
   /**
    * @param {HTMLElement} viewer #toolbarViewer, whose groups keep their width
    *   (web/viewer.css)
-   * @returns {number} by how much its groups are wider than it, in pixels
+   * @returns {number} by how much its groups, with the gaps between them, are
+   *   wider than it, in pixels
    */
   function toolbarOverflow(viewer) {
     const width = (/** @type {Element} */ element) => element.getBoundingClientRect().width;
-    const groups = [...viewer.children].reduce((sum, group) => sum + width(group), 0);
+    const groups = [...viewer.children];
+    // #toolbarViewer is a .toolbarHorizontalGroup too, with its gap (overrides.css).
+    const gaps = (groups.length - 1) * (parseFloat(getComputedStyle(viewer).columnGap) || 0);
+    const used = groups.reduce((sum, group) => sum + width(group), gaps);
     // Less than half a pixel is rounding.
-    return groups - width(viewer) - 0.5;
+    return used - width(viewer) - 0.5;
   }
 
   /**
@@ -3095,6 +3887,7 @@
     app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
       toolsEnabled = mode !== EDITOR_DISABLE;
       if (favouritesBar) favouritesBar.moreButton.disabled = !toolsEnabled;
+      if (toolsMenu) toolsMenu.button.disabled = !toolsEnabled;
       for (const { button, item } of favouriteButtons) {
         button.disabled = item.disabled = !toolsEnabled;
       }
@@ -3107,6 +3900,129 @@
     for (const name of ["switchannotationeditorparams", "annotationeditorparamschanged"]) {
       app.eventBus.on(name, () => updateFavouritesPressed(app));
     }
+  }
+
+  /**
+   * Adds one button for the drawing tools, before them, for the toolbar's
+   * step that has no room for them (`pdflionToolbarTools`), which
+   * overrides.css shows it at, with their buttons out of sight. It shows the
+   * tool that's on, and its menu has them all. The tools' option boxes still
+   * open from their own places, which are then at its right.
+   *
+   * @param {any} app
+   * @returns {ToolsMenu | null}
+   */
+  function addToolsMenu(app) {
+    const tools = document.getElementById("editorModeButtons");
+    if (!tools) return null;
+    const button = makeButton("pdflionToolsButton", "toolbarButton", "Drawing Tools");
+    button.disabled = true;
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-haspopup", "true");
+    button.setAttribute("aria-controls", "pdflionToolsMenu");
+    const items = createElement("div", { className: "menuContainer", role: "menu" });
+    const menu = createElement(
+      "div",
+      { id: "pdflionToolsMenu", className: "editorParamsToolbar hidden doorHangerRight menu" },
+      items,
+    );
+    tools.before(
+      createElement(
+        "div",
+        { id: "pdflionTools", className: "toolbarButtonWithContainer" },
+        button,
+        menu,
+      ),
+    );
+    // Before followMenu()'s own listeners, which open it.
+    button.addEventListener("click", () => fillToolsMenu(app));
+    button.addEventListener("keydown", () => fillToolsMenu(app));
+    return { button, items, closeMenu: followMenu(button, menu, items) };
+  }
+
+  /**
+   * Fills the drawing tools' menu with the tools pdf.js shows, the one that's
+   * on checked. Choosing one clicks its button. At the toolbar's last step,
+   * Undo and Redo come first, while a tool is on.
+   *
+   * @param {any} app
+   */
+  function fillToolsMenu(app) {
+    if (!toolsMenu) return;
+    /** @type {HTMLElement[]} */
+    const entries = [];
+    const undoGroup = undoButtons[0]?.parentElement;
+    const last = document
+      .getElementById("toolbarContainer")
+      ?.classList.contains("pdflionToolbarMinimal");
+    if (last && undoGroup && !undoGroup.hidden) {
+      for (const button of undoButtons) {
+        const item = makeButton(`${button.id}Item`, "toolbarButton labeled", button.title);
+        item.setAttribute("role", "menuitem");
+        item.tabIndex = -1;
+        item.addEventListener("click", () => button.click());
+        entries.push(item);
+      }
+      entries.push(createElement("div", { className: "horizontalToolbarSeparator" }));
+    }
+    for (const tool of toolButtons()) {
+      const label = tool.textContent?.trim() || tool.title;
+      const item = makeButton(`${tool.id}Item`, "toolbarButton labeled pdflionToolItem", label);
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", String(isToolOn(tool)));
+      item.setAttribute("data-tool", tool.id);
+      item.tabIndex = -1;
+      item.disabled = tool.disabled;
+      item.addEventListener("click", () => tool.click());
+      entries.push(item);
+    }
+    toolsMenu.items.replaceChildren(...entries);
+  }
+
+  /**
+   * @returns {HTMLButtonElement[]} the drawing tools' buttons pdf.js shows,
+   *   the eraser's among them, but not a signed document's, which stays
+   */
+  function toolButtons() {
+    const containers = document.querySelectorAll(
+      "#editorModeButtons > .toolbarButtonWithContainer:not(#signatureProperties, [hidden])",
+    );
+    return /** @type {HTMLButtonElement[]} */ (
+      [...containers]
+        .map((container) => container.querySelector(":scope > .toolbarButton"))
+        .filter(
+          (button) => button?.tagName === "BUTTON" && !(/** @type {HTMLElement} */ (button).hidden),
+        )
+    );
+  }
+
+  /**
+   * @param {HTMLButtonElement} tool
+   * @returns {boolean} whether it's on: pdf.js shows Pencil on while the
+   *   eraser is
+   */
+  function isToolOn(tool) {
+    return erasing ? tool === eraserTool?.button : tool.classList.contains("toggled");
+  }
+
+  /** Shows the tool that's on on the tools' button, which overrides.css draws. */
+  function showActiveTool() {
+    if (!toolsMenu) return;
+    const on = toolButtons().find(isToolOn);
+    const { button } = toolsMenu;
+    if (on) button.setAttribute("data-tool", on.id);
+    else button.removeAttribute("data-tool");
+    button.classList.toggle("toggled", !!on);
+  }
+
+  /**
+   * Keeps the tools' button showing the tool that's on, after pdf.js has
+   * shown it on its own button.
+   *
+   * @param {any} app
+   */
+  function followToolsMenu(app) {
+    app.eventBus.on("annotationeditormodechanged", () => showActiveTool());
   }
 
   /**

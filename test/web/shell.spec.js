@@ -1,0 +1,179 @@
+import path from "node:path";
+import { LINKS, writeLabelled, writeLinks } from "../e2e/pdfs.js";
+import {
+  TRACEMONKEY,
+  commandKey,
+  documentFrame,
+  drawStroke,
+  expect,
+  homeFrame,
+  openApp,
+  openFromHome,
+  readLibrary,
+  stripTabs,
+  test,
+} from "./pdflion.js";
+
+test("documents open as tabs, and the strip shows for two or more", async ({ page, dir }) => {
+  const other = path.join(dir, "Other.pdf");
+  await writeLabelled(other, 2);
+  await openApp(page);
+  await expect(page.locator("#tabs")).toBeHidden();
+
+  await openFromHome(page, [TRACEMONKEY, other]);
+  await documentFrame(page, "Other.pdf");
+  await expect(page.locator("#tabs")).toBeVisible();
+  // The first took Home's place, and the last shows.
+  expect(await stripTabs(page)).toMatchObject([
+    { name: "compressed.tracemonkey-pldi-09.pdf", home: false, active: false },
+    { name: "Other.pdf", home: false, active: true },
+  ]);
+  await expect(page).toHaveTitle("Other.pdf – PDFLion");
+
+  const key = await commandKey(page);
+  await page.keyboard.press("Control+Tab");
+  await expect.poll(async () => (await stripTabs(page)).map((tab) => tab.active)).toEqual([true, false]);
+  await page.keyboard.press(`${key}+w`);
+  await expect.poll(async () => (await stripTabs(page)).map((tab) => tab.name)).toEqual(["Other.pdf"]);
+  await expect(page.locator("#tabs")).toBeHidden();
+
+  // The last tab closing shows Home.
+  await page.keyboard.press(`${key}+w`);
+  await homeFrame(page);
+  expect(await stripTabs(page)).toMatchObject([{ home: true }]);
+});
+
+test("the shortcuts work in the viewer, in Home and in the strip", async ({ page }) => {
+  await openApp(page);
+  const key = await commandKey(page);
+  const home = await homeFrame(page);
+
+  // ⌘N in Home.
+  await home.locator("body").press(`${key}+n`);
+  const viewer = await documentFrame(page, "Untitled.pdf");
+  const pages = () => viewer.evaluate(() => window.PDFViewerApplication.pdfViewer.pagesCount);
+
+  // ⇧⌘N, ⌥⌘6 (Ctrl+Shift+O elsewhere) and ⇧⌘E in the viewer.
+  await viewer.locator("#viewerContainer").click();
+  await page.keyboard.press(`${key}+Shift+n`);
+  await expect.poll(pages).toBe(2);
+  await page.keyboard.press(key === "Meta" ? "Meta+Alt+Digit6" : "Control+Shift+o");
+  await expect(viewer.locator("#outerContainer.pdflionPageOverview")).toHaveCount(1);
+  await page.keyboard.press(key === "Meta" ? "Meta+Alt+Digit6" : "Control+Shift+o");
+  await expect(viewer.locator("#outerContainer.pdflionPageOverview")).toHaveCount(0);
+  await page.keyboard.press(`${key}+Shift+e`);
+  await expect(viewer.locator("#pdflionEditorEraserButton")).toHaveClass(/toggled/);
+
+  // ⌘S saves at once, and says so.
+  await page.keyboard.press(`${key}+s`);
+  await expect(page.locator(".snackbar .text")).toHaveText("“Untitled.pdf” is saved in PDFLion.");
+  expect((await readLibrary(page))[0].revision).toBe(1);
+
+  // ⇧⌘H shows Home, after the document.
+  await page.keyboard.press(`${key}+Shift+h`);
+  await homeFrame(page);
+  expect(await stripTabs(page)).toMatchObject([{ name: "Untitled.pdf" }, { home: true, active: true }]);
+
+  // ⌃⇧Tab in the strip.
+  await page.locator("#tabs .tab.active").focus();
+  await page.keyboard.press("Control+Shift+Tab");
+  await expect.poll(async () => (await stripTabs(page)).map((tab) => tab.active)).toEqual([true, false]);
+});
+
+test("pdf.js keeps the keys PDFLion leaves it, such as zooming", async ({ page }) => {
+  await openApp(page);
+  await openFromHome(page, [TRACEMONKEY]);
+  const viewer = await documentFrame(page, "compressed.tracemonkey-pldi-09.pdf");
+  const scale = () => viewer.evaluate(() => window.PDFViewerApplication.pdfViewer.currentScale);
+  const before = await scale();
+  await viewer.locator("#viewerContainer").click();
+  await page.keyboard.press(`${await commandKey(page)}+Equal`);
+  await expect.poll(scale).toBeGreaterThan(before);
+});
+
+test("closing a tab that isn't in Files says so, and offers Share", async ({ page }) => {
+  await openApp(page);
+  await openFromHome(page, [TRACEMONKEY]);
+  const viewer = await documentFrame(page, "compressed.tracemonkey-pldi-09.pdf");
+  await drawStroke(page, viewer);
+  // Closing saves first, so the stroke isn't lost.
+  await page.keyboard.press(`${await commandKey(page)}+w`);
+  await expect(page.locator(".snackbar .text")).toHaveText(
+    "“compressed.tracemonkey-pldi-09.pdf” is saved in PDFLion, not in Files.",
+  );
+  await expect(page.locator(".snackbar .action")).toHaveText("Share…");
+  expect((await readLibrary(page))[0].revision).toBe(1);
+});
+
+test("Home's ⓘ menu has About, the pen setting and the storage used", async ({ page }) => {
+  const home = await openApp(page);
+  await home.locator("#info").click();
+  await expect(page.locator(".menu .info")).toHaveText(/ of storage used$/);
+  const penOnly = page.getByRole("menuitemcheckbox", { name: "Draw Only with a Pen" });
+  await expect(penOnly).toHaveAttribute("aria-checked", "false");
+  await penOnly.click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const open = indexedDB.open("pdflion");
+            open.onsuccess = () => {
+              const get = open.result.transaction("settings").objectStore("settings").get("toolSettings");
+              get.onsuccess = () => resolve(get.result?.penOnly);
+            };
+          }),
+      ),
+    )
+    .toBe(true);
+
+  await home.locator("#info").click();
+  await page.getByRole("menuitem", { name: "About PDFLion" }).click();
+  await expect(page.locator("dialog.about .detail")).toHaveText(/^Version .+ · pdf\.js \d+\.\d+\.\d+$/);
+  await expect(page.locator("dialog.about").getByRole("link", { name: "pdf.js" })).toHaveAttribute(
+    "href",
+    "https://github.com/mozilla/pdf.js",
+  );
+  await page.getByRole("button", { name: "OK" }).click();
+  await expect(page.locator("dialog")).toHaveCount(0);
+});
+
+test("the viewer and Home run only in the shell", async ({ page }) => {
+  await page.goto("viewer/web/viewer.html");
+  await expect(page).toHaveURL("about:blank");
+  await page.goto("home/home.html");
+  await expect(page).toHaveURL("about:blank");
+});
+
+test("links in documents open only for http, https and mailto", async ({ page, dir }) => {
+  const file = path.join(dir, "Links.pdf");
+  await writeLinks(file);
+  await openApp(page);
+  await openFromHome(page, [file]);
+  const viewer = await documentFrame(page, "Links.pdf");
+  await page.context().route("https://example.com/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<title>Example</title>" }),
+  );
+  // pdf.js makes only the https link clickable: it drops file: and javascript: links.
+  const links = viewer.locator(".annotationLayer .linkAnnotation a");
+  await expect(links).toHaveCount(1);
+  const popup = page.context().waitForEvent("page");
+  await links.click();
+  expect((await popup).url()).toBe(LINKS[0]);
+
+  // What a page could still try.
+  const opened = await viewer.evaluate(() => {
+    const tries = ["file:///etc/passwd", "smb://example.com/share", "javascript:void 0"];
+    const windows = tries.map((url) => window.open(url));
+    for (const url of tries) {
+      const link = Object.assign(document.createElement("a"), { href: url, target: "_blank" });
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }
+    return windows.filter(Boolean).length;
+  });
+  expect(opened).toBe(0);
+  await page.waitForTimeout(500);
+  expect(page.context().pages()).toHaveLength(2);
+});

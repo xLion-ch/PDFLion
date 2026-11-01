@@ -189,6 +189,136 @@
 }
 
 /*
+ * The drawing tools' button, for the toolbar's step that has no room for
+ * them, and its menu's items: each the icon of a tool, as its button has it,
+ * and the button the icon of the tool that's on.
+ */
+#pdflionToolsButton::before {
+  mask-image: url(/pdflion/icons/stylus.svg);
+}
+
+:is(#pdflionToolsButton, .pdflionToolItem) {
+  &[data-tool="editorHighlightButton"]::before {
+    mask-image: var(--toolbarButton-editorHighlight-icon);
+  }
+
+  &[data-tool="editorFreeTextButton"]::before {
+    mask-image: var(--toolbarButton-editorFreeText-icon);
+  }
+
+  &[data-tool="editorInkButton"]::before {
+    mask-image: var(--toolbarButton-editorInk-icon);
+  }
+
+  &[data-tool="pdflionEditorEraserButton"]::before {
+    mask-image: url(/pdflion/icons/ink_eraser.svg);
+  }
+
+  &[data-tool="editorStampButton"]::before {
+    mask-image: var(--toolbarButton-editorStamp-icon);
+  }
+
+  &[data-tool="editorSignatureButton"]::before {
+    mask-image: var(--toolbarButton-editorSignature-icon);
+  }
+
+  &[data-tool="editorCommentButton"]::before {
+    mask-image: var(--toolbarButton-editorComment-icon);
+  }
+}
+
+/* What the narrowest steps move into the ⋮ menu and the tools' menu. */
+#pdflionSecondaryHome::before {
+  mask-image: url(/pdflion/icons/home.svg);
+}
+
+#pdflionSecondaryFind::before {
+  mask-image: url(/pdflion/icons/search.svg);
+}
+
+#pdflionSecondaryPageOverview::before {
+  mask-image: url(/pdflion/icons/grid_view.svg);
+}
+
+#pdflionSecondaryInsertBlankPage::before {
+  mask-image: url(/pdflion/icons/note_add.svg);
+}
+
+#pdflionUndoItem::before {
+  mask-image: url(/pdflion/icons/undo.svg);
+}
+
+#pdflionRedoItem::before {
+  mask-image: url(/pdflion/icons/redo.svg);
+}
+
+/* The web app's: Share, its status, Undo and Redo, and its items in the ⋮ menu. */
+:is(#pdflionShareButton, #pdflionSecondaryShare)::before {
+  mask-image: url(/pdflion/icons/ios_share.svg);
+}
+
+#pdflionUndo::before {
+  mask-image: url(/pdflion/icons/undo.svg);
+}
+
+#pdflionRedo::before {
+  mask-image: url(/pdflion/icons/redo.svg);
+}
+
+#pdflionSecondaryOpen::before {
+  mask-image: url(/pdflion/icons/folder_open.svg);
+}
+
+#pdflionSecondaryNew::before {
+  mask-image: url(/pdflion/icons/note_add.svg);
+}
+
+#pdflionSecondaryAbout::before {
+  mask-image: url(/pdflion/icons/info.svg);
+}
+
+#pdflionUndoRedo[hidden] {
+  display: none;
+}
+
+/*
+ * The status, such as "Not in Files", as Material's assist chip: its icon and
+ * its label, which goes from pdf.js's medium view on.
+ */
+#pdflionSaveStatus {
+  aspect-ratio: auto;
+  gap: 8px;
+  padding-inline: 8px 12px;
+  border: 1px solid var(--md-sys-color-outline-variant, ButtonBorder);
+  border-radius: var(--md-shape-small);
+  white-space: nowrap;
+
+  &::before {
+    mask-image: url(/pdflion/icons/upload_file.svg);
+  }
+
+  > span {
+    width: auto;
+    height: auto;
+  }
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+:where(#toolbarContainer.pdflionToolbarMedium) #pdflionSaveStatus {
+  padding-inline: 0;
+  border: none;
+  aspect-ratio: 1;
+
+  > span {
+    width: 0;
+    height: 0;
+  }
+}
+
+/*
  * The eraser (bridge.js), in its option box: Line and Object, as labelled
  * radio buttons, and its size.
  */
@@ -216,7 +346,8 @@
 /*
  * While the eraser is on, pdf.js is in Pencil's ink mode, and shows Pencil on
  * with its option box open: shown off instead. The pages show the eraser's
- * circle rather than a cursor, and a touch erases rather than scrolls.
+ * circle rather than a cursor, and a touch erases rather than scrolls, unless
+ * only a pen draws.
  */
 #outerContainer.pdflionErasing {
   #editorInkButton.toggled {
@@ -236,12 +367,56 @@
   }
 
   #viewerContainer .page {
-    touch-action: none;
-
     &,
     * {
       cursor: none !important;
     }
+  }
+
+  &:not(.pdflionPenOnly) #viewerContainer .page {
+    touch-action: none;
+  }
+}
+
+/*
+ * While only a pen draws (bridge.js's followPen()), fingers scroll the pages
+ * under Highlight and the eraser too, and over text boxes, which pdf.js
+ * gives `touch-action: none` for drawing with a finger. bridge.js cancels a
+ * pen's touchmoves instead, as pdf.js does for Pencil.
+ */
+#outerContainer.pdflionPenOnly #viewerContainer {
+  .textLayer.highlighting,
+  .annotationEditorLayer:is(.inkEditing, .highlightEditing) .freeTextEditor {
+    touch-action: auto;
+  }
+}
+
+/*
+ * Pen-only drawing's switch (bridge.js), at the end of Pencil's and the
+ * eraser's option boxes, as pdf.js lays out Highlight's Show All
+ * (#editorHighlightVisibility in web/annotation_editor_layer_builder.css).
+ */
+.pdflionPenOnlySetter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  align-self: stretch;
+  margin-block-start: 8px;
+
+  .divider {
+    width: 100%;
+    height: 1px;
+    margin-block: 4px;
+    background-color: var(--md-sys-color-outline-variant, CanvasText);
+  }
+
+  .toggler {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    align-self: stretch;
+    gap: 16px;
   }
 }
 
@@ -396,8 +571,14 @@
  * Over the option box of the tool that's on, which comes later in the
  * toolbar with the same z-index, as pdf.js's ⋮ menu is.
  */
-#pdflionFavouritesMenu {
+#pdflionFavouritesMenu,
+#pdflionToolsMenu {
   z-index: 30001;
+}
+
+/* A long press on a favourite opens its menu, not iPadOS's callout. */
+.toolbarButton.pdflionFavourite {
+  -webkit-touch-callout: none;
 }
 
 /* viewer.css sets this on a selector three classes deep, hence !important. */
@@ -426,6 +607,11 @@
   --border-radius-small: var(--md-shape-small);
   --border-radius-medium: var(--md-shape-medium);
   --focus-outline-width: 3px;
+}
+
+/* As narrow as an iPad's window gets, in Slide Over, rather than pdf.js's 350px. */
+#mainContainer {
+  min-width: 320px;
 }
 
 #toolbarContainer {
@@ -590,8 +776,64 @@
   display: none;
 }
 
-/* PDFLion's last step: Home goes, which File > Home has too. */
+/* Home goes, which File > Home has too, and the ⋮ menu from then on. */
 :where(#toolbarContainer.pdflionToolbarWithoutHome) #pdflionHomeButton {
+  display: none;
+}
+
+#toolbarContainer:not(.pdflionToolbarWithoutHome)
+  :is(#pdflionSecondaryHome, .pdflionVisibleWithoutHome),
+#toolbarContainer:not(.pdflionToolbarTiny) .pdflionVisibleTiny {
+  display: none;
+}
+
+/*
+ * The drawing tools go into one button, with a menu (bridge.js). Their own
+ * buttons go out of sight, and their places shrink to nothing at the
+ * button's right, where their option boxes still open. A signed document's
+ * button stays.
+ */
+#toolbarContainer:not(.pdflionToolbarTools) #pdflionTools {
+  display: none;
+}
+
+:where(#toolbarContainer.pdflionToolbarTools)
+  #editorModeButtons
+  > .toolbarButtonWithContainer:not(#signatureProperties) {
+  width: 0;
+  aspect-ratio: auto;
+
+  > .toolbarButton {
+    display: none;
+  }
+}
+
+/*
+ * PDFLion's last steps, for windows narrower than a desktop's can be, such as
+ * an iPad's in Split View or Slide Over. First Find, Page Overview and Insert
+ * Blank Page go into the ⋮ menu. Find's place stays, where its bar opens.
+ */
+:where(#toolbarContainer.pdflionToolbarTiny) {
+  :is(#viewFindButton, #pdflionPageOverview, #pdflionInsertBlankPage) {
+    display: none;
+  }
+
+  .toolbarButtonWithContainer:has(> #viewFindButton) {
+    width: 0;
+    aspect-ratio: auto;
+  }
+}
+
+/*
+ * Then the zoom buttons go, for pinching and the keys, and so does the
+ * status, whose Share… the ⋮ menu has.
+ */
+:where(#toolbarContainer.pdflionToolbarWithoutZoom) :is(#toolbarViewerMiddle, #pdflionSaveStatus) {
+  display: none;
+}
+
+/* Last, Undo and Redo go into the tools' menu. */
+:where(#toolbarContainer.pdflionToolbarMinimal) #pdflionUndoRedo {
   display: none;
 }
 
@@ -1159,5 +1401,46 @@ dialog .buttonRow {
 
   dialog :link {
     color: var(--md-sys-color-primary);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Touch
+ * ------------------------------------------------------------------------- */
+
+/*
+ * On the toolbar, its option boxes and menus, a double tap or a pinch zooms
+ * nothing and a long press shows no callout, and only the fields select
+ * text, as in an app's own toolbar.
+ */
+#toolbarContainer {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+
+  :is(input, textarea) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/*
+ * With a finger, the toolbar's buttons stay 40px at every step, and menu
+ * items, the eraser's modes and pen-only drawing's switch are 44px high, as
+ * Apple asks of touch targets.
+ */
+@media (pointer: coarse) {
+  #toolbarContainer {
+    --menuitem-height: 44px;
+  }
+
+  #toolbarContainer.pdflionToolbarCompact {
+    --toolbar-vertical-padding: 4px;
+  }
+
+  .pdflionEraserMode,
+  .pdflionPenOnlySetter .toggler {
+    min-height: 44px;
   }
 }

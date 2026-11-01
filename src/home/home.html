@@ -2,7 +2,9 @@
 <!--
   Home: the recent documents, and Open and New. A home tab shows it, and a
   document opened from it takes the tab's place. home.js draws it from what
-  main sends through window.pdflionHome (src/preload/home.cjs).
+  the host sends through window.pdflionHome: main's, through
+  src/preload/home.cjs, or the web app's shell's, through
+  src/web/home-host.js, which scripts/build-web.js adds.
 -->
 <html lang="en">
   <head>
@@ -17,6 +19,7 @@
       <div class="actions">
         <button type="button" class="button filled open">Open…</button>
         <button type="button" class="button outlined new">New</button>
+        <button type="button" class="icon info" id="info" title="About, Settings and Storage" aria-label="About, Settings and Storage" hidden></button>
       </div>
     </header>
     <main>

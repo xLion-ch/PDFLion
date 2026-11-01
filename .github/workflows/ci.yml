@@ -1,12 +1,13 @@
-# Tests and builds PDFLion on macOS, Windows and Linux, for every pull request
-# into main and every push to main. It keeps the installers for 14 days,
-# except those of a pull request from a fork, and makes every push to main
-# that passed on all three a published GitHub release. A push to dev, such as
-# a merge into it, runs the tests only: its installers would have a release's
-# version (scripts/version.js), which would keep a copy installed from one
-# from updating to the releases below it. A push that changes only Markdown
-# runs nothing, so it makes no release, but a pull request always runs, since
-# a required check that never runs blocks the merge.
+# Tests PDFLion on macOS, Windows and Linux, and its web app, for every pull
+# request into main and every push to main or dev. Only a push to main builds
+# the installers, which it keeps for 14 days, and once it passed on all three
+# makes them a published GitHub release. A pull request, such as dev's into
+# main, and a push to dev run the tests only. dev's installers would have a
+# release's version (scripts/version.js), which would keep a copy installed
+# from one from updating to the releases below it. A push that changes only
+# Markdown runs nothing, so it makes no release, but a pull request always
+# runs, since a required check that never runs blocks the merge. It deploys
+# nothing of the web app yet, and when it does, only for a push to main.
 #
 # Only GitHub's own actions, each pinned to the commit of its release, and
 # the GitHub CLI.
@@ -88,9 +89,9 @@ jobs:
     # The same on every platform, since each counts the same commits.
     outputs:
       version: ${{ steps.version.outputs.version }}
-    # Whether the run builds installers: not for a push to dev.
+    # Whether the run builds installers: only for a push to main.
     env:
-      INSTALLERS: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+      INSTALLERS: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     strategy:
       # A failure on one platform doesn't stop the others.
       fail-fast: false
@@ -160,15 +161,11 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" npm run test:e2e
 
-      # A pull request's build is <version>-pr.<number>, which sorts before
-      # the release with the same commit count.
       - name: Work out the version
         if: env.INSTALLERS == 'true'
         id: version
         shell: bash
-        env:
-          PULL_REQUEST: ${{ github.event.pull_request.number }}
-        run: echo "version=$(node scripts/version.js ${PULL_REQUEST:+--pr "$PULL_REQUEST"})" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node scripts/version.js)" >> "$GITHUB_OUTPUT"
 
       # The update files too, since electron-builder.yml has a publish
       # section, but nothing is published.
@@ -180,12 +177,10 @@ jobs:
         run: npm run dist -- ${{ matrix.builder }} --publish never "-c.extraMetadata.version=$VERSION"
 
       # The installers and their .blockmap files, by their names
-      # (artifactName in electron-builder.yml), and the update files. Not for
-      # a pull request from a fork: its installers come from code nobody has
-      # reviewed, under PDFLion's name. Compared by name, since a deleted
-      # fork's head.repo is null, and null == false.
+      # (artifactName in electron-builder.yml), and the update files, for the
+      # release job.
       - name: Upload the installers
-        if: env.INSTALLERS == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: env.INSTALLERS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: PDFLion-${{ steps.version.outputs.version }}-${{ matrix.platform }}
@@ -203,6 +198,58 @@ jobs:
           path: |
             playwright-report/
             test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The web app (scripts/build-web.js), tested in Playwright's WebKit, as an
+  # iPad, and its Chromium, as an Android tablet, on macOS, whose WebKit is
+  # closest to Safari's. It deploys nothing yet.
+  web:
+    name: web
+    needs: pdfjs
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      # The whole history, since the web app's version counts its commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Its build comes from the pdfjs job.
+      - name: Check out pdf.js
+        run: git submodule update --init --depth 1 vendor/pdf.js
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download the pdf.js build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pdfjs
+          path: vendor/pdf.js/build
+
+      - name: Check the pdf.js build against the pinned commit
+        run: node scripts/update-pdfjs.js --check-build
+
+      - name: Download Playwright's WebKit and Chromium
+        run: npx playwright install webkit chromium
+
+      - name: Web tests
+        run: npm run test:web
+
+      - name: Upload Playwright's report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-web
+          path: |
+            playwright-report/web/
+            test-results/web/
           if-no-files-found: ignore
           retention-days: 14
 
