@@ -137,6 +137,9 @@ test("Print renders every page before the print dialog", async ({ pdflion }) => 
   });
   await page.reload();
   await rendered(page);
+  // pdf.js prints only once it has every page, and fetches them after the
+  // first renders. Before that it alerts, which Playwright dismisses.
+  await page.waitForFunction(() => PDFViewerApplication.pdfViewer.pageViewsReady);
 
   await clickMenu(app, page, "print");
   await expect.poll(() => page.evaluate(() => /** @type {any} */ (window).printedPages)).toBe(14);
