@@ -101,7 +101,7 @@ npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
-GitHub Actions runs the tests on macOS, Windows and Linux, and the web app's on macOS, for every pull request into `main`, and every push to `main` or `dev` that changes more than Markdown files. Except for `dev`, it then builds the installers and keeps them for 14 days, except for pull requests from forks. Builds are numbered `<major>.<minor>.<commits>`, from `package.json` and the commit count, and a pull request's `<version>-pr.<number>`. `node scripts/version.js` prints the version of the commit checked out.
+GitHub Actions runs the tests on macOS, Windows and Linux, and the web app's on macOS, for every pull request into `main`, and every push to `main` or `dev` that changes more than Markdown files. Only for a push to `main` does it then build the installers, and release them (see Releasing). They're numbered `<major>.<minor>.<commits>`, from `package.json` and the commit count. `node scripts/version.js` prints the version of the commit checked out.
 
 pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. PDFLion adds to it from outside, in `src/viewer/`, and the main process is in `src/main/`. [CLAUDE.md](CLAUDE.md) describes the architecture, the rules and the decisions behind them.
 
@@ -114,8 +114,6 @@ npm run web:build                 # build dist/web/
 npm run web:serve                 # serve it at http://localhost:8080/PDFLion/
 npm run web:serve -- --https      # the same over HTTPS, for an iPad on the same network
 ```
-
-CI keeps the web app of a pull request from this repository for 14 days, as `PDFLion-<version>-web`. Unzip it, and serve it with `npm run web:serve -- --https path/to/the/folder`.
 
 Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas.
 
@@ -138,9 +136,9 @@ The certificate is a root the iPad trusts. Its name constraints keep it to `loca
 
 Every push to `main` that changes more than Markdown files is a release. Once its tests and builds pass on all three platforms, CI publishes the GitHub release `v<version>`, with the installers, the Mac `.zip` files and the update files, and installed copies update to it within 6 hours. A failed run releases nothing, and a commit is never released twice. So:
 
-1. Make the change on a branch, and open a pull request into `main`. CI builds its installers as `<version>-pr.<number>`.
-2. Go through the checks by hand below that the change touches, with those installers. The Windows and Linux checks haven't been done for any release yet.
-3. Merge it.
+1. Make the change on `dev`, and open a pull request from `dev` into `main`. CI runs the tests, and builds nothing.
+2. Go through the checks by hand below that the change touches, with installers built from `dev` with `npm run build` on each platform. They're `<major>.<minor>.0`, so with automatic checks on, they update themselves to the latest release. The Windows and Linux checks haven't been done for any release yet.
+3. Merge it. CI then builds the installers, and releases them.
 
 To raise the major or minor version, edit `package.json`, keeping the patch version at 0. Update pdf.js in a pull request of its own, as [CLAUDE.md](CLAUDE.md) describes.
 

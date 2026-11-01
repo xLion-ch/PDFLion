@@ -242,8 +242,7 @@ async function createUpdater() {
       : new updaterModule.DebUpdater();
   updater.autoDownload = true;
   updater.allowDowngrade = false;
-  // electron-updater allows them while the running version is one, as a pull
-  // request's build is.
+  // electron-updater allows them while the running version is one.
   updater.allowPrerelease = false;
   // On macOS also what makes electron-updater hand the update to Squirrel.Mac
   // as soon as it has it, rather than at Restart Now.
