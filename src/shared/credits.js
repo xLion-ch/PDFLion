@@ -295,9 +295,10 @@ export const CREDITS = [
       // Playwright's build of it, which the web app's tests and trials run in
       // (test/web/, test/trials/run.js).
       { name: "WebKit", license: "BSD-2-Clause and LGPL-2.1", url: "https://webkit.org" },
-      // The steps of .github/workflows/ci.yml that aren't commands.
+      // The steps of .github/workflows/ci.yml that aren't commands, the web
+      // app's deploy to GitHub Pages too.
       {
-        name: "actions/checkout, setup-node, cache, upload-artifact and download-artifact",
+        name: "actions/checkout, setup-node, cache, upload-artifact, download-artifact, upload-pages-artifact and deploy-pages",
         by: "GitHub",
         license: "MIT",
         url: "https://github.com/actions",

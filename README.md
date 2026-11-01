@@ -41,11 +41,15 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 
 **Linux:** in the folder with the package, run `sudo apt install ./PDFLion-<version>-linux-amd64.deb`. PDFLion appears among your apps, and under Open With for PDFs in Files and Nemo, where you can also make it the default. Uninstall it with `sudo apt remove pdflion`.
 
+**iPad:** PDFLion is a web app there, with iPadOS 18 or later. Open [xlion-ch.github.io/PDFLion](https://xlion-ch.github.io/PDFLion/) in Safari, and add it with Share > Add to Home Screen: Safari deletes a website's data after 7 days without use, but not a Home Screen app's. The first visit downloads the app, about 12 MB, after which it works offline. PDFLion keeps its own copy of each document you open, through Open… or by dragging it from Files, and saves your changes into it. The file in Files changes only when you share the document and choose Save to Files, and until then PDFLion marks it "Not in Files". Removing the app from the Home Screen deletes its documents, so export them first (see Moving to another computer). Android tablets run it in Chrome, which hasn't been tried by hand.
+
 ### Updates
 
 PDFLion checks for a new release when it starts and every 6 hours, downloads it in the background, and asks whether to restart now. Restart Now asks about unsaved changes first. Otherwise the update installs when you quit PDFLion, except on Linux, where installing asks for an administrator's password, so it installs only with Restart Now. On macOS PDFLion updates only from the Applications folder.
 
 Check for Updates… and Check for Updates Automatically are in the PDFLion menu on macOS, and in the Help menu on Windows and Linux. A check tells GitHub your computer's IP address, and nothing else. A copy without Check for Updates… is from before updates came in: download the latest release once.
+
+The web app checks when it opens, when the iPad is back online, and every 6 hours, downloads only what changed, and asks whether to restart now. Restart Now saves your documents first, and brings your tabs back. Otherwise the new version starts the next time PDFLion opens after iPadOS has closed it. Check for Updates… is in Home's ⓘ menu.
 
 ### Moving to another computer
 
@@ -109,7 +113,7 @@ pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edit
 
 ### Trying the web app on an iPad
 
-A web app of PDFLion for the iPad is on its way, in `src/web/`. It runs the same viewer in Safari, keeps its own copy of each document, and saves into it by itself, with Share to put a document back into Files. Once it has run, it works offline, and it updates itself when a new build is served. It isn't published yet. `scripts/serve-web.js` serves it at `/PDFLion/`, as GitHub Pages will.
+The web app for the iPad, in `src/web/`, runs the same viewer in Safari, keeps its own copy of each document, and saves into it by itself, with Share to put a document back into Files. Once it has run, it works offline, and it updates itself when a new build is served. GitHub Pages serves each release's at `https://xlion-ch.github.io/PDFLion/`, and `scripts/serve-web.js` serves a build at `/PDFLion/` the way Pages does.
 
 ```sh
 npm run web:build                 # build dist/web/
@@ -118,6 +122,8 @@ npm run web:serve -- --https      # the same over HTTPS, for an iPad on the same
 ```
 
 The app runs from the copy its service worker keeps, so a reload shows the same build. After `npm run web:build`, a build with other files is offered as an update: at once with the ⓘ menu's Check for Updates…, and its Restart Now brings it up.
+
+CI keeps the web app of each pull request from this repository as `PDFLion-<version>-web`, for 14 days, under the run's Artifacts. To try the build that would be released, download it, unzip it into a folder, and serve that with `npm run web:serve -- --https <folder>`.
 
 Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas.
 
@@ -138,18 +144,22 @@ The certificate is a root the iPad trusts. Its name constraints keep it to `loca
 
 ## Releasing
 
-Every push to `main` that changes more than Markdown files is a release. Once its tests and builds pass on all three platforms, CI publishes the GitHub release `v<version>`, with the installers, the Mac `.zip` files and the update files, and installed copies update to it within 6 hours. A failed run releases nothing, and a commit is never released twice. So:
+Every push to `main` that changes more than Markdown files is a release. Once its tests and builds pass on all three platforms and the web app's tests pass, CI publishes the GitHub release `v<version>`, with the installers, the Mac `.zip` files and the update files, then deploys the web app of the same commit to GitHub Pages. Installed copies, and web apps on Home Screens, update to it within 6 hours. A failed run releases and deploys nothing, a commit is never released twice, and an older commit's run never deploys its web app over a newer one's. So:
 
-1. Make the change on `dev`, and open a pull request from `dev` into `main`. CI runs the tests, and builds nothing.
-2. Go through the checks by hand below that the change touches, with installers built from `dev` with `npm run build` on each platform. They're `<major>.<minor>.0`, so with automatic checks on, they update themselves to the latest release. The Windows and Linux checks haven't been done for any release yet.
-3. Merge it. CI then builds the installers, and releases them.
+1. Make the change on `dev`, and open a pull request from `dev` into `main`. CI runs the tests, and keeps the web app's build to try, but builds no installers.
+2. Go through the checks by hand below that the change touches, with installers built from `dev` with `npm run build` on each platform, and the pull request's web app served to an iPad (see Trying the web app on an iPad). The installers are `<major>.<minor>.0`, so with automatic checks on, they update themselves to the latest release. The Windows and Linux checks haven't been done for any release yet.
+3. Merge it. CI then builds the installers, releases them, and deploys the web app.
+
+If the deploy fails after the release is out, re-run the run's failed jobs, which deploys that release's web app.
 
 To raise the major or minor version, edit `package.json`, keeping the patch version at 0. Update pdf.js in a pull request of its own, as [CLAUDE.md](CLAUDE.md) describes.
 
 The releases rely on settings of the repository on GitHub:
 
-- A ruleset protects `main`: changes come through pull requests, the checks `pdf.js`, `mac`, `windows` and `linux` must pass, and `main` can't be force-pushed, which could lower the version, or deleted. `pdf.js` is required too, since GitHub counts skipped checks as passed.
-- The `release` environment allows only `main`.
+- A ruleset protects `main`: changes come through pull requests, the checks `pdf.js`, `mac`, `windows`, `linux` and `web` must pass, and `main` can't be force-pushed, which could lower the version, or deleted. `pdf.js` is required too, since GitHub counts skipped checks as passed.
+- The `release` environment allows only `main`, and so does `github-pages`, which the deploy runs in.
+- Settings > Pages builds from GitHub Actions, with Enforce HTTPS on.
+- The xLion-ch account has no other GitHub Pages site with scripts from others: every Pages site of the account shares the web app's origin, `xlion-ch.github.io`, and could read its documents.
 - Everyone who can push to `main` or change these settings uses two-factor authentication.
 
 ### Checks by hand
@@ -305,7 +315,7 @@ PDFLion is built and tested with:
 - [fpm](https://github.com/jordansissel/fpm) by Jordan Sissel, which electron-builder uses for the Linux package (MIT)
 - [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
 - [WebKit](https://webkit.org), whose build by Playwright the web app's tests and trials run in (BSD-2-Clause and LGPL-2.1)
-- [actions/checkout, setup-node, cache, upload-artifact and download-artifact](https://github.com/actions) by GitHub, which run the tests and builds on GitHub Actions (MIT)
+- [actions/checkout, setup-node, cache, upload-artifact, download-artifact, upload-pages-artifact and deploy-pages](https://github.com/actions) by GitHub, which run the tests and builds on GitHub Actions, and deploy the web app to GitHub Pages (MIT)
 - [GitHub CLI](https://cli.github.com) by GitHub, with which CI publishes the releases (MIT)
 - [Xvfb](https://gitlab.freedesktop.org/xorg/xserver) by X.Org, the virtual display the Linux tests run on there (MIT)
 

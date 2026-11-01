@@ -1,13 +1,15 @@
 # Tests PDFLion on macOS, Windows and Linux, and its web app, for every pull
 # request into main and every push to main or dev. Only a push to main builds
 # the installers, which it keeps for 14 days, and once it passed on all three
-# makes them a published GitHub release. A pull request, such as dev's into
-# main, and a push to dev run the tests only. dev's installers would have a
-# release's version (scripts/version.js), which would keep a copy installed
-# from one from updating to the releases below it. A push that changes only
-# Markdown runs nothing, so it makes no release, but a pull request always
-# runs, since a required check that never runs blocks the merge. It deploys
-# nothing of the web app yet, and when it does, only for a push to main.
+# and the web app's tests, makes them a published GitHub release, and deploys
+# the web app of the same commit to GitHub Pages. A pull request, such as
+# dev's into main, and a push to dev run the tests only. dev's installers
+# would have a release's version (scripts/version.js), which would keep a copy
+# installed from one from updating to the releases below it. A pull request
+# from this repository keeps its web app's build, to try on an iPad before
+# merging. A push that changes only Markdown runs nothing, so it makes no
+# release, but a pull request always runs, since a required check that never
+# runs blocks the merge.
 #
 # Only GitHub's own actions, each pinned to the commit of its release, and
 # the GitHub CLI.
@@ -20,7 +22,8 @@ on:
     branches: [main, dev]
     paths-ignore: ["**/*.md"]
 
-# Only the release job writes to the repository.
+# Only the release job writes to the repository, and only the pages job to
+# GitHub Pages.
 permissions:
   contents: read
 
@@ -203,12 +206,19 @@ jobs:
 
   # The web app (scripts/build-web.js), tested in Playwright's WebKit, as an
   # iPad, and its Chromium, as an Android tablet, on macOS, whose WebKit is
-  # closest to Safari's. It deploys nothing yet.
+  # closest to Safari's. For a push to main, its build is what the pages job
+  # deploys, once the release is out.
   web:
     name: web
     needs: pdfjs
     runs-on: macos-26
     timeout-minutes: 30
+    env:
+      # Whether the build is deployed: only for a push to main.
+      DEPLOY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # Whether the build is kept to try: for a pull request from this
+      # repository, not a fork.
+      KEEP: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       # The whole history, since the web app's version counts its commits.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -239,8 +249,36 @@ jobs:
       - name: Download Playwright's WebKit and Chromium
         run: npx playwright install webkit chromium
 
+      # The same version as the installers', which About shows and the
+      # update prompt names.
+      - name: Work out the version
+        id: version
+        run: echo "version=$(node scripts/version.js)" >> "$GITHUB_OUTPUT"
+
+      - name: Build the web app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/build-web.js --version "$VERSION"
+
+      # Against that build, which npm run test:web would build again.
       - name: Web tests
-        run: npm run test:web
+        run: npx playwright test --config test/web/playwright.config.js
+
+      - name: Upload the web app for GitHub Pages
+        if: env.DEPLOY == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: dist/web
+
+      # To serve with npm run web:serve -- --https <folder> (README).
+      - name: Upload the web app to try
+        if: env.KEEP == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: PDFLion-${{ steps.version.outputs.version }}-web
+          path: dist/web
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Playwright's report
         if: failure()
@@ -253,12 +291,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Every push to main that passed on all three platforms becomes a published
-  # release, v<version>, tagged on its commit, with every platform's
-  # installers and update files.
+  # Every push to main that passed on all three platforms and the web app's
+  # tests becomes a published release, v<version>, tagged on its commit, with
+  # every platform's installers and update files.
   release:
     name: Release
-    needs: build
+    needs: [build, web]
     # Not for pull requests, nor for a push to a fork's main. With no status
     # function in the condition, success() applies too, so a platform that
     # failed, or was skipped, means no release.
@@ -270,6 +308,10 @@ jobs:
     # The only write token: releases, and the tag publishing one makes.
     permissions:
       contents: write
+    # Whether this run published its release, after which the pages job
+    # deploys its web app. Unset when it released nothing.
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -285,6 +327,7 @@ jobs:
 
       # With gh, which needs no checkout, since GH_REPO names the repository.
       - name: Publish the release
+        id: publish
         working-directory: release
         run: |
           # A re-run, or a run for an older commit than the latest release's,
@@ -332,3 +375,29 @@ jobs:
           # /releases/latest leads to.
           gh release create "$TAG" "${files[@]}" --draft --target "$GITHUB_SHA" --title "PDFLion $VERSION" --generate-notes
           gh release edit "$TAG" --draft=false --latest
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+  # The web app of the release this run published, at
+  # https://xlion-ch.github.io/PDFLion/. Only after a release, so a re-run, or
+  # a run for an older commit, never deploys an older web app over a newer
+  # one. It checks nothing out and runs no code of the repository: it hands
+  # the web job's build to GitHub Pages.
+  pages:
+    name: GitHub Pages
+    needs: release
+    if: needs.release.outputs.published == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'xLion-ch/PDFLion'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The repository's settings limit this environment to main.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Deploying to Pages, with an OIDC token that proves this run asks, and
+    # nothing else.
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
