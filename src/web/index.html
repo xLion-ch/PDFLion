@@ -1,0 +1,28 @@
+<!doctype html>
+<!--
+  The web app's shell (shell.js): the tab strip, and a frame for each tab,
+  the viewer's or Home's. scripts/build-web.js puts it at the app's root,
+  with its CSP from src/shared/csp.js, since GitHub Pages sends no headers.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-title" content="PDFLion" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#dadada" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#131313" />
+    <title>PDFLion</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="web/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="web/icons/apple-touch-icon.png" />
+    <link rel="stylesheet" href="tabs/tabs.css" />
+    <link rel="stylesheet" href="web/web.css" />
+    <script src="web/keys.js"></script>
+    <script type="module" src="web/shell.js"></script>
+  </head>
+  <body class="oneTab">
+    <div id="tabs" role="tablist" aria-label="Documents"></div>
+    <main id="frames"></main>
+  </body>
+</html>

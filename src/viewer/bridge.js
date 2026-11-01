@@ -40,6 +40,14 @@
  *
  * It works out /lib/ and /doc/ from where the viewer is, at /viewer/web/, so
  * that it works below another path than the origin's root too.
+ *
+ * The host, which gives it `window.pdflion`, is the desktop's preload, or the
+ * web app's src/web/viewer-host.js, in a frame of the web app's shell. What
+ * the host offers decides what it adds: a Home button for `showHome`, Share
+ * and the "not in Files" status for `share` and `onSaveStatus`, Open…, New
+ * and About in the ⋮ menu for `showOpenPanel`, `newDocument` and
+ * `showAbout`, and Undo and Redo buttons without `nativeMenu`. With
+ * `autosave`, it saves by itself, after changes and when the page is hidden.
  */
 "use strict";
 
@@ -64,6 +72,19 @@
   const EDITOR_DISABLE = -1;
   const EDITOR_NONE = 0;
   const EDITOR_INK = 15;
+
+  /**
+   * `AnnotationEditorParamsType.DRAW_STEP` in src/shared/util.js: a stroke
+   * added to Pencil's open drawing, which becomes an annotation only once the
+   * drawing ends (endDrawing() in src/display/editor/draw.js).
+   */
+  const DRAW_STEP = 41;
+
+  /**
+   * A page's editing layer while a stroke is being drawn on it
+   * (toggleDrawing() in src/display/editor/annotation_editor_layer.js).
+   */
+  const DRAWING_LAYER = ".annotationEditorLayer.drawing";
 
   /**
    * A pen's eraser end, as Pointer Events number its button: a press with it
@@ -205,10 +226,39 @@
   const FAVOURITE_NOTE_TIME = 2000;
 
   /**
+   * How long autosave waits after the last change to form values or
+   * annotations, in ms: longer for larger documents, since each save writes
+   * the whole file, by AUTOSAVE_DELAY_PER_10_MB for every 10 MB, up to
+   * AUTOSAVE_MAX_DELAY.
+   */
+  const AUTOSAVE_DELAY = 2000;
+  const AUTOSAVE_DELAY_PER_10_MB = 1000;
+  const AUTOSAVE_MAX_DELAY = 30_000;
+
+  /**
+   * How long autosave waits after the last change with pdf.js's page tools,
+   * in ms. Saving them reopens the document, which ends their undo.
+   */
+  const PAGE_CHANGES_DELAY = 30_000;
+
+  /** pdf.js's bar that offers to undo a page change (web/viewer.html). */
+  const UNDO_BAR = "viewsManagerStatusUndo";
+
+  /**
    * Whether shortcuts use ⌘, as on macOS and iPad keyboards, rather than
    * Ctrl, as on Windows and Linux, whose menus also have F4.
    */
   const usesCommandKey = window.pdflion.commandKey === "meta";
+
+  /**
+   * Whether a native menu has the shortcuts that pdf.js also binds, as on
+   * the desktop. The web app has none, so pdf.js keeps them there, and the
+   * toolbar gets Undo and Redo.
+   */
+  const hasNativeMenu = window.pdflion.nativeMenu !== false;
+
+  /** Whether the document saves by itself, as in the web app, rather than with Save. */
+  const autosaves = window.pdflion.autosave === true;
 
   /**
    * Whether the document has changes since it was opened or last saved, as
@@ -221,6 +271,9 @@
 
   /** Whether a page change reopened the document from bytes that aren't saved yet. */
   let reopenedEdited = false;
+
+  /** Whether the document was saved since it was opened, with its annotations. */
+  let savedSinceOpened = false;
 
   /** Whether a save or a page change is under way. Only one runs at a time. */
   let busy = false;
@@ -410,6 +463,22 @@
   let favouriteDrag = null;
 
   /**
+   * Which of DROPPABLE the file holds, once `droppable` has found out, for
+   * deciding at once whether a page change must ask first.
+   * @type {Set<string>}
+   */
+  let droppableHeld = new Set();
+
+  /** The document's size in bytes, as loaded or last saved, for autosave's delay. */
+  let documentSize = 0;
+
+  /** @type {ReturnType<typeof setTimeout> | null} the next autosave */
+  let autosaveTimer = null;
+
+  /** @type {HTMLButtonElement[]} Undo and Redo, while a drawing tool is on */
+  let undoButtons = [];
+
+  /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
    * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
@@ -437,6 +506,9 @@
     // Edit > Undo and Redo. False leaves them to Chromium, which main asks next.
     undo: (app) => editingAction(app, "undo"),
     redo: (app) => editingAction(app, "redo"),
+    // The web app's: Share, and saving at once, as before a tab closes.
+    share: (app) => share(app),
+    saveNow: (app) => saveNow(app),
   };
 
   // The page gets key events before the native menu, on macOS and Windows
@@ -446,72 +518,111 @@
   window.addEventListener(
     "keydown",
     (event) => {
-      if (isMenuShortcut(event)) event.stopImmediatePropagation();
+      if (hasNativeMenu && isMenuShortcut(event)) event.stopImmediatePropagation();
     },
     true,
   );
 
-  // Dispatched once the viewer's scripts have loaded, before it initialises.
-  document.addEventListener(
-    "webviewerloaded",
-    () => {
-      window.PDFViewerApplicationOptions.setAll({
-        // Otherwise preferences stored by pdf.js override the options below.
-        disablePreferences: true,
-        // Never open pdf.js's demo PDF.
-        defaultUrl: "",
-        // Links go through window.open, which main's setWindowOpenHandler vets.
-        externalLinkTarget: LINK_TARGET_BLANK,
-        // pdf.js's page tools, which its generic build leaves off: selecting,
-        // moving, copying and deleting pages in the thumbnails, and adding the
-        // pages of other files.
-        enableSplitMerge: true,
-        enableMerge: true,
-      });
+  // Dispatched once the viewer's scripts have loaded, before it initialises,
+  // at the document of the page that embeds the viewer, if pdf.js can reach
+  // it, as it can from the web app's frames, and else at the viewer's own
+  // (web/viewer.js).
+  document.addEventListener("webviewerloaded", onViewerLoaded, { once: true });
+  const embedder = embeddingDocument();
+  embedder?.addEventListener("webviewerloaded", onViewerLoaded);
 
-      const app = window.PDFViewerApplication;
-      loadDocumentsInParts(app);
-      // pdf.js hasn't bound its events yet.
-      addFilesAsPageChanges(app);
-      // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
-      addHomeButton();
-      overviewButton = addOverviewButton(app);
-      pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
-      eraserTool = addEraserTool(app);
-      addSaveFavouriteButtons();
-      favouritesBar = addFavouritesBar();
-      toolSettingsLoaded = followToolSettings(app);
-      followToolbarWidth();
-      guardPageTools(app);
-      app.initializedPromise.then(() => {
-        window.pdflion.onCommand((command) =>
-          Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
-        );
-        // After pdf.js's own listeners, which come with the views manager.
-        followOverview(app);
-        // After the overview's, whose Esc comes first.
-        followEraser(app);
-        followFavourites(app);
-        app.eventBus.on("documentloaded", () => {
-          trackEdits(app);
-          checkLocked(app);
-          // A reopened document shows changes to the file, not the file.
-          if (!reopening) {
-            noteDroppable(app);
-            thumbnailOnceShown(app);
-          }
-        });
-        // Pages moved, copied or deleted in the thumbnails, or that change undone.
-        app.eventBus.on("pagesedited", () => {
-          if (busy) editedWhileSaving = true;
-          updateEdited(app);
-          recachePages(app);
-        });
-        hideChangesIndicator(app);
+  /**
+   * @returns {Document | null} the document of the page the viewer is in,
+   *   if it's in a frame of one it can reach
+   */
+  function embeddingDocument() {
+    try {
+      return window.parent && window.parent !== window ? window.parent.document : null;
+    } catch {
+      return null; // another origin's
+    }
+  }
+
+  /** Whether the viewer has initialised. */
+  let initialised = false;
+
+  /**
+   * @param {Event} [event] at the embedding page, from any of its frames'
+   *   viewers, each of which names its window as the event's source
+   */
+  function onViewerLoaded(event) {
+    const source = /** @type {CustomEvent | undefined} */ (event)?.detail?.source;
+    if ((source && source !== window) || initialised) return;
+    initialised = true;
+    embedder?.removeEventListener("webviewerloaded", onViewerLoaded);
+    initialise();
+  }
+
+  /** Sets pdf.js's options, and adds PDFLion's parts to the viewer. */
+  function initialise() {
+    window.PDFViewerApplicationOptions.setAll({
+      // Otherwise preferences stored by pdf.js override the options below.
+      disablePreferences: true,
+      // Never open pdf.js's demo PDF.
+      defaultUrl: "",
+      // Links open in a new window, which main's setWindowOpenHandler vets,
+      // or in the web app viewer-host.js.
+      externalLinkTarget: LINK_TARGET_BLANK,
+      // pdf.js's page tools, which its generic build leaves off: selecting,
+      // moving, copying and deleting pages in the thumbnails, and adding the
+      // pages of other files.
+      enableSplitMerge: true,
+      enableMerge: true,
+    });
+
+    const app = window.PDFViewerApplication;
+    loadDocumentsInParts(app);
+    // pdf.js hasn't bound its events yet.
+    addFilesAsPageChanges(app);
+    // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
+    addHomeButton();
+    overviewButton = addOverviewButton(app);
+    pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
+    eraserTool = addEraserTool(app);
+    addSaveFavouriteButtons();
+    favouritesBar = addFavouritesBar();
+    undoButtons = addUndoButtons(app);
+    addShareButtons(app);
+    addSaveStatus(app);
+    addAppMenuItems(app);
+    toolSettingsLoaded = followToolSettings(app);
+    followToolbarWidth();
+    guardPageTools(app);
+    app.initializedPromise.then(() => {
+      window.pdflion.onCommand((command) =>
+        Object.hasOwn(COMMANDS, command) ? COMMANDS[command](app) : null,
+      );
+      // After pdf.js's own listeners, which come with the views manager.
+      followOverview(app);
+      // After the overview's, whose Esc comes first.
+      followEraser(app);
+      followFavourites(app);
+      followEditorChanges(app);
+      app.eventBus.on("documentloaded", () => {
+        trackEdits(app);
+        checkLocked(app);
+        // A reopened document shows changes to the file, not the file.
+        if (!reopening) {
+          noteDroppable(app);
+          thumbnailOnceShown(app);
+        }
       });
-    },
-    { once: true },
-  );
+      // Pages moved, copied or deleted in the thumbnails, or that change undone.
+      app.eventBus.on("pagesedited", () => {
+        if (busy) editedWhileSaving = true;
+        updateEdited(app);
+        recachePages(app);
+      });
+      hideChangesIndicator(app);
+      if (!hasNativeMenu) followUndoButtons(app);
+      if (autosaves) followAutosave(app);
+    });
+  }
 
   /**
    * pdf.js loads a document in parts only from http(s) URLs: it streams the
@@ -571,6 +682,7 @@
       return null;
     }
 
+    documentSize = length;
     const transport = new window.pdfjsLib.PDFDataRangeTransport(length, null);
     /**
      * @param {number} begin
@@ -667,7 +779,7 @@
     const { onSetModified, onResetModified } = storage;
     storageEdited = false;
     // A reopened document keeps the changes it was reopened with.
-    if (!reopening) reopenedEdited = edited = false;
+    if (!reopening) reopenedEdited = edited = savedSinceOpened = false;
     storage.onSetModified = () => {
       onSetModified?.();
       if (busy) editedWhileSaving = true;
@@ -693,6 +805,7 @@
   function updateEdited(app) {
     edited = storageEdited || reopenedEdited || hasPageChanges(app);
     window.pdflion.setEdited(edited);
+    if (autosaves) scheduleAutosave(app);
   }
 
   /**
@@ -762,6 +875,7 @@
    */
   async function save(app, write) {
     if (busy) return false;
+    endPencilDrawing(app);
     busy = true;
     editedWhileSaving = false;
     updatePageButtons(app);
@@ -777,6 +891,8 @@
         await app.pdfScriptingManager.dispatchDidSave();
       }
       if (!url) return false; // Still edited, whatever saveDocument() reported.
+      documentSize = bytes.length;
+      savedSinceOpened = true;
       storageEdited = editedWhileSaving;
       reopenedEdited = false;
       if (pageChanges && !editedWhileSaving) {
@@ -798,6 +914,150 @@
     } finally {
       busy = false;
       updatePageButtons(app);
+    }
+  }
+
+  /**
+   * pdf.js's annotation storage counts as changed when an annotation joins
+   * it, but not when one in it changes: a drawing moved or recoloured, or a
+   * change undone or redone. Pencil's strokes join it only once its drawing
+   * ends, when the user leaves it. Once the document is saved, all those
+   * would go unsaved. Every such change goes through the editors' UI
+   * manager, whose addCommands(), undo() and redo() this follows, for each
+   * document's UI manager.
+   *
+   * @param {any} app
+   */
+  function followEditorChanges(app) {
+    app.eventBus.on("annotationeditoruimanager", (/** @type {{ uiManager: any }} */ { uiManager: ui }) => {
+      for (const name of ["addCommands", "undo", "redo"]) {
+        const original = ui[name];
+        if (typeof original !== "function") continue;
+        ui[name] = function (/** @type {any[]} */ ...args) {
+          const result = original.apply(this, args);
+          editorChanged(app, name === "addCommands" && args[0]?.type === DRAW_STEP);
+          return result;
+        };
+      }
+    });
+  }
+
+  /**
+   * An annotation changed. Before the first save, a document whose storage
+   * is empty again, as after undoing every change, is as it was opened,
+   * unless Pencil's drawing is open.
+   *
+   * @param {any} app
+   * @param {boolean} stroke whether it's a stroke of Pencil's open drawing
+   */
+  function editorChanged(app, stroke) {
+    const storage = app.pdfDocument?.annotationStorage;
+    if (!storage || (!stroke && storage.size === 0 && !savedSinceOpened)) return;
+    if (busy) editedWhileSaving = true;
+    storageEdited = true;
+    updateEdited(app);
+  }
+
+  /**
+   * Ends Pencil's open drawing, whose strokes join the annotations only
+   * then, as unselectAll() does first, but without unselecting anything
+   * (commitOrRemove() in src/display/editor/annotation_editor_layer.js).
+   *
+   * @param {any} app
+   */
+  function endPencilDrawing(app) {
+    const ui = uiManager(app);
+    if (!ui || !app.pdfDocument) return;
+    for (let index = 0; index < app.pdfViewer.pagesCount; index++) {
+      ui.getLayer(index)?.commitOrRemove();
+    }
+  }
+
+  /**
+   * Saves by itself, for a host that keeps the document, as the web app's
+   * does: a while after each change (scheduleAutosave()), and at once when
+   * the page is hidden, as when the app is left, since iPadOS may end it
+   * then.
+   *
+   * @param {any} app
+   */
+  function followAutosave(app) {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") saveNow(app);
+    });
+    window.addEventListener("pagehide", () => saveNow(app));
+  }
+
+  /**
+   * Saves a while after the last change: after AUTOSAVE_DELAY for form
+   * values, annotations and inserted or rotated pages, longer for larger
+   * documents, and after PAGE_CHANGES_DELAY for changes with pdf.js's page
+   * tools, which saving ends the undo of, and never while pdf.js offers to
+   * undo one.
+   *
+   * @param {any} app
+   */
+  function scheduleAutosave(app) {
+    if (autosaveTimer !== null) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    if (!edited) return;
+    const delay = hasPageChanges(app)
+      ? PAGE_CHANGES_DELAY
+      : Math.min(
+          AUTOSAVE_MAX_DELAY,
+          AUTOSAVE_DELAY + Math.floor(documentSize / 10_000_000) * AUTOSAVE_DELAY_PER_10_MB,
+        );
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      // Not in the middle of a stroke, which saving would end.
+      const later = (hasPageChanges(app) && isUndoBarShown()) || isDrawing();
+      if (later) scheduleAutosave(app);
+      else saveNow(app);
+    }, delay);
+  }
+
+  /** @returns {boolean} whether a stroke is being drawn */
+  function isDrawing() {
+    return document.querySelector(DRAWING_LAYER) !== null;
+  }
+
+  /** @returns {boolean} whether pdf.js offers to undo a page change */
+  function isUndoBarShown() {
+    const bar = document.getElementById(UNDO_BAR);
+    return !!bar && !bar.classList.contains("hidden");
+  }
+
+  /**
+   * Saves the document now, if it has changes, as before its tab closes or
+   * when the page is hidden. It waits for a save or a page change under way.
+   *
+   * @param {any} app
+   * @returns {Promise<boolean>} whether the document is saved now
+   */
+  async function saveNow(app) {
+    if (autosaveTimer !== null) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    while (busy) await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!edited || !app.pdfDocument) return true;
+    return save(app, window.pdflion.save);
+  }
+
+  /**
+   * Shares the document through the host, which shows the share sheet. It's
+   * saved first, so that what's shared is what the host keeps, as it keeps
+   * it. Only if that fails does the host get the document as it is here.
+   *
+   * @param {any} app
+   * @returns {Promise<boolean>} whether it was shared
+   */
+  async function share(app) {
+    if (!app.pdfDocument || typeof window.pdflion.share !== "function") return false;
+    try {
+      const saved = (await saveNow(app)) && !edited;
+      return (await window.pdflion.share(saved ? null : await currentBytes(app))) === true;
+    } catch (error) {
+      console.error("Couldn't share the document:", error);
+      return false;
     }
   }
 
@@ -875,16 +1135,35 @@
   async function confirmRewrite(app) {
     const pageChanges = hasPageChanges(app);
     if (!pageChanges && !newFile) return true;
-    const several = newFile === "several" || (pageChanges && fromSeveralCopies(app));
-    const held = await droppable;
-    const items = DROPPABLE.filter(
-      (item) =>
-        held.has(item) && !dropAgreed.has(item) && (several || !DROPPED_FROM_SEVERAL.has(item)),
-    );
+    return askToDrop(newFile === "several" || (pageChanges && fromSeveralCopies(app)));
+  }
+
+  /**
+   * Asks whether to drop what the file holds and a new file of its pages
+   * won't, unless the user agreed to already.
+   *
+   * @param {boolean} several whether the new file is made of several
+   * @returns {Promise<boolean>} whether to go ahead
+   */
+  async function askToDrop(several) {
+    const items = toDrop(await droppable, several);
     if (items.length === 0) return true;
     if (!(await window.pdflion.pageDialog("rewrite", items))) return false;
     for (const item of items) dropAgreed.add(item);
     return true;
+  }
+
+  /**
+   * @param {Set<string>} held which of DROPPABLE the file holds
+   * @param {boolean} several whether the new file is made of several
+   * @returns {string[]} what a new file would drop that the user hasn't
+   *   agreed to lose yet
+   */
+  function toDrop(held, several) {
+    return DROPPABLE.filter(
+      (item) =>
+        held.has(item) && !dropAgreed.has(item) && (several || !DROPPED_FROM_SEVERAL.has(item)),
+    );
   }
 
   /**
@@ -908,7 +1187,12 @@
    */
   function noteDroppable(app) {
     newFile = null;
-    droppable = findDroppable(app.pdfDocument);
+    const found = findDroppable(app.pdfDocument);
+    droppable = found;
+    droppableHeld = new Set();
+    found.then((held) => {
+      if (droppable === found) droppableHeld = held;
+    });
   }
 
   /**
@@ -1111,7 +1395,7 @@
       busy = true;
       updatePageButtons(app);
       try {
-        if (await confirmPageChange(app)) {
+        if (await confirmPageChange(app, "several")) {
           const { pdfDocument } = app;
           const insertAfter =
             pageInfos.find((info) => Number.isInteger(info.insertAfter))?.insertAfter ?? -1;
@@ -1249,6 +1533,7 @@
       app.initialBookmark = `page=${page}&zoom=${zoomParameter(currentScaleValue)}`;
       app.initialRotation = pagesRotation;
       await app.open({ data: bytes, filename });
+      documentSize = bytes.length;
       // open() resolves once pdf.js has the document, before it reads its
       // pages. pagesPromise rejects if it can't set them up, and then no
       // event comes. The page to show must load too.
@@ -1301,12 +1586,16 @@
 
   /**
    * Whether the document's pages may change. A locked document says why it
-   * can't. A signed document asks first, once.
+   * can't. A signed document asks first, once. With autosave, a change with
+   * pdf.js's page tools also asks first what saving it drops, since it saves
+   * without asking (see confirmRewrite()).
    *
    * @param {any} app
+   * @param {Rewrite} [rewrite] for a change with pdf.js's page tools, whose
+   *   saving writes a new file
    * @returns {Promise<boolean>}
    */
-  async function confirmPageChange(app) {
+  async function confirmPageChange(app, rewrite = null) {
     const { info } = await app.pdfDocument.getMetadata();
     const reason = lockReason(app.pdfDocument, info);
     if (reason) {
@@ -1317,8 +1606,14 @@
       if (!(await window.pdflion.pageDialog("signed"))) return false;
       signedChangesAllowed = true;
     }
-    return true;
+    return !autosaves || !rewrite || askToDrop(rewrite === "several");
   }
+
+  /**
+   * @typedef {"one" | "several" | null} Rewrite the new file a change with
+   *   pdf.js's page tools makes when it's saved: of the document alone, as
+   *   for moving, copying and deleting pages, or of several, as for Add file
+   */
 
   /**
    * Documents with a password (even an owner password only, which opens
@@ -1377,7 +1672,7 @@
       "pointerdown",
       (event) => {
         if (event.button !== 0 || !targetIn(event, THUMBNAIL_IMAGE)) return;
-        if (!locked && !mustAsk()) return;
+        if (!locked && !mustAsk("one")) return;
         // pdf.js would get ready to drag the page.
         event.stopPropagation();
         if (!locked) askOnceDragged(app, event);
@@ -1397,13 +1692,14 @@
       "drop",
       (event) => {
         const thumbnails = targetIn(event, `${THUMBNAILS}.isDraggingFile`);
-        if (!thumbnails || !mustAsk()) return;
+        if (!thumbnails || !mustAsk("several")) return;
         // Only readable while the event is dispatched.
         const files = [...(event.dataTransfer?.files ?? [])];
         const { clientX, clientY } = event;
         holdBack(
           app,
           event,
+          "several",
           () => {
             const dataTransfer = new DataTransfer();
             for (const file of files) dataTransfer.items.add(file);
@@ -1423,17 +1719,17 @@
       "click",
       (event) => {
         const item = targetIn(event, PAGE_CHANGE_ITEMS);
-        if (item && mustAsk()) holdBack(app, event, () => item.click());
+        if (item && mustAsk("one")) holdBack(app, event, "one", () => item.click());
       },
       true,
     );
     window.addEventListener(
       "keydown",
       (event) => {
-        if (!isPageChangeKey(event) || !mustAsk()) return;
+        if (!isPageChangeKey(event) || !mustAsk("one")) return;
         const { target, key, code, ctrlKey, metaKey, altKey, shiftKey } = event;
         const init = { key, code, ctrlKey, metaKey, altKey, shiftKey };
-        holdBack(app, event, () =>
+        holdBack(app, event, "one", () =>
           target?.dispatchEvent(
             new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true }),
           ),
@@ -1445,10 +1741,11 @@
       "change",
       (event) => {
         const picker = targetIn(event, ADD_FILE_PICKER);
-        if (!picker || !mustAsk()) return;
+        if (!picker || !mustAsk("several")) return;
         holdBack(
           app,
           event,
+          "several",
           () => picker.dispatchEvent(new Event("change")),
           // So that picking the same files again is a change.
           () => {
@@ -1460,9 +1757,17 @@
     );
   }
 
-  /** @returns {boolean} whether a page change must ask first, or say why it can't */
-  function mustAsk() {
-    return locked || (signed && !signedChangesAllowed);
+  /**
+   * @param {Rewrite} rewrite
+   * @returns {boolean} whether a change with pdf.js's page tools must ask
+   *   first, or say why it can't
+   */
+  function mustAsk(rewrite) {
+    return (
+      locked ||
+      (signed && !signedChangesAllowed) ||
+      (autosaves && toDrop(droppableHeld, rewrite === "several").length > 0)
+    );
   }
 
   /**
@@ -1500,13 +1805,14 @@
    *
    * @param {any} app
    * @param {Event} event
+   * @param {Rewrite} rewrite
    * @param {() => void} repeat
    * @param {() => void} [drop] when the user doesn't agree, or can't
    */
-  function holdBack(app, event, repeat, drop = () => {}) {
+  function holdBack(app, event, rewrite, repeat, drop = () => {}) {
     event.stopPropagation();
     event.preventDefault();
-    askToChangePages(app).then((agreed) => (agreed ? repeat() : drop()));
+    askToChangePages(app, rewrite).then((agreed) => (agreed ? repeat() : drop()));
   }
 
   /**
@@ -1527,7 +1833,7 @@
         const dy = Math.abs(event.clientY - clientY);
         if (dx <= DRAG_THRESHOLD && dy <= DRAG_THRESHOLD) return;
         controller.abort();
-        askToChangePages(app);
+        askToChangePages(app, "one");
       },
       { capture: true, signal },
     );
@@ -1546,10 +1852,11 @@
    * confirmPageChange(), unless it's already asking.
    *
    * @param {any} app
+   * @param {Rewrite} rewrite
    * @returns {Promise<boolean>} whether the pages may change
    */
-  function askToChangePages(app) {
-    asking ??= confirmPageChange(app)
+  function askToChangePages(app, rewrite) {
+    asking ??= confirmPageChange(app, rewrite)
       .catch((error) => {
         console.error("Couldn't check whether the pages may change:", error);
         return false;
@@ -1604,6 +1911,139 @@
     button.addEventListener("click", () => window.pdflion.showHome());
     sidebarButton.before(button);
     return button;
+  }
+
+  /**
+   * Adds Share, for a host that shares documents, where pdf.js's Download
+   * button is, which overrides.css hides: in the toolbar, and in the ⋮ menu
+   * from pdf.js's medium view on, as Download is.
+   *
+   * @param {any} app
+   */
+  function addShareButtons(app) {
+    if (typeof window.pdflion.share !== "function") return;
+    const download = document.getElementById("downloadButton");
+    if (download) {
+      const button = makeButton("pdflionShareButton", "toolbarButton", "Share");
+      button.addEventListener("click", () => share(app));
+      download.before(button);
+    }
+    const secondaryDownload = document.getElementById("secondaryDownload");
+    if (secondaryDownload) {
+      const item = makeButton("pdflionSecondaryShare", "toolbarButton labeled", "Share…");
+      item.addEventListener("click", () => {
+        app.secondaryToolbar?.close();
+        share(app);
+      });
+      secondaryDownload.before(item);
+    }
+  }
+
+  /**
+   * Adds the status a host can show of the document, such as the web app's
+   * "Not in Files", at the start of the toolbar's right group. A click
+   * shares the document, which ends that status.
+   *
+   * @param {any} app
+   */
+  function addSaveStatus(app) {
+    if (typeof window.pdflion.onSaveStatus !== "function") return;
+    const right = document.getElementById("toolbarViewerRight");
+    if (!right) return;
+    const button = makeButton("pdflionSaveStatus", "toolbarButton", "");
+    button.hidden = true;
+    button.addEventListener("click", () => share(app));
+    right.prepend(button);
+    window.pdflion.onSaveStatus((/** @type {string | null} */ status) => {
+      button.hidden = !status;
+      /** @type {HTMLElement} */ (button.firstElementChild).textContent = status ?? "";
+      button.title = status ? `${status}. Share…` : "";
+      layoutToolbar();
+    });
+  }
+
+  /**
+   * Adds Undo and Redo before the drawing tools, for a host without a native
+   * menu, as on an iPad without a keyboard. They show while a drawing tool
+   * is on, as Edit > Undo and Redo work for pdf.js then.
+   *
+   * @param {any} app
+   * @returns {HTMLButtonElement[]}
+   */
+  function addUndoButtons(app) {
+    const tools = document.getElementById("editorModeButtons");
+    if (hasNativeMenu || !tools) return [];
+    const undo = makeButton("pdflionUndo", "toolbarButton", "Undo");
+    const redo = makeButton("pdflionRedo", "toolbarButton", "Redo");
+    undo.addEventListener("click", () => editingAction(app, "undo"));
+    redo.addEventListener("click", () => editingAction(app, "redo"));
+    const group = createElement(
+      "div",
+      { id: "pdflionUndoRedo", className: "toolbarHorizontalGroup", hidden: true },
+      undo,
+      redo,
+    );
+    tools.before(group);
+    return [undo, redo];
+  }
+
+  /**
+   * Shows Undo and Redo while a drawing tool is on.
+   *
+   * @param {any} app
+   */
+  function followUndoButtons(app) {
+    app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+      const group = undoButtons[0]?.parentElement;
+      if (!group) return;
+      const hidden = mode === EDITOR_NONE || mode === EDITOR_DISABLE;
+      if (group.hidden === hidden) return;
+      group.hidden = hidden;
+      layoutToolbar();
+    });
+  }
+
+  /**
+   * Adds the host's Open…, New and About to the ⋮ menu: Open… and New at
+   * the top, where pdf.js's Open is, which overrides.css hides, and About at
+   * the end. Open… must run in the click, since iPadOS opens the file picker
+   * only then.
+   *
+   * @param {any} app
+   */
+  function addAppMenuItems(app) {
+    const container = document.getElementById("secondaryToolbarButtonContainer");
+    if (!container) return;
+    /**
+     * @param {string} id
+     * @param {string} label
+     * @param {() => void} action
+     */
+    const item = (id, label, action) => {
+      const button = makeButton(id, "toolbarButton labeled", label);
+      button.addEventListener("click", () => {
+        action();
+        app.secondaryToolbar?.close();
+      });
+      return button;
+    };
+    const { showOpenPanel, newDocument, showAbout } = window.pdflion;
+    const top = [];
+    if (typeof showOpenPanel === "function") {
+      top.push(item("pdflionSecondaryOpen", "Open…", () => window.pdflion.showOpenPanel()));
+    }
+    if (typeof newDocument === "function") {
+      top.push(item("pdflionSecondaryNew", "New", () => window.pdflion.newDocument()));
+    }
+    if (top.length > 0) {
+      container.prepend(...top, createElement("div", { className: "horizontalToolbarSeparator" }));
+    }
+    if (typeof showAbout === "function") {
+      container.append(
+        createElement("div", { className: "horizontalToolbarSeparator" }),
+        item("pdflionSecondaryAbout", "About PDFLion", () => window.pdflion.showAbout()),
+      );
+    }
   }
 
   /**

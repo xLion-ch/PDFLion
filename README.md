@@ -95,17 +95,28 @@ npm run build                  # runs all the tests, then builds the installers 
 ```sh
 npm test               # unit tests
 npm run test:e2e       # end-to-end tests: they open windows and take focus while they run
+npm run test:web       # build the web app, and test it in Playwright's WebKit and Chromium
 npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
 ```
 
-GitHub Actions runs the tests on macOS, Windows and Linux for every pull request into `main`, and every push to `main` or `dev` that changes more than Markdown files. Except for `dev`, it then builds the installers and keeps them for 14 days, except for pull requests from forks. Builds are numbered `<major>.<minor>.<commits>`, from `package.json` and the commit count, and a pull request's `<version>-pr.<number>`. `node scripts/version.js` prints the version of the commit checked out.
+GitHub Actions runs the tests on macOS, Windows and Linux, and the web app's on macOS, for every pull request into `main`, and every push to `main` or `dev` that changes more than Markdown files. Except for `dev`, it then builds the installers and keeps them for 14 days, except for pull requests from forks. Builds are numbered `<major>.<minor>.<commits>`, from `package.json` and the commit count, and a pull request's `<version>-pr.<number>`. `node scripts/version.js` prints the version of the commit checked out.
 
 pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edited. PDFLion adds to it from outside, in `src/viewer/`, and the main process is in `src/main/`. [CLAUDE.md](CLAUDE.md) describes the architecture, the rules and the decisions behind them.
 
 ### Trying the web app on an iPad
 
-A web app of PDFLion for the iPad is planned. Trials in `test/trials/` find out first what it can rely on there: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas. `scripts/serve-web.js` serves them at `/PDFLion/`, as GitHub Pages will serve the app.
+A web app of PDFLion for the iPad is on its way, in `src/web/`. It runs the same viewer in Safari, keeps its own copy of each document, and saves into it by itself, with Share to put a document back into Files. It isn't published yet. `scripts/serve-web.js` serves it at `/PDFLion/`, as GitHub Pages will.
+
+```sh
+npm run web:build                 # build dist/web/
+npm run web:serve                 # serve it at http://localhost:8080/PDFLion/
+npm run web:serve -- --https      # the same over HTTPS, for an iPad on the same network
+```
+
+CI keeps the web app of a pull request from this repository for 14 days, as `PDFLion-<version>-web`. Unzip it, and serve it with `npm run web:serve -- --https path/to/the/folder`.
+
+Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas.
 
 ```sh
 npm run web:trials                # build dist/trials/ and serve it at http://localhost:8080/PDFLion/
@@ -115,10 +126,10 @@ node test/trials/run.js           # the trials that need no hands, in Playwright
 
 Each trial shows its results, and sends them to the Mac, into `test/trials/results.jsonl`. The iOS Simulator reaches the Mac at `localhost`, which counts as secure: boot an iPad there, and open `http://localhost:8080/PDFLion/` in its Safari, or run `xcrun simctl openurl booted http://localhost:8080/PDFLion/`. A real iPad needs HTTPS for the service worker, with a certificate it trusts:
 
-1. Run `npm run web:trials -- --https`, and allow Node to accept incoming connections if macOS asks. It prints the addresses, such as `https://Your-Mac.local:8080/PDFLion/`. The first run makes the certificate, which `~/.pdflion-web-server/` keeps.
+1. Run `npm run web:serve -- --https`, or `npm run web:trials -- --https`, and allow Node to accept incoming connections if macOS asks. It prints the addresses, such as `https://Your-Mac.local:8080/PDFLion/`. The first run makes the certificate, which `~/.pdflion-web-server/` keeps.
 2. On the iPad, open `https://Your-Mac.local:8080/certificate.crt` in Safari, going past the warning with Show Details, and allow the download. Or AirDrop `~/.pdflion-web-server/certificate.crt` to it.
 3. Install it from Settings > Profile Downloaded, then turn it on under Settings > General > About > Certificate Trust Settings.
-4. Open the printed address. To try the trials as a Home Screen app too, add it with Share > Add to Home Screen.
+4. Open the printed address. To try it as a Home Screen app too, add it with Share > Add to Home Screen.
 
 The certificate is a root the iPad trusts. Its name constraints keep it to `localhost`, `.local` names and private network addresses, but keep its key in `~/.pdflion-web-server/` to yourself. Afterwards, remove the profile under Settings > General > VPN & Device Management. A new certificate, made when the Mac's name changes, needs trusting again.
 
@@ -200,6 +211,19 @@ On every platform, and on Linux both on Wayland and on X11:
 - The toolbar's Home button shows the window's home tab, or adds one, and goes in the narrowest windows, where File > Home stays.
 - File > Export Settings… writes the favourites and settings, and File > Import Settings… on another platform asks first, then adds the favourites to every window's toolbar, without repeats. A file that isn't a settings file shows an alert and changes nothing.
 - File > New gives a US Letter page with the region set to the United States or Canada, and an A4 page with Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Closing an edited new document asks about saving, and Save asks where.
+- Pencil's strokes count as a change while its drawing is still open, and Save keeps them: after saving, reopening the file shows them.
+
+The web app, on an iPad with iPadOS 18 and one with iPadOS 26, in Safari and as a Home Screen app, served as above:
+
+- Home's Open… shows the Files picker, and the PDFs picked open as tabs, the first in Home's place. Picking the same file again opens the document PDFLion keeps. A PDF dragged from Files in Split View onto Home, the strip or a document opens too.
+- A change saves by itself after about 2 seconds. The first save ever explains that the file in Files hasn't changed, and later the first save of each document says so in a message at the bottom, with Share…. The toolbar's status and Home's card say "Not in Files", or "Only in PDFLion" for a new document.
+- Share in the toolbar shows the share sheet. Save to Files asks to replace the file there, then replaces it, and the status goes. Mail attaches the document as it is.
+- Drawing, then going to the Home Screen and ending PDFLion in the app switcher, then opening it again, keeps the drawing in the document.
+- A page deleted in the sidebar asks first if the document has XMP metadata, and is saved once another tab shows or the app is left, and not while pdf.js offers to undo it.
+- With a hardware keyboard, ⌘O, ⌘N, ⌘W, ⌘S, ⇧⌘S, ⇧⌘N, ⌥⌘6, ⇧⌘E, ⇧⌘H, ⌃Tab and ⌃⇧Tab each do one thing, where iPadOS lets them through, and ⌘P, ⌘F and the zoom keys stay pdf.js's.
+- With a trackpad, a card's context menu renames and deletes its document, which asks first, and a tab's closes it or the others.
+- Home's ⓘ menu shows About, with the versions and credits, the pen setting, and the storage the documents take.
+- Links in a document open in Safari, and the viewer and Home opened on their own show nothing.
 
 ## License
 
@@ -270,7 +294,7 @@ PDFLion is built and tested with:
 - [NSIS](https://nsis.sourceforge.io), which electron-builder uses for the Windows installer (Zlib)
 - [fpm](https://github.com/jordansissel/fpm) by Jordan Sissel, which electron-builder uses for the Linux package (MIT)
 - [Playwright](https://playwright.dev) by Microsoft (Apache-2.0)
-- [WebKit](https://webkit.org), whose build by Playwright the web app's trials run in (BSD-2-Clause and LGPL-2.1)
+- [WebKit](https://webkit.org), whose build by Playwright the web app's tests and trials run in (BSD-2-Clause and LGPL-2.1)
 - [actions/checkout, setup-node, cache, upload-artifact and download-artifact](https://github.com/actions) by GitHub, which run the tests and builds on GitHub Actions (MIT)
 - [GitHub CLI](https://cli.github.com) by GitHub, with which CI publishes the releases (MIT)
 - [Xvfb](https://gitlab.freedesktop.org/xorg/xserver) by X.Org, the virtual display the Linux tests run on there (MIT)

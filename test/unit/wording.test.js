@@ -1,16 +1,27 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  closeUnsavedPrompt,
+  closedNotInFiles,
+  deletePrompt,
   importSettingsPrompt,
   isPageDialog,
   missingRecent,
+  notAPdf,
+  notInFilesExplanation,
+  notInFilesLabel,
   nothingToImport,
   openError,
   pageDialog,
+  renamePrompt,
   saveError,
   savePrompt,
+  savedNotInFiles,
+  savedNow,
   settingsExportError,
   settingsFileError,
+  shareError,
+  shareReady,
   updateCheckFailed,
   updateDownloadFailed,
   updateNotInstallable,
@@ -18,6 +29,7 @@ import {
   updateOnReadOnlyVolume,
   updateReady,
   upToDate,
+  webAppUnavailable,
 } from "../../src/shared/wording.js";
 
 describe("wording isPageDialog", () => {
@@ -117,6 +129,13 @@ describe("wording saving and opening", () => {
     );
   });
 
+  it("says when the browser's storage is full", () => {
+    assert.equal(
+      saveError("a.pdf", { code: "QuotaExceededError", message: "" }).detail,
+      "There isn’t enough space on this device.",
+    );
+  });
+
   it("gives the error's own message for other codes", () => {
     for (const code of ["EIO", "constructor", undefined]) {
       assert.equal(saveError("a.pdf", { code, message: "it broke" }).detail, "it broke", code);
@@ -144,6 +163,55 @@ describe("wording Home", () => {
       detail:
         "It may have been moved, renamed or deleted. Do you want to remove it from the recent documents?",
     });
+  });
+});
+
+describe("wording the web app's copies", () => {
+  it("labels a document that isn't in Files, or never was", () => {
+    assert.equal(notInFilesLabel(false), "Not in Files");
+    assert.equal(notInFilesLabel(true), "Only in PDFLion");
+  });
+
+  it("says once that a save went into PDFLion, and the first time what that means", () => {
+    assert.equal(savedNotInFiles(false), "Saved in PDFLion. The file in Files hasn’t changed.");
+    assert.equal(savedNotInFiles(true), "Saved in PDFLion. To keep it in Files too, share it.");
+    assert.equal(notInFilesExplanation("a.pdf", false).message, "Your changes to “a.pdf” are saved in PDFLion.");
+    assert.match(notInFilesExplanation("a.pdf", false).detail ?? "", /The file in Files stays as it was/);
+    assert.equal(notInFilesExplanation("a.pdf", true).message, "“a.pdf” is saved in PDFLion.");
+  });
+
+  it("says where a closed or saved document is", () => {
+    assert.equal(closedNotInFiles("a.pdf", false), "“a.pdf” is saved in PDFLion, not in Files.");
+    assert.equal(closedNotInFiles("a.pdf", true), "“a.pdf” is saved only in PDFLion.");
+    assert.equal(savedNow("a.pdf"), "“a.pdf” is saved in PDFLion.");
+    assert.deepEqual(closeUnsavedPrompt("a.pdf"), {
+      message: "The changes to “a.pdf” couldn’t be saved.",
+      detail: "If you close the document, they’re lost.",
+    });
+  });
+
+  it("says what deleting a document loses", () => {
+    assert.equal(deletePrompt("a.pdf", { notInFiles: false, made: false }).message, "Delete “a.pdf” from PDFLion?");
+    assert.equal(
+      deletePrompt("a.pdf", { notInFiles: false, made: false }).detail,
+      "The file in Files stays as it is.",
+    );
+    assert.match(deletePrompt("a.pdf", { notInFiles: true, made: false }).detail ?? "", /changes you made in PDFLion are lost/);
+    assert.match(deletePrompt("a.pdf", { notInFiles: true, made: true }).detail ?? "", /gone for good/);
+  });
+
+  it("words renaming, sharing and what can't be opened", () => {
+    assert.deepEqual(renamePrompt("a.pdf"), { message: "Rename “a.pdf”" });
+    assert.deepEqual(shareReady("a.pdf"), { message: "“a.pdf” is ready to share." });
+    assert.deepEqual(shareError("a.pdf", { message: "no" }), {
+      message: "“a.pdf” couldn’t be shared.",
+      detail: "no",
+    });
+    assert.deepEqual(notAPdf("a.txt"), {
+      message: "The file “a.txt” couldn’t be opened.",
+      detail: "It isn’t a PDF document.",
+    });
+    assert.match(webAppUnavailable("No service workers.").detail ?? "", /No service workers\.$/);
   });
 });
 

@@ -2,6 +2,8 @@
 
 A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and Linux Mint): Mozilla's [pdf.js](https://github.com/mozilla/pdf.js) generic viewer in Electron. pdf.js renders and provides the viewer UI. The Electron shell stays thin, and adds what a browser tab can't: opening files from the file manager, a home screen of recent documents, native menus and shortcuts, tabs that move between windows, saving in place, installers, and updates from GitHub releases.
 
+A web app for the iPad (`src/web/`, see The web app) runs the same viewer, Home and tab strip in the browser, with a shell page where Electron's main process would be. It isn't deployed yet.
+
 [README.md](README.md) covers installing, building, releasing, and the checks by hand before merging into `main`, since every push there is a release.
 
 ## Ground rules
@@ -12,9 +14,10 @@ A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and 
   - `src/viewer/overrides.css`, which restyles the viewer in Material Design 3, with Material Symbols icons from `src/viewer/icons/`
   - `src/viewer/geometry.js`, the eraser's geometry, which touches nothing in pdf.js
 
-  `src/main/protocol.js` injects them into `viewer.html` as it serves it. If something seems to need a pdf.js patch, look for a way through those first, and if there is none, stop and ask.
+  `src/main/protocol.js` injects them into `viewer.html` as it serves it, and `scripts/build-web.js` into the web app's copy. If something seems to need a pdf.js patch, look for a way through those first, and if there is none, stop and ask.
 - Prefer pdf.js's built-in behaviour over reimplementing it.
 - `bridge.js` is the only code that touches pdf.js internals (`PDFViewerApplication`, its `eventBus`, `AppOptions`). They change between releases, so check every name against the pinned sources, such as `vendor/pdf.js/web/app.js` and `web/app_options.js`, never from memory.
+- Its hosts give it `window.pdflion`: the desktop's `preload.cjs`, and the web app's `viewer-host.js`. Home's give `window.pdflionHome`: `home.cjs` and `home-host.js`. The hosts never touch pdf.js, and `bridge.js` adds what a host offers, by the members it has.
 - Follow each platform's conventions. On all three, each document gets a tab in PDFLion's own tab strip, in the frontmost window.
   - macOS: the menu bar, ⌘ shortcuts, and the app keeps running after its last window closes.
   - Windows: a menu bar in each window, Ctrl shortcuts, and the app quits with its last window. A PDF opened while PDFLion runs goes to the running process.
@@ -25,13 +28,13 @@ A PDF viewer for macOS (Apple silicon and Intel), Windows and Linux (Ubuntu and 
 
 ## Stack
 
-- Electron (latest stable), with the main process as ES modules. Plain JavaScript with JSDoc: no TypeScript, no bundler, no UI framework. The preloads are CommonJS, as sandboxed preloads must be.
+- Electron (latest stable), with the main process as ES modules. Plain JavaScript with JSDoc: no TypeScript, no bundler, no UI framework. The preloads are CommonJS, as sandboxed preloads must be. The web app is the same: ES modules for its shell and service worker, and classic scripts where they must run before pdf.js's or Home's.
 - Two production dependencies, pinned to exact versions. When updating one, check what it brings along against its group in `credits.js` and README's Credits:
   - [@cantoo/pdf-lib](https://github.com/cantoo-scribe/pdf-lib), an MIT fork of pdf-lib, for the page changes pdf.js can't make. It parses documents, so it runs only in the sandboxed viewer: `bridge.js` loads its browser build from `/lib/`, which bundles its own dependencies.
   - [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater), in main (see Updates). `npm ls --omit=dev --all` lists what it brings into `app.asar`.
 - electron-builder: a `.dmg` and a `.zip` per Mac architecture (arm64, x64), an NSIS installer for Windows x64, and a `.deb` for Linux x64. No certificates and no notarization. Mac builds are signed ad hoc (see Packaging).
 - Node 24 LTS (`.nvmrc`). The pdf.js build needs Node `>=22.22.3 || >=24.15.0 || >=26.0`.
-- GitHub Actions (`.github/workflows/ci.yml`) tests and builds on all three platforms, and releases every push to `main`. A push to `dev` runs the tests only, since its installers would have a release's version.
+- GitHub Actions (`.github/workflows/ci.yml`) tests and builds on all three platforms, and releases every push to `main`. A push to `dev` runs the tests only, since its installers would have a release's version. Its `web` job builds and tests the web app on macOS, and deploys nothing yet.
 
 ## Layout
 
@@ -61,8 +64,9 @@ src/main/        main process: one module per concern
   menu.js        native menu and the About panel
   settingsfile.js  File > Export Settings… and Import Settings…
   paths.js       the only place that knows dev vs packaged locations
-src/shared/      free of Electron and Node, for main and a web app alike, unit tested
+src/shared/      free of Electron and Node, for main and the web app alike, unit tested
   ranges.js      Range headers for /doc/
+  csp.js         the pages' Content Security Policies, for protocol.js and build-web.js
   blank.js       File > New's blank PDF and its paper size by region
   tablist.js     each window's tabs and its active tab
   tools.js       checks the tool settings PDFLion keeps: the eraser's, pen-only drawing, and favourites
@@ -74,11 +78,23 @@ src/preload/     preload.cjs (window.pdflion, for the viewer), tabs.cjs (window.
 src/tabs/        the tab strip, served at pdflion://app/tabs/
 src/home/        Home, served at pdflion://app/home/
 src/viewer/      bridge.js, geometry.js (unit tested), overrides.css, icons/, served at pdflion://app/pdflion/
+src/web/         the web app, served at /PDFLion/ (see The web app)
+  index.html     the shell's page: the strip and the tabs' frames
+  shell.js       tabs, frames, the frames' messages, the library's documents, Share, shortcuts
+  library.js     IndexedDB: documents, bytes, thumbnails, settings, for the shell and the service worker
+  dialogs.js     alerts, prompts, menus and snackbars in the page, worded by wording.js
+  viewer-host.js window.pdflion over a MessagePort, injected before bridge.js
+  home-host.js   window.pdflionHome over a MessagePort, injected before home.js
+  keys.js        the shortcuts, a classic script for the shell and both hosts (unit tested)
+  sw.js          the service worker: the library's documents at doc/<id>/<name>
+  version.js, web.css, manifest.webmanifest, icons/ (rendered once from resources/icon.svg)
 resources/       icon and entitlements (electron-builder buildResources); about-icon.png also ships in the app
 scripts/         update-pdfjs.js, build.js, version.js (CI's version), after-sign.js (the Mac app's designated requirement),
-                 serve-web.js (a folder at /PDFLion/, as GitHub Pages serves it; --https for an iPad)
+                 serve-web.js (a folder at /PDFLion/, as GitHub Pages serves it; --https for an iPad),
+                 build-web.js (the web app into dist/web/, unit tested)
 test/unit/       node --test, *.test.js
 test/e2e/        Playwright against the dev app
+test/web/        Playwright against dist/web/, in WebKit as an iPad and Chromium as an Android tablet
 test/trials/     trials for a planned iPad web app: today's viewer and pages that measure, built into dist/trials/
 vendor/pdf.js/   submodule, never edit
 electron-builder.yml, .github/workflows/ci.yml
@@ -93,6 +109,9 @@ npm run pdfjs:build      # build the pinned pdf.js viewer (once per clone and af
 npm start                # run in dev; npm start -- path/to/file.pdf opens a file
 npm test                 # unit tests
 npm run test:e2e         # end-to-end tests: they open windows and take focus while they run
+npm run test:web         # build the web app, and test it in Playwright's WebKit and Chromium
+npm run web:build        # the web app into dist/web/; -- --version <v> for another version than CI's
+npm run web:serve        # serve dist/web/ at http://localhost:8080/PDFLion/; -- --https for an iPad
 npm run build            # tests, then every version this machine can build, in dist/
 npm run dist             # this platform's installers in dist/; npm run dist -- --dir for the apps alone
 node scripts/version.js  # the version CI builds this commit as; --pr <n> for pull request n
@@ -118,7 +137,9 @@ node test/trials/run.js  # the trials that need no hands, in Playwright's WebKit
      - **Favourites:** the option boxes `#editorHighlightParamsToolbar`, `#editorFreeTextParamsToolbar` and `#editorInkParamsToolbar` with their `.editorParamsToolbarContainer`; the inputs read (`#editorInkColor`, `#editorInkThickness`, `#editorInkOpacity`, `#editorFreeTextColor`, `#editorFreeTextFontSize`, `#editorFreeHighlightThickness`) and their ranges, which `tools.js` repeats; that `web/annotation_editor_params.js` keeps them in step with the tool and the selected drawing; that `src/display/editor/color_picker.js` marks the chosen swatch with `aria-selected` and `data-color`; `#editorModeButtons`, the icon variables `--toolbarButton-editorHighlight-icon`, `--toolbarButton-editorFreeText-icon` and `--toolbarButton-editorInk-icon`, and `FAVOURITE_TOOLS` against `AnnotationEditorType` and `AnnotationEditorParamsType`; that `updateParams()` dispatches no `annotationeditorparamschanged`, that `updateMode()` returns for the tool that's on and clears the selection only after an `await`, and that `#editorModeChanged()` in `web/toolbar.js` opens a tool's option box; the Stamp menu's classes and `web/menu.js`'s keys, which the ★ menu copies; and that `web/event_utils.js` calls external listeners after internal ones.
      - **Toolbar width:** that `#toolbarViewer`'s three groups keep `flex: none`, and pdf.js's media queries in `web/viewer.css` against `PDFJS_STEPS` and the rules `overrides.css` repeats for them (`.hiddenMediumView`, `.visibleMediumView`, `.hiddenSmallView`, `#scaleSelectContainer`).
      - **Home's thumbnails:** `pdfDocument.getPage()`, the page's `getViewport()` and `render()` with `annotationMode` (`AnnotationMode.ENABLE_STORAGE`) and `background`, and the `pagerendered` event (`web/base_pdf_page_view.js`). The Home button goes before `#viewsManagerToggleButton`.
-     - **Styles and CSP:** the variables and selectors in `overrides.css` against `web/viewer.css`, and the CSP header in `protocol.js` against the `<meta>` CSP in `web/viewer.html`. Chromium enforces both, so the header mustn't be stricter.
+     - **Styles and CSP:** the variables and selectors in `overrides.css` against `web/viewer.css`, and `VIEWER_CSP` in `src/shared/csp.js` against the `<meta>` CSP in `web/viewer.html`. Browsers enforce both, so PDFLion's mustn't be stricter.
+     - **Saving and edits:** that `AnnotationStorage` (`src/display/annotation_storage.js`) counts as modified only when `setValue()` adds or changes a value; the `annotationeditoruimanager` event with its `uiManager`, whose `addCommands()`, `undo()` and `redo()` `followEditorChanges()` wraps; that Pencil's strokes join the storage only once its drawing ends (`endDrawing()` in `src/display/editor/draw.js`), each stroke before that a command of type `AnnotationEditorParamsType.DRAW_STEP`; the layers' `commitOrRemove()`, which ends an open drawing and nothing else; and the layer's `drawing` class while a stroke is drawn (`toggleDrawing()` in `src/display/editor/annotation_editor_layer.js`).
+     - **The web app:** that `web/viewer.js` dispatches `webviewerloaded` at `parent.document` when it can reach it, with the viewer's window as `detail.source`; `#downloadButton`, `#secondaryDownload`, `#secondaryToolbarButtonContainer`, `#toolbarViewerRight`, `#viewsManagerStatusUndo` with its `hidden` class, and `secondaryToolbar.close()`; that `viewer.html` has a `</head>` and `home.html` and `index.html` a `<meta charset="utf-8" />`, which `build-web.js` checks; and the pdf.js keys `isMenuShortcut` leaves pdf.js in the web app.
   3. Check what pdf.js bundles (`vendor/pdf.js/external/`, and the license files in the build's `web/` folders) against "pdf.js includes" in `credits.js` and README's Credits.
   4. Run the unit and end-to-end tests. The pull request's CI runs them on all three platforms.
   5. Stage the submodule and any fixes, and suggest `Update pdf.js to vX.Y.Z`.
@@ -144,6 +165,8 @@ Everything a window loads comes from the privileged scheme `pdflion://app/` (sta
 - pdf.js makes range requests only for http(s), so `bridge.js` opens `/doc/` through a `PDFDataRangeTransport`, with `If-Match`, so that a changed file gets 412.
 - The handler resolves every path against its root, and answers 404 for anything that escapes it.
 - An untitled document from File > New lives in main's memory until its first save. Save on it always means Save As (`runCommand()` sends `saveAs`, also for the save prompts' Save), which turns its token into a file token.
+
+The web app (`scripts/build-web.js`) has the same layout below `/PDFLion/` in `dist/web/`, with `index.html`, `sw.js` and `manifest.webmanifest` at its root, and `web/` for `src/web/`'s other files. Since GitHub Pages sends no headers, the CSPs from `csp.js` go into `<meta>` tags, and `build-web.js` puts `/PDFLion` before the icons the stylesheets name from the root. Into the copy of `viewer.html` it injects the CSP, `overrides.css`, `geometry.js`, `keys.js`, `viewer-host.js` and `bridge.js`, and into `home.html` the CSP, `keys.js` and `home-host.js`. The service worker serves `doc/<id>/<name>` from the library, with the same contract as `/doc/`: byte ranges, an ETag of `"<id>-<revision>"`, and 412 for a stale `If-Match`, so the range transport works unchanged. Its body is a stream that reads the Blob 1 MiB at a time, since WebKit fails a response of a large Blob. Everything else still comes from the network.
 
 ## Home
 
@@ -212,6 +235,7 @@ The toolbar's width depends on the language, the page count, the favourites and 
 - PDFLion's own shortcuts follow Preview: Page Overview ⌥⌘6, its Contact Sheet, Insert Blank Page ⇧⌘N and Eraser ⇧⌘E, and Home ⇧⌘H. On Windows and Linux they're Ctrl+Shift+O, since Ctrl+Alt+6 is AltGr+6, Ctrl+Shift+N, Ctrl+Shift+E and Ctrl+Shift+H.
 - The page sees keys before the native menu. `isMenuShortcut` in `bridge.js` keeps pdf.js from acting on the shortcuts it shares with the menu, so a new shortcut that pdf.js also binds needs adding there. It takes ⌘ or Ctrl as the preload's `commandKey` says (`meta` on macOS), and F4 with Ctrl. pdf.js binds none of the tab shortcuts, nor PDFLion's own above.
 - Edit > Undo and Redo aren't roles, whose undo reaches editable text only. `undoItem()` asks `bridge.js` first, which dispatches pdf.js's `editingaction` while a drawing tool is on and no text is being typed. Otherwise main calls `webContents.undo()` or `redo()`.
+- pdf.js's storage counts an annotation joining it as a change, but not a change to one in it, and Pencil's strokes join it only once its drawing ends. So `followEditorChanges()` counts every command, undo and redo of the editors' UI manager as a change, Pencil's strokes too, and Save ends Pencil's open drawing first, so that they're saved: `endPencilDrawing()` calls each layer's `commitOrRemove()`, which unselects nothing, as `unselectAll()` would.
 - A click on the native menu gives the page no user activation, so `runCommand()` grants it for `COMMANDS_NEEDING_ACTIVATION`, such as Presentation Mode's `requestFullscreen()`.
 - Labels mark access keys with `&`, as in `&File`, which macOS drops. A literal `&` is `&&`.
 - File > Export Settings… and Import Settings… (`settingsfile.js`) work without a window, like New. A settings file (`backup.js`) holds the eraser's settings, pen-only drawing, the favourites and automatic updates. Importing asks first, replaces the settings the file has, and adds its favourites that aren't there yet (`addFavourites()`).
@@ -229,6 +253,20 @@ The packaged app updates from the GitHub releases, through electron-updater (`up
 - electron-updater's staging ID (`x-user-staging-id`) goes out empty, so GitHub can't follow a copy from one IP address to the next.
 - The dev app gets no updates, except from an end-to-end test's local feed (`--pdflion-update-config=<app-update.yml>`, which sets `forceDevUpdateConfig`). The packaged app ignores the switch.
 
+## The web app
+
+The web app runs PDFLion where Electron can't, first in Safari on an iPad, from the same parts: pdf.js's build with `bridge.js`, `geometry.js` and `overrides.css`, Home, and the tab strip. Its shell (`index.html`, `shell.js`) does what main does: it keeps the tabs (`tablist.js`, with one window), shows each in a frame, the viewer's or Home's, routes commands, shows dialogs (`dialogs.js`), and keeps the library and the tool settings.
+
+- Each frame's host makes a `MessageChannel` and posts a port to the shell, which takes it only from one of its own frames, with the page of the tab's kind. Requests carry an id for their reply, in the shape of `ipc.js`'s channels, and the shell checks every payload as main does, with `tools.js`, `thumbnail.js` and `isPageDialog()`. pdf.js dispatches `webviewerloaded` at the shell's document, so `bridge.js` listens there too, for its own window.
+- The strip is `src/tabs/tabs.js`, with `window.pdflionTabs` from the shell, hidden while there's one tab. With one window, tabs don't go to another. Inactive frames stay loaded, hidden and `inert`. A tab that's left saves its document (`saveNow`), and closing the last one shows Home.
+- The library (`library.js`) is IndexedDB database `pdflion`: `documents`, a record each (name, size, dates, `revision`, `exportedRevision`, `source`, `sha256`), `bytes`, `thumbnails`, `settings`, and `session` for later. A save writes the bytes and raises the revision in one transaction. A file whose SHA-256 the library has opens that document. New makes `Untitled.pdf` there at once, which goes again if it's closed unchanged. `upgrade()` takes a database of any earlier version along.
+- Autosave is `bridge.js`'s, for a host with `autosave`. Form values, annotations, and inserted or rotated pages save 2 s after the last change, 1 s more for each 10 MB up to 30 s, and never mid-stroke. Changes with pdf.js's page tools wait 30 s, and not while its undo bar shows, since saving them reopens the document. Everything saves at once when the page is hidden, before a tab closes or is left, and for ⌘S (`saveNow`). A change with the page tools whose new file would drop what the document holds asks before the change rather than at the save (`confirmPageChange()` with a `Rewrite`). A failed save says so once, and stays edited for the next try.
+- The library's copy is "not in Files" while its `revision` is higher than its `exportedRevision`, which an import sets, and a completed Share. A new document's is -1: "Only in PDFLion". The first save ever explains it in a dialog, each document's first save in a session in a snackbar, with Share…, and so do the toolbar's status (`onSaveStatus`), Home's mark, and a snackbar after the tab closes. `wording.js` words all of it.
+- Share (`share`) saves first, then the shell shares the stored revision with `navigator.share()`, or the tab's bytes if they couldn't be stored. If the save used up the tap's activation, it asks for another tap. Where files can't be shared, it downloads the file. Any completed share counts as exported.
+- Without a native menu (`nativeMenu: false`), pdf.js keeps ⌘P, ⌘F and the zoom keys, and the toolbar gets Undo and Redo while a drawing tool is on. `keys.js` has PDFLion's shortcuts, as the desktop's menu has them, which the hosts take before pdf.js and hand to the shell. ⌘O, and Open… in Home and the ⋮ menu, open a file picker in the frame where they happen, since iPadOS opens one only in response to the user.
+- Home is the same page, through `home-host.js`: the library's documents with their sizes, and an ⓘ menu (About, Draw Only with a Pen, the storage used) instead of Clear. Its context menu has Open, Share…, Rename… and Delete…, which asks first, and Delete or Backspace on a card deletes too.
+- Not yet: the Apple Pencil's and touch's handling, offline use of the app's own files, updates, session restore and sleeping tabs, export and import, and deploying to GitHub Pages.
+
 ## Security rules
 
 - Every window and tab view uses `contextIsolation: true`, `sandbox: true` and `nodeIntegration: false`, and `app.enableSandbox()` sandboxes every renderer.
@@ -245,6 +283,11 @@ The packaged app updates from the GitHub releases, through electron-updater (`up
 - The updater's requests to GitHub, over HTTPS, are PDFLion's only network requests of its own. Releases aren't signed, and only the SHA-512 in the same release checks a download: `NsisUpdater` checks no Authenticode signature without a `publisherName`, and Squirrel's check of the designated requirement proves nothing, since any app can claim the bundle ID. So whoever can publish a release can run code on every installed copy, and the workflow's permissions and the ruleset on `main` guard that. Release text is never shown.
 - CI has a read-only token (`contents: read`), runs pull requests on `pull_request`, never `pull_request_target`, checks out with `persist-credentials: false`, uses only GitHub's own actions, pinned to commits, and installs with `npm ci`. Only the `release` job gets `contents: write`. It runs no code from the repository, and only for pushes to `main` in `xLion-ch/PDFLion`, in the `release` environment, which allows only `main`.
 - The packaged app's Electron fuses turn off `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS`, `--inspect` and file:// privileges, load the app only from `app.asar`, checking its hash on macOS and Windows, and encrypt cookies.
+- The web app's pages get their CSPs from `csp.js` as `<meta>` tags, none with `unsafe-eval` or `unsafe-inline`. The shell's allows frames, its manifest and its service worker from its own origin only, and Home's `blob:` images for the thumbnails.
+- The web app has no process isolation: the shell, Home and every viewer frame share one origin, so a pdf.js exploit could read the whole library, where on the desktop a renderer reads only its own token's file. The defences are the CSP without `unsafe-eval`, which stopped CVE-2024-4367, and pdf.js's sandbox for PDF scripts.
+- A `<meta>` CSP can't set `frame-ancestors`, so the shell runs only as the page itself, and the hosts only in a frame of the shell, at the app's folder on its origin. Elsewhere they stop the page and go to `about:blank`.
+- `viewer-host.js` lets links and `window.open` open only `http`, `https` and `mailto` URLs, and places in the viewer itself.
+- The web app's only requests are for its own files, on its own origin. Any other GitHub Pages site of the xLion-ch account shares that origin, and could read the library, so the account keeps none with third-party scripts.
 
 Against Electron's [security checklist](https://www.electronjs.org/docs/latest/tutorial/security) (reviewed for Electron 45), the rules above meet every item that applies. Beyond them: no device or screen-sharing permission handlers are set, so those APIs fail; no window enables `webviewTag`; `about:blank` and `about:srcdoc` pages, which `will-navigate` doesn't see, get no preload API, and main ignores their messages; `LoadBrowserProcessSpecificV8Snapshot` stays off, since there's no browser-only snapshot; and on Linux nothing checks `app.asar`'s hash. Downloads keep Electron's save dialog, for attachments, a script's Save As and Export selected.
 
@@ -274,7 +317,8 @@ Against Electron's [security checklist](https://www.electronjs.org/docs/latest/t
 - Playwright can't drag between windows, so `tabs.spec.js` sends the strip's messages itself.
 - A key sent with `sendInputEvent()` never reaches the native menu on macOS, so there `shortcuts.spec.js` clicks the menu item itself, after checking that the page left the key alone.
 - `updates.spec.js` serves a local feed (`--pdflion-update-config`), and replaces the install, which would run the downloaded bytes or dpkg: the updaters' `doInstall()`, which it reaches through `process.getBuiltinModule("node:module")`, and on macOS Squirrel.Mac (`stubSquirrel()`), which would refuse the ad-hoc-signed dev app's update.
-- CI runs both suites on `macos-26`, `windows-2025` and `ubuntu-24.04` (the jobs `mac`, `windows` and `linux`), after a `pdfjs` job that builds pdf.js once, cached by the submodule's commit. The `electron` package downloads its binary on first run, so the jobs fetch it after `npm ci`. On Linux the end-to-end tests run under `xvfb-run` at 1920 × 1080, with `chrome-sandbox` setuid root, and nothing passes `--no-sandbox`. With `CI` set, Playwright also writes an HTML report, kept when a test fails, and `test.only` fails the run.
+- `test/web/` tests the web app with Playwright against `dist/web/`, which `serve-web.js` serves on port 8091, in WebKit as an iPad Pro 11 and in Chromium as a Galaxy Tab S9, both in landscape. Each test gets a persistent profile (`launchPersistentContext()`), since WebKit's default contexts store no Blobs in IndexedDB. The helpers in its `pdflion.js` find Home's and a document's frame, open files through the file chooser, read the library, draw with Pencil, and stub `navigator.share()`. `npm run test:web` builds the app first. `loadBridge()` in `bridge.test.js` takes the web host's members (`host`), and a page the viewer is a frame of (`embedded`).
+- CI runs both suites on `macos-26`, `windows-2025` and `ubuntu-24.04` (the jobs `mac`, `windows` and `linux`), after a `pdfjs` job that builds pdf.js once, cached by the submodule's commit. The `web` job runs the web app's on `macos-26`, whose WebKit is closest to Safari's, and keeps a pull request's build from this repository as `PDFLion-<version>-web`. The `electron` package downloads its binary on first run, so the jobs fetch it after `npm ci`. On Linux the end-to-end tests run under `xvfb-run` at 1920 × 1080, with `chrome-sandbox` setuid root, and nothing passes `--no-sandbox`. With `CI` set, Playwright also writes an HTML report, kept when a test fails, and `test.only` fails the run.
 
 ## Decisions
 
@@ -293,6 +337,9 @@ These were settled on purpose. Change them only on purpose.
 - pdf.js's page tools are on, although pdf.js counts them as experimental, rather than rebuilding their selection, dragging, pasting and undo. Their changes are saved through `extractPages()`, which asks first about what it drops. Documents with a password and pure XFA forms are locked against page changes, and signed ones ask once.
 - Window placement is kept in `state.json`, not with Electron's `windowStatePersistence`, which remembers each window by name and can't give a new document the last window's place.
 - Tabs are PDFLion's own tab strip on all three platforms, rather than macOS's native tabs, so that the end-to-end tests on the Mac cover what Windows and Linux run. Windows have no `tabbingIdentifier`, so macOS's own tabs stay off. Tab libraries build on `<webview>`, which the security rules leave off.
+- The web app keeps its own copy of each document and saves into it by itself, since Safari can't write back to the Files app, and says when the copy has changes the file in Files doesn't. Share puts a document back. It opens documents as tabs, as on the desktop.
+- The web app's library is in IndexedDB, not the origin private file system: its transactions make each save atomic, and Safari 18 reads it from the service worker. OPFS is the fallback if large files read too slowly on an iPad.
+- The web app brings no dependencies: no Workbox and no bundler. Playwright, which the desktop's tests use, brings the WebKit and Chromium its tests run in.
 
 ## Known limitations
 
@@ -313,6 +360,10 @@ These were settled on purpose. Change them only on purpose.
 - Real drags of tabs between windows are checked only by hand.
 - Shutting down Linux with unsaved changes waits for the save prompts only as long as systemd allows (`InhibitDelayMaxSec`, 5 s by default).
 - Copying a whole document's text fails if pdf.js takes more than about 5 s to gather it: Chromium then asks for `clipboard-read`, which `permissions.js` denies.
+- Save ends Pencil's open drawing, so strokes drawn after it make a new drawing, which the eraser's Object mode erases on its own.
+- The web app can't save into the Files app, and isn't offered for PDFs there: documents come in through Open… or a drop, and go out through Share. PDFLion can't tell Save to Files from Mail, so any completed share counts as being in Files.
+- In the web app, saving changes made with pdf.js's page tools ends their undo, as `reopen()` does on the desktop. So they're saved only once the tab is left or the app hidden, or 30 s after the last one.
+- WebKit logs a refused inline style sheet at pdf.js's zoom menu, under pdf.js's own CSP. Nothing visible is missing.
 
 ## Conventions
 

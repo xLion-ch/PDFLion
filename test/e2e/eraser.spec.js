@@ -158,6 +158,34 @@ test("Object erasing removes a drawing, which comes back with Undo, from the key
   expect(await annotations(page)).toEqual([{ subtype: "Ink", strokes: 1 }]);
 });
 
+test("Pencil's open drawing counts as a change, and Save keeps it, also after a save", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  let { app, page } = await pdflion([file]);
+
+  // Strokes of a drawing that's still open, which pdf.js doesn't store yet.
+  await page.locator("#editorInkButton").click();
+  await drag(page, [[100, 650], [300, 660]]);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+
+  // Pencil stays on, and its next stroke is a change too.
+  await drag(page, [[100, 550], [300, 560]]);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  await app.close();
+
+  ({ page } = await pdflion([file]));
+  expect(await annotations(page)).toEqual([
+    { subtype: "Ink", strokes: 1 },
+    { subtype: "Ink", strokes: 1 },
+  ]);
+});
+
 test("erases an ink annotation from the file, which Save deletes", async ({ pdflion }) => {
   const file = path.join(await tempDir(), "ink.pdf");
   await writeInk(file);

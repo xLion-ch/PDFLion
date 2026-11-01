@@ -1,8 +1,9 @@
 /**
  * What PDFLion's own alerts and prompts say: about changing pages, saving,
- * opening, updating, Home, and exporting and importing settings. Main shows
- * them as native message boxes, and a web app's shell would show them in the
- * page, so that both say the same. Each platform orders the buttons as its
+ * opening, updating, Home, and exporting and importing settings, and in the
+ * web app about the copies PDFLion keeps. Main shows them as native message
+ * boxes, and the web app's shell (src/web/) in the page, so that both say the
+ * same. Each platform orders the buttons as its
  * own apps do, so this module only names them, and the caller puts them in
  * order.
  * PDFLion's own words are in English, like its native menus.
@@ -25,6 +26,9 @@ export const LATER = "Later";
 export const RELEASE_NOTES = "Release Notes";
 export const REMOVE = "Remove";
 export const IMPORT = "Import";
+export const SHARE = "Share…";
+export const DELETE = "Delete";
+export const RENAME = "Rename";
 
 /**
  * What a save that rewrites the document drops, for `rewrite`, as its detail
@@ -142,6 +146,8 @@ const SAVE_ERRORS = {
   ENOSPC: "There isn’t enough space on the disk.",
   // Windows: another app has the file open.
   EBUSY: "The file is in use by another app.",
+  // The web app: the browser's storage for PDFLion is full.
+  QuotaExceededError: "There isn’t enough space on this device.",
 };
 
 /**
@@ -159,6 +165,17 @@ export function saveError(name, error) {
  */
 function whyNotSaved({ code, message }) {
   return (code && Object.hasOwn(SAVE_ERRORS, code) && SAVE_ERRORS[code]) || message;
+}
+
+/**
+ * @param {string} name the file's
+ * @returns {Text} that a file isn't a PDF, which the web app won't keep
+ */
+export function notAPdf(name) {
+  return {
+    message: `The file “${name}” couldn’t be opened.`,
+    detail: "It isn’t a PDF document.",
+  };
 }
 
 /**
@@ -360,5 +377,151 @@ export function updateNotInstalled(version, { checkForUpdates, needsPassword }) 
     detail: needsPassword
       ? `Installing it needs an administrator’s password. ${checkForUpdates} offers it again.`
       : `${checkForUpdates} offers it again.`,
+  };
+}
+
+/**
+ * The web app keeps its own copy of each document and saves into it, which
+ * leaves the file in the Files app as it was. These say so: a document whose
+ * copy holds changes the file doesn't is "not in Files", and one made in
+ * PDFLion was never there.
+ */
+
+/**
+ * @param {boolean} made whether PDFLion made the document, with New
+ * @returns {string} the label of the toolbar's status and of Home's mark
+ */
+export function notInFilesLabel(made) {
+  return made ? "Only in PDFLion" : "Not in Files";
+}
+
+/**
+ * The snackbar after a document's first save in a session, with Share….
+ *
+ * @param {boolean} made whether PDFLion made the document
+ * @returns {string}
+ */
+export function savedNotInFiles(made) {
+  return made
+    ? "Saved in PDFLion. To keep it in Files too, share it."
+    : "Saved in PDFLion. The file in Files hasn’t changed.";
+}
+
+/**
+ * The first time ever a document is saved, what that means, with OK and
+ * Share….
+ *
+ * @param {string} name the document's
+ * @param {boolean} made whether PDFLion made the document
+ * @returns {Text}
+ */
+export function notInFilesExplanation(name, made) {
+  return made
+    ? {
+        message: `“${name}” is saved in PDFLion.`,
+        detail:
+          "PDFLion keeps your documents and saves your changes as you make them. To have a copy in Files too, share the document and choose Save to Files.",
+      }
+    : {
+        message: `Your changes to “${name}” are saved in PDFLion.`,
+        detail:
+          "PDFLion keeps its own copy of the documents you open, and saves your changes into it as you make them. The file in Files stays as it was. To replace it, share the document and choose Save to Files.",
+      };
+}
+
+/**
+ * The snackbar after a tab closes whose document is not in Files, with
+ * Share….
+ *
+ * @param {string} name the document's
+ * @param {boolean} made whether PDFLion made the document
+ * @returns {string}
+ */
+export function closedNotInFiles(name, made) {
+  return made
+    ? `“${name}” is saved only in PDFLion.`
+    : `“${name}” is saved in PDFLion, not in Files.`;
+}
+
+/**
+ * @param {string} name the document's
+ * @returns {string} the snackbar after Save
+ */
+export function savedNow(name) {
+  return `“${name}” is saved in PDFLion.`;
+}
+
+/**
+ * The prompt before a document is deleted, with Delete and Cancel.
+ *
+ * @param {string} name the document's
+ * @param {object} state
+ * @param {boolean} state.notInFiles whether its copy has changes the file in
+ *   Files doesn't, or it was never there
+ * @param {boolean} state.made whether PDFLion made it
+ * @returns {Text}
+ */
+export function deletePrompt(name, { notInFiles, made }) {
+  let detail = "The file in Files stays as it is.";
+  if (made) detail = "It isn’t in Files, so it’s gone for good.";
+  else if (notInFiles) detail = "The changes you made in PDFLion are lost. The file in Files stays as it was.";
+  return { message: `Delete “${name}” from PDFLion?`, detail };
+}
+
+/**
+ * The prompt for a document's new name, with Rename and Cancel.
+ *
+ * @param {string} name the document's
+ * @returns {Text}
+ */
+export function renamePrompt(name) {
+  return { message: `Rename “${name}”` };
+}
+
+/**
+ * When the browser wouldn't share without another tap, with Share… and
+ * Cancel.
+ *
+ * @param {string} name the document's
+ * @returns {Text}
+ */
+export function shareReady(name) {
+  return { message: `“${name}” is ready to share.` };
+}
+
+/** The button that closes a tab whose changes couldn't be saved. */
+export const CLOSE = "Close";
+
+/**
+ * The prompt before a tab closes whose changes couldn't be saved, with Close
+ * and Cancel.
+ *
+ * @param {string} name the document's
+ * @returns {Text}
+ */
+export function closeUnsavedPrompt(name) {
+  return {
+    message: `The changes to “${name}” couldn’t be saved.`,
+    detail: "If you close the document, they’re lost.",
+  };
+}
+
+/**
+ * @param {string} name the document's
+ * @param {{ message: string }} error
+ * @returns {Text}
+ */
+export function shareError(name, { message }) {
+  return { message: `“${name}” couldn’t be shared.`, detail: message };
+}
+
+/**
+ * @param {string} reason what failed, such as the browser's error
+ * @returns {Text} that the web app can't run in this browser
+ */
+export function webAppUnavailable(reason) {
+  return {
+    message: "PDFLion can’t run here.",
+    detail: `It needs a browser that keeps its documents and works offline, such as Safari on an iPad. ${reason}`,
   };
 }

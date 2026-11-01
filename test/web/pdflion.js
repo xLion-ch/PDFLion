@@ -1,0 +1,275 @@
+/**
+ * Runs the web app for its end-to-end tests. Each test gets a persistent
+ * profile of its own, as Safari has one: in Playwright's default contexts,
+ * WebKit stores no Blobs in IndexedDB.
+ *
+ * The shell is the page, and each tab a frame of it, the viewer's or
+ * Home's. The helpers below find them by their URLs, and read the library
+ * as the shell keeps it.
+ */
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { test as base, expect } from "@playwright/test";
+
+export { expect };
+
+/** @typedef {import("@playwright/test").Page} Page */
+/** @typedef {import("@playwright/test").Frame} Frame */
+
+export const ROOT = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..");
+
+/** The 14-page paper that ships with the pdf.js build. */
+export const TRACEMONKEY = path.join(
+  ROOT,
+  "vendor/pdf.js/build/generic/web/compressed.tracemonkey-pldi-09.pdf",
+);
+
+/** Of a project's options, what makes a context look like its device. */
+const CONTEXT_OPTIONS = [
+  "viewport",
+  "userAgent",
+  "deviceScaleFactor",
+  "isMobile",
+  "hasTouch",
+  "baseURL",
+  "locale",
+];
+
+/**
+ * Playwright's test, with `context` and `page` in a persistent profile, and
+ * `dir`, a folder for the test's files.
+ */
+export const test = base.extend({
+  context: async ({ playwright, browserName }, use, testInfo) => {
+    const profile = await fs.mkdtemp(path.join(os.tmpdir(), "pdflion-web-"));
+    /** @type {Record<string, unknown>} */
+    const projectOptions = testInfo.project.use;
+    const options = Object.fromEntries(
+      CONTEXT_OPTIONS.filter((key) => projectOptions[key] !== undefined).map((key) => [
+        key,
+        projectOptions[key],
+      ]),
+    );
+    const context = await playwright[browserName].launchPersistentContext(profile, options);
+    await use(context);
+    await context.close();
+    await fs.rm(profile, { recursive: true, force: true });
+  },
+  page: async ({ context }, use) => {
+    await use(context.pages()[0] ?? (await context.newPage()));
+  },
+  dir: async ({}, use) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pdflion-web-files-"));
+    await use(dir);
+    await fs.rm(dir, { recursive: true, force: true });
+  },
+});
+
+/**
+ * Opens the app, and waits until Home has drawn.
+ *
+ * @param {Page} page
+ * @returns {Promise<Frame>} Home's frame
+ */
+export async function openApp(page) {
+  await page.goto("./");
+  return homeFrame(page);
+}
+
+/**
+ * @param {Page} page
+ * @param {(url: string) => boolean} test
+ * @returns {Promise<Frame>}
+ */
+async function frameWhere(page, test) {
+  /** @type {Frame | undefined} */
+  let frame;
+  await expect
+    .poll(() => (frame = page.frames().find((other) => other !== page.mainFrame() && test(other.url()))), {
+      timeout: 30_000,
+    })
+    .toBeTruthy();
+  return /** @type {Frame} */ (frame);
+}
+
+/**
+ * @param {Page} page
+ * @returns {Promise<Frame>} Home's frame, once it has drawn
+ */
+export async function homeFrame(page) {
+  const frame = await frameWhere(page, (url) => url.includes("/home/home.html"));
+  await frame.locator("#recent:not([hidden]), #empty:not([hidden])").waitFor();
+  return frame;
+}
+
+/**
+ * @param {Page} page
+ * @param {string} name the document's
+ * @returns {Promise<Frame>} the frame of its viewer, once it shows a page
+ */
+export async function documentFrame(page, name) {
+  const frame = await frameWhere(page, (url) => {
+    const parsed = new URL(url);
+    return (
+      parsed.pathname.endsWith("/viewer/web/viewer.html") &&
+      (parsed.searchParams.get("file") ?? "").endsWith(`/${encodeURIComponent(name)}`)
+    );
+  });
+  await rendered(frame);
+  return frame;
+}
+
+/**
+ * Waits until the viewer has rendered its first page, and its bridge.js is
+ * listening.
+ *
+ * @param {Frame} frame
+ */
+export async function rendered(frame) {
+  await frame.locator('.page[data-page-number="1"] canvas').first().waitFor({ timeout: 30_000 });
+  await frame.waitForFunction(() => window.PDFViewerApplication?.pdfDocument && window.PDFViewerApplication.pdfViewer.pagesCount > 0);
+}
+
+/**
+ * Opens files through the file picker that an Open… opens.
+ *
+ * @param {Page} page
+ * @param {import("@playwright/test").Locator} open the button
+ * @param {string[]} files
+ */
+export async function pickFiles(page, open, files) {
+  const chooser = page.waitForEvent("filechooser");
+  await open.click();
+  await (await chooser).setFiles(files);
+}
+
+/**
+ * @param {Page} page
+ * @param {string[]} files opened from Home's Open…
+ */
+export async function openFromHome(page, files) {
+  const home = await homeFrame(page);
+  await pickFiles(page, home.locator(".open:visible").first(), files);
+}
+
+/**
+ * @param {Page} page
+ * @returns {Promise<Record<string, any>[]>} the library's documents, as
+ *   library.js keeps their records, the most recently opened first
+ */
+export function readLibrary(page) {
+  return page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const open = indexedDB.open("pdflion");
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const records = await new Promise((resolve, reject) => {
+      const request = database.transaction("documents").objectStore("documents").getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return records.sort((a, b) => b.openedAt - a.openedAt);
+  });
+}
+
+/**
+ * @param {Page} page
+ * @param {string} id a document's
+ * @returns {Promise<Buffer>} its stored bytes
+ */
+export async function storedBytes(page, id) {
+  const base64 = await page.evaluate(async (id) => {
+    const database = await new Promise((resolve, reject) => {
+      const open = indexedDB.open("pdflion");
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const blob = await new Promise((resolve, reject) => {
+      const request = database.transaction("bytes").objectStore("bytes").get(id);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let text = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(text);
+  }, id);
+  return Buffer.from(base64, "base64");
+}
+
+/**
+ * @param {Page} page
+ * @returns {Promise<{ id: string, name: string, home: boolean, edited: boolean, active: boolean }[]>}
+ *   the strip's tabs, as the shell last drew them
+ */
+export function stripTabs(page) {
+  return page.locator("#tabs .tab").evaluateAll((tabs) =>
+    tabs.map((tab) => ({
+      id: /** @type {HTMLElement} */ (tab).dataset.id ?? "",
+      name: tab.querySelector(".name")?.textContent ?? "",
+      home: tab.classList.contains("home"),
+      edited: tab.classList.contains("edited"),
+      active: tab.classList.contains("active"),
+    })),
+  );
+}
+
+/**
+ * @param {Page} page
+ * @returns {Promise<string>} the modifier of the shortcuts here, as keys.js
+ *   decides: `Meta` on Apple's devices, else `Control`
+ */
+export async function commandKey(page) {
+  return (await page.evaluate(() => PDFLionKeys.commandKeyHere())) === "meta" ? "Meta" : "Control";
+}
+
+/**
+ * Draws a stroke with Pencil across the first page.
+ *
+ * @param {Page} page
+ * @param {Frame} frame the document's
+ * @param {number} [offset] how far down the page, as a share of the part of
+ *   it in view
+ */
+export async function drawStroke(page, frame, offset = 0.3) {
+  const pencil = frame.locator("#editorInkButton");
+  if (!(await pencil.evaluate((button) => button.classList.contains("toggled")))) await pencil.click();
+  const box = /** @type {{ x: number, y: number, width: number, height: number }} */ (
+    await frame.locator('.page[data-page-number="1"]').boundingBox()
+  );
+  const bottom = Math.min(box.y + box.height, /** @type {{ height: number }} */ (page.viewportSize()).height);
+  const y = box.y + (bottom - box.y) * offset;
+  await page.mouse.move(box.x + box.width * 0.2, y);
+  await page.mouse.down();
+  for (let step = 1; step <= 10; step++) {
+    await page.mouse.move(box.x + box.width * (0.2 + 0.04 * step), y + step * 2);
+  }
+  await page.mouse.up();
+}
+
+/**
+ * Has `navigator.share` record what it's given, or fail as cancelled, as
+ * the share sheet does when it's closed.
+ *
+ * @param {Page} page
+ * @param {"share" | "cancel"} answer
+ */
+export async function stubShare(page, answer) {
+  await page.evaluate((answer) => {
+    window.shared = [];
+    window.shareCalls = 0;
+    navigator.canShare = () => true;
+    navigator.share = async ({ files }) => {
+      window.shareCalls++;
+      if (answer === "cancel") throw new DOMException("Share canceled", "AbortError");
+      for (const file of files) window.shared.push({ name: file.name, size: file.size, type: file.type });
+    };
+  }, answer);
+}

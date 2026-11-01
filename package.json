@@ -17,6 +17,8 @@
     "pdfjs:build": "node scripts/update-pdfjs.js --build",
     "test": "node --test \"test/unit/**/*.test.js\"",
     "test:e2e": "playwright test --config test/e2e/playwright.config.js",
+    "test:web": "node scripts/build-web.js && playwright test --config test/web/playwright.config.js",
+    "web:build": "node scripts/build-web.js",
     "web:serve": "node scripts/serve-web.js",
     "web:trials": "node test/trials/build.js && node scripts/serve-web.js --report test/trials/results.jsonl dist/trials",
     "build": "node scripts/build.js",

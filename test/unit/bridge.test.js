@@ -118,12 +118,18 @@ class FakeRangeTransport {
  * @param {(url: string, init?: RequestInit) => Promise<Response>} [options.fetch]
  * @param {boolean} [options.toolbar] whether the page has pdf.js's toolbar
  * @param {string} [options.href] the viewer's URL
+ * @param {object} [options.host] more of window.pdflion, which bridge.js
+ *   reads as it runs, such as the web app's `autosave` and `nativeMenu`
+ * @param {boolean} [options.embedded] whether the viewer is in a frame of
+ *   a page it can reach, as in the web app
  */
 function loadBridge({
   commandKey = "meta",
   fetch,
   toolbar = true,
   href = "https://app.test/viewer/web/viewer.html?file=x",
+  host = {},
+  embedded = false,
 } = {}) {
   /** @type {any[][]} */
   const calls = [];
@@ -192,6 +198,7 @@ function loadBridge({
     showFavouriteMenu(favourite) {
       pdflion.favouriteMenus.push(JSON.parse(JSON.stringify(favourite)));
     },
+    ...host,
   };
 
   /**
@@ -215,7 +222,11 @@ function loadBridge({
           if (force) this.classes.add(name);
           else this.classes.delete(name);
         },
+        /** @param {string} name */
+        contains: (name) => this.classes.has(name),
       };
+      /** @type {Element | null} */
+      this.parentElement = null;
       this.textContent = "";
       /** @type {Record<string, string> & { setProperty?: Function }} */
       this.style = {
@@ -228,6 +239,16 @@ function loadBridge({
     /** @param {Element[]} children */
     append(...children) {
       this.children.push(...children);
+      for (const child of children) if (child instanceof Element) child.parentElement = this;
+    }
+    /** @param {Element[]} children */
+    prepend(...children) {
+      this.children.unshift(...children);
+      for (const child of children) if (child instanceof Element) child.parentElement = this;
+    }
+    /** @returns {Element | undefined} */
+    get firstElementChild() {
+      return this.children.find((child) => child instanceof Element);
     }
     /** @param {Element[]} children */
     replaceChildren(...children) {
@@ -253,9 +274,13 @@ function loadBridge({
       const siblings = this.siblings();
       siblings.splice(siblings.indexOf(this) + 1, 0, sibling);
     }
-    /** @returns {Element[]} the list this element is in: the toolbar or the header */
+    /**
+     * @returns {Element[]} the list this element is in: the toolbar, the
+     *   header, or the ⋮ menu
+     */
     siblings() {
-      return [document.toolbar, document.header].find((list) => list.includes(this)) ?? [];
+      const lists = [document.toolbar, document.header, menuContainer.children];
+      return lists.find((list) => list.includes(this)) ?? [];
     }
     /** @param {string} name @param {string} value */
     setAttribute(name, value) {
@@ -285,6 +310,19 @@ function loadBridge({
 
   const sidebarButton = Object.assign(new Element("button"), { id: "viewsManagerToggleButton" });
   const separator = Object.assign(new Element("div"), { id: "editorModeSeparator" });
+  /** pdf.js's Download, in the toolbar and in the ⋮ menu, where Share goes. */
+  const downloadButton = Object.assign(new Element("button"), { id: "downloadButton" });
+  const secondaryDownload = Object.assign(new Element("button"), { id: "secondaryDownload" });
+  /** The ⋮ menu's items, from Download on. */
+  const menuContainer = Object.assign(new Element("div"), {
+    id: "secondaryToolbarButtonContainer",
+  });
+  menuContainer.append(secondaryDownload);
+  /** The toolbar's right group, which starts with the status. */
+  const toolbarRight = Object.assign(new Element("div"), { id: "toolbarViewerRight" });
+  /** pdf.js's bar that offers to undo a page change, hidden until one. */
+  const undoBar = Object.assign(new Element("div"), { id: "viewsManagerStatusUndo" });
+  undoBar.classes.add("hidden");
   /** The current page's thumbnail, which takes the focus. */
   const currentThumbnail = { focus: record("thumbnail.focus") };
 
@@ -397,9 +435,18 @@ function loadBridge({
     },
     /**
      * The toolbar's children: the sidebar's button, then from
-     * #editorModeButtons on.
+     * #editorModeButtons on, and in the web app Download.
      */
-    toolbar: /** @type {Element[]} */ ([sidebarButton, editorModeButtons, pencil, separator]),
+    toolbar: /** @type {Element[]} */ ([
+      sidebarButton,
+      editorModeButtons,
+      pencil,
+      separator,
+      ...(host.share ? [downloadButton] : []),
+    ]),
+    /** Whether a stroke is being drawn. */
+    drawing: false,
+    visibilityState: "visible",
     /** The views manager header's children, from Add file on. */
     header: /** @type {Element[]} */ ([addFileButton]),
     /** @param {string} id */
@@ -409,6 +456,10 @@ function loadBridge({
       if (id === viewsManagerElement.id) return viewsManagerElement;
       if (id === pencilButton.id) return pencilButton;
       if (id === viewerContainer.id) return viewerContainer;
+      if (id === undoBar.id) return undoBar;
+      if (toolbar && id === menuContainer.id) return menuContainer;
+      if (toolbar && id === secondaryDownload.id) return secondaryDownload;
+      if (toolbar && id === toolbarRight.id) return toolbarRight;
       if (Object.hasOwn(params, id)) return params[id];
       const [, name, part] = /^editor(Highlight|FreeText|Ink)(Button|ParamsToolbar)$/.exec(id) ?? [];
       if (name) return (part === "Button" ? toolButtons : toolBoxes)[name];
@@ -431,6 +482,7 @@ function loadBridge({
     highlightColor: "#FFFF98",
     /** @param {string} selector */
     querySelector(selector) {
+      if (selector === ".annotationEditorLayer.drawing" && this.drawing) return {};
       if (selector === CHECKED_THUMBNAIL && this.checked) return {};
       if (selector === DRAGGING_PAGES && this.dragging) return {};
       if (selector === CURRENT_THUMBNAIL) return currentThumbnail;
@@ -642,6 +694,10 @@ function loadBridge({
     isEditorHandlingKeyboard: false,
     unselectAll: record("ui.unselectAll"),
     addCommands: record("ui.addCommands"),
+    undo: record("ui.undo"),
+    redo: record("ui.redo"),
+    /** A page's editing layer, which only pages pdf.js has shown have. */
+    getLayer: (/** @type {number} */ _index) => /** @type {any} */ (undefined),
     *getEditors() {},
   };
 
@@ -678,6 +734,7 @@ function loadBridge({
     /** @type {any} */
     pdfThumbnailViewer: null,
     findBar: { open: record("findBar.open") },
+    secondaryToolbar: { close: record("secondaryToolbar.close") },
     viewsManager,
     pdfScriptingManager: {
       dispatchWillSave: async () => calls.push(["willSave"]),
@@ -813,6 +870,20 @@ function loadBridge({
     console: { warn: record("console.warn"), error: record("console.error") },
   };
   page.window = page;
+  /** The page the viewer is in a frame of, whose document gets webviewerloaded. */
+  const embedder = {
+    /** @type {Map<string, Function>} */
+    listeners: new Map(),
+    document: {
+      addEventListener(type, listener) {
+        embedder.listeners.set(type, listener);
+      },
+      removeEventListener(type, listener) {
+        if (embedder.listeners.get(type) === listener) embedder.listeners.delete(type);
+      },
+    },
+  };
+  page.parent = embedded ? embedder : page;
   vm.runInNewContext(GEOMETRY, page, { filename: "geometry.js" });
   vm.runInNewContext(BRIDGE, page, { filename: "bridge.js" });
 
@@ -822,11 +893,27 @@ function loadBridge({
     app,
     calls,
     canvas,
-    /** Dispatches webviewerloaded and waits for the viewer to "initialise". */
+    /**
+     * Dispatches webviewerloaded, as pdf.js does: at the embedding page's
+     * document, for a viewer in a frame, else at its own. Then waits for
+     * the viewer to "initialise".
+     */
     async load() {
-      document.listeners.webviewerloaded();
+      if (embedded) {
+        // The viewer's window, as bridge.js sees it: the context's global.
+        const source = vm.runInContext("window", page);
+        /** @type {Function} */ (embedder.listeners.get("webviewerloaded"))({ detail: { source } });
+      } else {
+        document.listeners.webviewerloaded();
+      }
       await settle();
     },
+    embedder,
+    downloadButton,
+    secondaryDownload,
+    menuContainer,
+    toolbarRight,
+    undoBar,
     pdfLib,
     /** The toolbar's elements, in order. */
     get toolbar() {
@@ -3792,4 +3879,349 @@ describe("bridge.js saving a new file", () => {
       assert.deepEqual(bridge.pdflion.dialogs, []);
     });
   }
+});
+
+describe("bridge.js in a frame", () => {
+  it("initialises on webviewerloaded at the embedding page, for its own viewer", async () => {
+    const bridge = loadBridge({ embedded: true });
+    // Another frame's viewer, whose event the page gets too.
+    bridge.embedder.listeners.get("webviewerloaded")?.({ detail: { source: {} } });
+    assert.equal(bridge.page.options, null);
+    await bridge.load();
+    assert.equal(bridge.page.options.enableSplitMerge, true);
+    // It stops listening there.
+    assert.equal(bridge.embedder.listeners.has("webviewerloaded"), false);
+  });
+
+  it("listens at its own document without a page it can reach", async () => {
+    const bridge = loadBridge();
+    assert.equal(bridge.embedder.listeners.size, 0);
+    await bridge.load();
+    assert.equal(bridge.page.options.defaultUrl, "");
+  });
+});
+
+describe("bridge.js without a native menu", () => {
+  const WEB = { nativeMenu: false };
+
+  it("leaves pdf.js the shortcuts a native menu would take", async () => {
+    const bridge = loadBridge({ host: WEB });
+    await bridge.load();
+    for (const key of ["o", "s", "p", "f", "+", "0"]) {
+      assert.equal(bridge.keepsFromPdfjs({ key, metaKey: true }), false, key);
+    }
+  });
+
+  it("adds Undo and Redo before the drawing tools, shown while one is on", async () => {
+    const bridge = loadBridge({ host: WEB });
+    await bridge.load();
+    const group = bridge.toolbar.find((element) => element.id === "pdflionUndoRedo");
+    assert.equal(bridge.toolbar.indexOf(group) + 1, bridge.toolbar.indexOf(bridge.editorModeButtons));
+    assert.equal(group.hidden, true);
+    const [undo, redo] = group.children;
+    assert.deepEqual([undo.id, redo.id], ["pdflionUndo", "pdflionRedo"]);
+
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 15 });
+    assert.equal(group.hidden, false);
+    undo.listeners.click();
+    redo.listeners.click();
+    const actions = bridge.app.eventBus.dispatched.filter(([name]) => name === "editingaction");
+    assert.deepEqual(
+      actions.map(([, data]) => data.name),
+      ["undo", "redo"],
+    );
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 0 });
+    assert.equal(group.hidden, true);
+  });
+
+  it("adds no Undo and Redo where a native menu has them", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.ok(!bridge.toolbar.some((element) => element.id === "pdflionUndoRedo"));
+    assert.equal(bridge.keepsFromPdfjs({ key: "s", metaKey: true }), true);
+  });
+
+  it("adds the host's Open…, New and About to the ⋮ menu", async () => {
+    /** @type {string[]} */
+    const asked = [];
+    const bridge = loadBridge({
+      host: {
+        showOpenPanel: () => asked.push("open"),
+        newDocument: () => asked.push("new"),
+        showAbout: () => asked.push("about"),
+      },
+    });
+    await bridge.load();
+    const items = bridge.menuContainer.children;
+    const ids = items.map((item) => item.id ?? item.className);
+    assert.deepEqual(ids, [
+      "pdflionSecondaryOpen",
+      "pdflionSecondaryNew",
+      "horizontalToolbarSeparator",
+      "secondaryDownload",
+      "horizontalToolbarSeparator",
+      "pdflionSecondaryAbout",
+    ]);
+    for (const id of ["pdflionSecondaryOpen", "pdflionSecondaryNew", "pdflionSecondaryAbout"]) {
+      items.find((item) => item.id === id).listeners.click();
+    }
+    assert.deepEqual(asked, ["open", "new", "about"]);
+    assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 3);
+  });
+});
+
+describe("bridge.js Share", () => {
+  /** @param {object} [host] more of the host */
+  async function sharing(host = {}) {
+    /** @type {(Uint8Array | null)[]} */
+    const shared = [];
+    const bridge = loadBridge({
+      host: {
+        share: async (/** @type {Uint8Array | null} */ bytes) => {
+          shared.push(bytes);
+          return true;
+        },
+        ...host,
+      },
+    });
+    await bridge.load();
+    return { bridge, shared };
+  }
+
+  it("adds Share where Download is, in the toolbar and in the ⋮ menu", async () => {
+    const { bridge, shared } = await sharing();
+    const at = bridge.toolbar.indexOf(bridge.downloadButton);
+    assert.equal(bridge.toolbar[at - 1].id, "pdflionShareButton");
+    const items = bridge.menuContainer.children;
+    assert.equal(items[items.indexOf(bridge.secondaryDownload) - 1].id, "pdflionSecondaryShare");
+
+    bridge.openDocument();
+    bridge.toolbar[at - 1].listeners.click();
+    await settle();
+    // Saved, so the host shares what it keeps.
+    assert.deepEqual(shared, [null]);
+  });
+
+  it("saves changes first, and hands over the document if that fails", async () => {
+    const { bridge, shared } = await sharing();
+    const storage = bridge.openDocument({ formData: true });
+    storage.onSetModified();
+    assert.equal(await bridge.run("share"), true);
+    assert.deepEqual(shared, [null]);
+    assert.equal(bridge.pdflion.writes.length, 1);
+
+    storage.onSetModified();
+    bridge.pdflion.answer = null;
+    assert.equal(await bridge.run("share"), true);
+    assert.deepEqual([...(/** @type {Uint8Array} */ (shared[1]))], [1, 2, 3]);
+  });
+
+  it("shows the host's status, whose click shares", async () => {
+    /** @type {((status: string | null) => void) | null} */
+    let report = null;
+    const { bridge, shared } = await sharing({
+      onSaveStatus: (/** @type {(status: string | null) => void} */ callback) => {
+        report = callback;
+      },
+    });
+    const [status] = bridge.toolbarRight.children;
+    assert.equal(status.id, "pdflionSaveStatus");
+    assert.equal(status.hidden, true);
+    /** @type {Function} */ (report)("Not in Files");
+    assert.equal(status.hidden, false);
+    assert.equal(status.children[0].textContent, "Not in Files");
+    bridge.openDocument();
+    status.listeners.click();
+    await settle();
+    assert.equal(shared.length, 1);
+    /** @type {Function} */ (report)(null);
+    assert.equal(status.hidden, true);
+  });
+
+  it("adds neither for a host that doesn't share", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.ok(!bridge.toolbar.some((element) => element.id === "pdflionShareButton"));
+    assert.equal(bridge.toolbarRight.children.length, 0);
+  });
+});
+
+describe("bridge.js changes to annotations", () => {
+  it("counts a stroke of Pencil's open drawing, which isn't an annotation yet", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.eventBus.dispatch("annotationeditoruimanager", { uiManager: bridge.uiManager });
+    // Another change to an empty storage is undone.
+    bridge.uiManager.undo();
+    assert.deepEqual(bridge.pdflion.edited, []);
+    bridge.uiManager.addCommands({ type: 41 });
+    assert.deepEqual(bridge.pdflion.edited, [true]);
+    // pdf.js still gets them.
+    assert.deepEqual(named(bridge.calls, "ui.addCommands"), [["ui.addCommands", { type: 41 }]]);
+  });
+
+  it("counts changes to annotations that are saved already", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const storage = bridge.openDocument();
+    bridge.app.eventBus.dispatch("annotationeditoruimanager", { uiManager: bridge.uiManager });
+    storage.add(["pdfjs_internal_editor_0", {}]);
+    storage.onSetModified();
+    await bridge.run("save");
+    assert.equal(bridge.pdflion.edited.at(-1), false);
+    // A drawing moved: pdf.js's storage doesn't hear of it.
+    bridge.uiManager.addCommands({ type: 0 });
+    assert.equal(bridge.pdflion.edited.at(-1), true);
+  });
+
+  it("ends Pencil's open drawing before saving, so that it's saved, and unselects nothing", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const storage = bridge.openDocument({ numPages: 2 });
+    /** @type {number[]} */
+    const ended = [];
+    bridge.uiManager.getLayer = (/** @type {number} */ index) => ({
+      commitOrRemove: () => ended.push(index),
+    });
+    storage.onSetModified();
+    await bridge.run("save");
+    assert.deepEqual(ended, [0, 1]);
+    assert.deepEqual(named(bridge.calls, "ui.unselectAll"), []);
+  });
+});
+
+describe("bridge.js autosave", () => {
+  const AUTOSAVE = { autosave: true };
+
+  /** @param {object} [options] for openDocument() */
+  async function autosaving(options = {}) {
+    const bridge = loadBridge({ host: AUTOSAVE });
+    await bridge.load();
+    const storage = bridge.openDocument(options);
+    return { bridge, storage };
+  }
+
+  it("saves 2 s after the last change to form values or annotations", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { bridge, storage } = await autosaving({ formData: true });
+    storage.onSetModified();
+    t.mock.timers.tick(1999);
+    assert.equal(bridge.pdflion.writes.length, 0);
+    t.mock.timers.tick(1);
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 1);
+    assert.equal(bridge.pdflion.edited.at(-1), false);
+  });
+
+  it("waits longer for larger documents, up to 30 s", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const body = new Uint8Array(45_000_000);
+    const bridge = loadBridge({
+      host: AUTOSAVE,
+      fetch: async () =>
+        new Response(body, { headers: { "Content-Length": String(body.length), ETag: '"1"' } }),
+    });
+    await bridge.load();
+    await bridge.app.open({ url: "/doc/t/a.pdf" });
+    const storage = bridge.openDocument({ formData: true });
+    storage.onSetModified();
+    // 2 s, and 1 s for each 10 MB.
+    t.mock.timers.tick(5999);
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 0);
+    t.mock.timers.tick(1);
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 1);
+  });
+
+  it("waits 30 s after page changes, and longer while pdf.js offers to undo them", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { bridge } = await autosaving({ numPages: 2 });
+    bridge.changePages([2, 1]);
+    bridge.undoBar.classes.delete("hidden");
+    t.mock.timers.tick(30_000);
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 0);
+    bridge.undoBar.classes.add("hidden");
+    t.mock.timers.tick(30_000);
+    for (let i = 0; i < 5; i++) await settle();
+    assert.equal(bridge.pdflion.writes.length, 1);
+  });
+
+  it("waits while a stroke is being drawn", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { bridge, storage } = await autosaving({ formData: true });
+    storage.onSetModified();
+    bridge.document.drawing = true;
+    t.mock.timers.tick(2000);
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 0);
+    bridge.document.drawing = false;
+    t.mock.timers.tick(2000);
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 1);
+  });
+
+  it("saves at once when the page is hidden, and for saveNow", async () => {
+    const { bridge, storage } = await autosaving({ formData: true });
+    storage.onSetModified();
+    bridge.document.visibilityState = "hidden";
+    bridge.document.listeners.visibilitychange();
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 1);
+
+    storage.onSetModified();
+    assert.equal(await bridge.run("saveNow"), true);
+    assert.equal(bridge.pdflion.writes.length, 2);
+    // Nothing to save is saved already.
+    assert.equal(await bridge.run("saveNow"), true);
+    assert.equal(bridge.pdflion.writes.length, 2);
+  });
+
+  it("doesn't save by itself for a host that saves on Save", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const bridge = loadBridge();
+    await bridge.load();
+    const storage = bridge.openDocument({ formData: true });
+    storage.onSetModified();
+    t.mock.timers.tick(60_000);
+    await settle();
+    assert.equal(bridge.pdflion.writes.length, 0);
+  });
+
+  it("asks what saving drops before a page change, not when it saves", async () => {
+    const { bridge } = await autosaving({ numPages: 2, holds: { metadata: {} } });
+    await settle();
+    // A press on a thumbnail, which pdf.js would drag, waits for the answer.
+    const press = bridge.fire("pointerdown", {
+      target: element("#thumbnailsView > .thumbnail > .thumbnailImageContainer"),
+    });
+    assert.equal(press.stopped, true);
+    bridge.fire("pointermove", { clientX: 20, clientY: 0 });
+    await settle();
+    assert.deepEqual(bridge.pdflion.dialogs, [["rewrite", ["xmp"]]]);
+
+    // Agreed, the next drag goes ahead, and saving doesn't ask again.
+    const next = bridge.fire("pointerdown", {
+      target: element("#thumbnailsView > .thumbnail > .thumbnailImageContainer"),
+    });
+    assert.equal(next.stopped, false);
+    bridge.changePages([2, 1]);
+    assert.equal(await bridge.run("saveNow"), true);
+    assert.equal(bridge.pdflion.dialogs.length, 1);
+    assert.equal(bridge.pdflion.writes.length, 1);
+  });
+
+  it("drops a page change whose loss the user doesn't agree to", async () => {
+    const { bridge } = await autosaving({ numPages: 2, holds: { metadata: {} } });
+    await settle();
+    bridge.pdflion.dialogAnswer = false;
+    const item = element("#viewsManagerStatusActionCopy, #viewsManagerStatusActionCut, #viewsManagerStatusActionDelete");
+    const click = bridge.fire("click", { target: item });
+    assert.equal(click.prevented, true);
+    await settle();
+    assert.deepEqual(bridge.pdflion.dialogs, [["rewrite", ["xmp"]]]);
+    assert.equal(item.clicks, 0);
+  });
 });

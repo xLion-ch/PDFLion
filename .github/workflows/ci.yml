@@ -6,7 +6,8 @@
 # version (scripts/version.js), which would keep a copy installed from one
 # from updating to the releases below it. A push that changes only Markdown
 # runs nothing, so it makes no release, but a pull request always runs, since
-# a required check that never runs blocks the merge.
+# a required check that never runs blocks the merge. It also builds and tests
+# the web app, and deploys nothing of it yet.
 #
 # Only GitHub's own actions, each pinned to the commit of its release, and
 # the GitHub CLI.
@@ -203,6 +204,82 @@ jobs:
           path: |
             playwright-report/
             test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The web app (scripts/build-web.js), tested in Playwright's WebKit, as an
+  # iPad, and its Chromium, as an Android tablet, on macOS, whose WebKit is
+  # closest to Safari's. It deploys nothing yet. A pull request from this
+  # repository keeps the build, to try on an iPad before merging.
+  web:
+    name: web
+    needs: pdfjs
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      # The whole history, since the version counts its commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Its build comes from the pdfjs job.
+      - name: Check out pdf.js
+        run: git submodule update --init --depth 1 vendor/pdf.js
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download the pdf.js build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pdfjs
+          path: vendor/pdf.js/build
+
+      - name: Check the pdf.js build against the pinned commit
+        run: node scripts/update-pdfjs.js --check-build
+
+      - name: Download Playwright's WebKit and Chromium
+        run: npx playwright install webkit chromium
+
+      - name: Web tests
+        run: npm run test:web
+
+      - name: Work out the version
+        id: version
+        env:
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: echo "version=$(node scripts/version.js ${PULL_REQUEST:+--pr "$PULL_REQUEST"})" >> "$GITHUB_OUTPUT"
+
+      # Not for a pull request from a fork, whose build comes from code nobody
+      # has reviewed. Compared by name, as for the installers.
+      - name: Build the web app as this version
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/build-web.js --version "$VERSION"
+
+      - name: Upload the web app
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: PDFLion-${{ steps.version.outputs.version }}-web
+          path: dist/web
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Playwright's report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-web
+          path: |
+            playwright-report/web/
+            test-results/web/
           if-no-files-found: ignore
           retention-days: 14
 

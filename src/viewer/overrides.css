@@ -188,6 +188,72 @@
   mask-image: url(/pdflion/icons/ink_eraser.svg);
 }
 
+/* The web app's: Share, its status, Undo and Redo, and its items in the ⋮ menu. */
+:is(#pdflionShareButton, #pdflionSecondaryShare)::before {
+  mask-image: url(/pdflion/icons/ios_share.svg);
+}
+
+#pdflionUndo::before {
+  mask-image: url(/pdflion/icons/undo.svg);
+}
+
+#pdflionRedo::before {
+  mask-image: url(/pdflion/icons/redo.svg);
+}
+
+#pdflionSecondaryOpen::before {
+  mask-image: url(/pdflion/icons/folder_open.svg);
+}
+
+#pdflionSecondaryNew::before {
+  mask-image: url(/pdflion/icons/note_add.svg);
+}
+
+#pdflionSecondaryAbout::before {
+  mask-image: url(/pdflion/icons/info.svg);
+}
+
+#pdflionUndoRedo[hidden] {
+  display: none;
+}
+
+/*
+ * The status, such as "Not in Files", as Material's assist chip: its icon and
+ * its label, which goes from pdf.js's medium view on.
+ */
+#pdflionSaveStatus {
+  aspect-ratio: auto;
+  gap: 8px;
+  padding-inline: 8px 12px;
+  border: 1px solid var(--md-sys-color-outline-variant, ButtonBorder);
+  border-radius: var(--md-shape-small);
+  white-space: nowrap;
+
+  &::before {
+    mask-image: url(/pdflion/icons/upload_file.svg);
+  }
+
+  > span {
+    width: auto;
+    height: auto;
+  }
+
+  &[hidden] {
+    display: none;
+  }
+}
+
+:where(#toolbarContainer.pdflionToolbarMedium) #pdflionSaveStatus {
+  padding-inline: 0;
+  border: none;
+  aspect-ratio: 1;
+
+  > span {
+    width: 0;
+    height: 0;
+  }
+}
+
 /*
  * The eraser (bridge.js), in its option box: Line and Object, as labelled
  * radio buttons, and its size.
