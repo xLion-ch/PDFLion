@@ -5,13 +5,15 @@
  *
  * The shell is the page, and each tab a frame of it, the viewer's or
  * Home's. The helpers below find them by their URLs, and read the library
- * as the shell keeps it.
+ * as the shell keeps it. Tests of offline use and updates serve a build of
+ * their own (serveApp()), which they can swap or stop.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test as base, expect } from "@playwright/test";
+import { serve } from "../../scripts/serve-web.js";
 
 export { expect };
 
@@ -72,11 +74,93 @@ export const test = base.extend({
  * Opens the app, and waits until Home has drawn.
  *
  * @param {Page} page
+ * @param {string} [url] the app's, if not the tests' server's
  * @returns {Promise<Frame>} Home's frame
  */
-export async function openApp(page) {
-  await page.goto("./");
+export async function openApp(page, url = "./") {
+  await page.goto(url);
   return homeFrame(page);
+}
+
+/**
+ * The paths of the service worker's scripts, which the browser fetches
+ * past every cache whenever it checks for a new version.
+ */
+export const SERVICE_WORKER_SCRIPTS = [
+  "/PDFLion/sw.js",
+  "/PDFLion/shared/ranges.js",
+  "/PDFLion/web/library.js",
+  "/PDFLion/web/precache.js",
+];
+
+/**
+ * Serves a build of the app at /PDFLion/ on a port of its own, as
+ * scripts/serve-web.js does for every test, and notes what's asked for.
+ *
+ * @param {string} root the build's folder
+ * @returns {Promise<{ url: string, requests: string[], close: () => Promise<void> }>}
+ *   the app's URL, the paths asked for, and a way to stop serving, as when
+ *   the network is gone
+ */
+export async function serveApp(root) {
+  const { server, urls } = await serve({ root, port: 0, host: "localhost" });
+  /** @type {string[]} */
+  const requests = [];
+  server.on("request", (/** @type {import("node:http").IncomingMessage} */ request) => {
+    requests.push(new URL(request.url ?? "/", "http://localhost").pathname);
+  });
+  return {
+    url: urls[0],
+    requests,
+    close: () =>
+      new Promise((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      }),
+  };
+}
+
+/**
+ * @param {Page} page
+ * @returns {Promise<string>} the version of the app the page runs, as its
+ *   service worker serves it
+ */
+export function appVersion(page) {
+  return page.evaluate(async () => (await import(new URL("web/version.js", location.href).href)).VERSION);
+}
+
+/**
+ * @param {Page} page
+ * @returns {Promise<any>} the open tabs, as the shell last stored them
+ */
+export function readSession(page) {
+  return page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const open = indexedDB.open("pdflion");
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    const session = await new Promise((resolve, reject) => {
+      const request = database.transaction("session").objectStore("session").get("tabs");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return session;
+  });
+}
+
+/**
+ * @param {Page} page
+ * @returns {string[]} the files of the viewers whose frames are loaded
+ */
+export function loadedDocuments(page) {
+  return page
+    .frames()
+    .map((frame) => URL.parse(frame.url()))
+    .filter((url) => url?.pathname.endsWith("/viewer/web/viewer.html"))
+    .map((url) => decodeURIComponent((url?.searchParams.get("file") ?? "").split("/").pop() ?? ""))
+    .sort();
 }
 
 /**
@@ -296,12 +380,34 @@ export async function drawStroke(page, frame, offset = 0.3) {
 export async function stubShare(page, answer) {
   await page.evaluate((answer) => {
     window.shared = [];
+    window.sharedFiles = [];
     window.shareCalls = 0;
     navigator.canShare = () => true;
     navigator.share = async ({ files }) => {
       window.shareCalls++;
       if (answer === "cancel") throw new DOMException("Share canceled", "AbortError");
-      for (const file of files) window.shared.push({ name: file.name, size: file.size, type: file.type });
+      for (const file of files) {
+        window.shared.push({ name: file.name, size: file.size, type: file.type });
+        window.sharedFiles.push(file);
+      }
     };
   }, answer);
+}
+
+/**
+ * @param {Page} page with `navigator.share` stubbed
+ * @param {number} index
+ * @returns {Promise<{ name: string, type: string, bytes: Buffer }>} the file
+ *   shared at that place, once it has been
+ */
+export async function sharedFile(page, index) {
+  await expect.poll(() => page.evaluate(() => window.sharedFiles.length)).toBeGreaterThan(index);
+  const { name, type, base64 } = await page.evaluate(async (index) => {
+    const file = window.sharedFiles[index];
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let text = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return { name: file.name, type: file.type, base64: btoa(text) };
+  }, index);
+  return { name, type, bytes: Buffer.from(base64, "base64") };
 }

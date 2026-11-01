@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  LIBRARY_VERSION,
+  MAX_LIBRARY_BYTES,
   MAX_SETTINGS_BYTES,
+  backupFileName,
+  documentFiles,
+  readLibraryFile,
   readSettingsFile,
   SETTINGS_VERSION,
+  writeLibraryFile,
   writeSettingsFile,
 } from "../../src/shared/backup.js";
 import { MAX_FAVOURITES } from "../../src/shared/tools.js";
@@ -111,4 +117,115 @@ describe("readSettingsFile", () => {
       assert.deepEqual(readSettingsFile(text), { error });
     });
   }
+});
+
+describe("backup.js Library.json", () => {
+  const ID = "6a432432-3ee3-41f0-a0cc-ea87e5af8db4";
+  const OTHER = "0b2d4a0e-58f1-4d8e-9f5d-2b6a1c3e4f50";
+  const report = {
+    id: ID,
+    name: "Report.pdf",
+    size: 1234,
+    createdAt: 1_700_000_000_000,
+    openedAt: 1_700_000_100_000,
+    modifiedAt: 1_700_000_050_000,
+    revision: 3,
+    exportedRevision: 1,
+    source: /** @type {const} */ ("files"),
+    sha256: "a".repeat(64),
+    file: "Documents/Report.pdf",
+    thumbnail: `Thumbnails/${ID}.png`,
+  };
+  const untitled = {
+    ...report,
+    id: OTHER,
+    name: "Untitled.pdf",
+    revision: 0,
+    exportedRevision: -1,
+    source: /** @type {const} */ ("new"),
+    sha256: null,
+    file: "Documents/Untitled.pdf",
+    thumbnail: null,
+  };
+
+  it("names a backup by the local date", () => {
+    assert.equal(backupFileName(new Date(2026, 9, 31, 23, 59)), "PDFLion Backup 2026-10-31.zip");
+    assert.equal(backupFileName(new Date(2027, 0, 2)), "PDFLion Backup 2027-01-02.zip");
+  });
+
+  it("gives each document a file of its own name, with numbers for repeats", () => {
+    const files = documentFiles([
+      { id: "a", name: "Report.pdf" },
+      { id: "b", name: "report.pdf" },
+      { id: "c", name: "Report 2.pdf" },
+      { id: "d", name: "Notes" },
+      { id: "e", name: `${"x".repeat(251)}.pdf` },
+      { id: "f", name: `${"x".repeat(251)}.pdf` },
+    ]);
+    assert.deepEqual([...files.values()].slice(0, 4), [
+      "Documents/Report.pdf",
+      "Documents/report 2.pdf",
+      "Documents/Report 2 2.pdf",
+      "Documents/Notes",
+    ]);
+    // Still a name of at most 255 characters.
+    assert.equal(files.get("f"), `Documents/${"x".repeat(249)} 2.pdf`);
+  });
+
+  it("writes the documents' records, which it reads back", () => {
+    const text = writeLibraryFile([report, untitled], exported);
+    const file = JSON.parse(text);
+    assert.equal(file.format, "pdflion-library");
+    assert.equal(file.version, LIBRARY_VERSION);
+    assert.deepEqual(file.exportedBy, { app: "1.0.412", platform: "darwin" });
+    assert.deepEqual(readLibraryFile(text), { documents: [report, untitled], rejected: 0 });
+  });
+
+  it("drops what it doesn't know, and records that aren't right", () => {
+    const wrong = [
+      { ...report, id: "../x" },
+      { ...report, id: ID.toUpperCase() },
+      { ...report, name: "a/b.pdf" },
+      { ...report, name: "" },
+      { ...report, name: "x".repeat(256) },
+      { ...report, size: 0 },
+      { ...report, openedAt: "yesterday" },
+      { ...report, revision: -1 },
+      { ...report, exportedRevision: 4 },
+      { ...report, exportedRevision: -2 },
+      { ...report, source: "web" },
+      { ...report, sha256: "A".repeat(64) },
+      { ...report, file: "../Report.pdf" },
+      { ...report, file: "Documents/a/b.pdf" },
+      { ...report, file: "Documents/" },
+      { ...report, thumbnail: `Thumbnails/${OTHER}.png` },
+      null,
+      "Report.pdf",
+    ];
+    const text = JSON.stringify({
+      format: "pdflion-library",
+      version: 1,
+      documents: [{ ...report, extra: "x" }, ...wrong, { ...report, file: "Documents/Copy.pdf" }, { ...untitled, file: report.file }],
+    });
+    // The first of each id and of each file only.
+    assert.deepEqual(readLibraryFile(text), { documents: [report], rejected: wrong.length + 2 });
+  });
+
+  it("refuses another format, a newer version, and a file too large", () => {
+    assert.deepEqual(readLibraryFile("{"), { error: "not-library" });
+    assert.deepEqual(readLibraryFile(JSON.stringify({ format: "pdflion-settings", version: 1, documents: [] })), {
+      error: "not-library",
+    });
+    assert.deepEqual(readLibraryFile(JSON.stringify({ format: "pdflion-library", version: 1 })), {
+      error: "not-library",
+    });
+    assert.deepEqual(readLibraryFile(JSON.stringify({ format: "pdflion-library", version: 2, documents: [] })), {
+      error: "newer",
+    });
+    assert.deepEqual(readLibraryFile(" ".repeat(MAX_LIBRARY_BYTES + 1)), { error: "too-large" });
+    assert.deepEqual(readLibraryFile(`\uFEFF${JSON.stringify({ format: "pdflion-library", version: 1, documents: [] })}`), {
+      documents: [],
+      rejected: 0,
+    });
+  });
 });

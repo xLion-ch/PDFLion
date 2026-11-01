@@ -10,7 +10,7 @@
  *   leaves the revision before it.
  * - `thumbnails`: its first page as a PNG Blob, by its id
  * - `settings`: what the user chose, by name, such as `toolSettings`
- * - `session`: the open tabs, for when iPadOS ends the app
+ * - `session`: the open tabs (session.js), for when iPadOS ends the app
  *
  * Its version goes up with every change of these, and upgrade() takes a
  * database of any earlier version along without losing anything.
@@ -21,6 +21,9 @@ export const DATABASE_NAME = "pdflion";
 
 /** The schema's version. */
 const DATABASE_VERSION = 1;
+
+/** The key of the open tabs in the `session` store. */
+const SESSION_KEY = "tabs";
 
 /** The longest name a document may have, as most file systems allow. */
 const MAX_NAME_LENGTH = 255;
@@ -68,6 +71,23 @@ export function cleanName(name) {
     .trim()
     .slice(0, MAX_NAME_LENGTH);
   return cleaned === "" || cleaned === "." || cleaned === ".." ? null : cleaned;
+}
+
+/** pdf.js reads a PDF whose header is within its first 1024 bytes. */
+const PDF_HEADER = new TextEncoder().encode("%PDF-");
+const PDF_HEADER_WITHIN = 1024;
+
+/**
+ * @param {{ slice: (start: number, end: number) => { arrayBuffer: () => Promise<ArrayBuffer> } }} blob
+ * @returns {Promise<boolean>} whether it has `%PDF-` within its first bytes,
+ *   as a PDF pdf.js opens does
+ */
+export async function hasPdfHeader(blob) {
+  const start = new Uint8Array(await blob.slice(0, PDF_HEADER_WITHIN).arrayBuffer());
+  for (let index = 0; index + PDF_HEADER.length <= start.length; index++) {
+    if (PDF_HEADER.every((byte, offset) => start[index + offset] === byte)) return true;
+  }
+  return false;
 }
 
 /**
@@ -204,6 +224,26 @@ export class Library {
   }
 
   /**
+   * Adds a document from a backup, with its record as the backup has it,
+   * its bytes and its thumbnail, in one transaction, which fails rather than
+   * replace a document of the same id.
+   *
+   * @param {DocumentRecord} record
+   * @param {Blob} blob
+   * @param {Blob | null} thumbnail a PNG
+   */
+  async importDocument(record, blob, thumbnail) {
+    const { id, name, size, createdAt, openedAt, modifiedAt, revision, exportedRevision, source, sha256 } = record;
+    await this.#write(["documents", "bytes", "thumbnails"], (transaction) => {
+      transaction
+        .objectStore("documents")
+        .add({ id, name, size, createdAt, openedAt, modifiedAt, revision, exportedRevision, source, sha256 });
+      transaction.objectStore("bytes").add(blob, id);
+      if (thumbnail) transaction.objectStore("thumbnails").put(thumbnail, id);
+    });
+  }
+
+  /**
    * Stores a new revision of a document.
    *
    * @param {string} id
@@ -301,6 +341,18 @@ export class Library {
   async setSetting(name, value) {
     await this.#write(["settings"], (transaction) => {
       transaction.objectStore("settings").put(value, name);
+    });
+  }
+
+  /** @returns {Promise<unknown>} the open tabs, as stored, which session.js checks */
+  session() {
+    return settled(this.#store("session").get(SESSION_KEY));
+  }
+
+  /** @param {import("./session.js").Session} session the open tabs */
+  async setSession(session) {
+    await this.#write(["session"], (transaction) => {
+      transaction.objectStore("session").put(session, SESSION_KEY);
     });
   }
 

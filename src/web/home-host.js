@@ -6,8 +6,8 @@
  * this classic script into Home's page, after keys.js and before home.js.
  *
  * Open… is a file picker in this page, since iPadOS opens one only in
- * response to a tap. PDFs dropped on Home go to the shell. It runs only in a
- * frame of the shell, like viewer-host.js.
+ * response to a tap. PDFs, backups and settings files dropped on Home go to
+ * the shell. It runs only in a frame of the shell, like viewer-host.js.
  */
 "use strict";
 
@@ -202,11 +202,25 @@
     );
   }
 
+  /** The types of a backup and a settings file, as Files and browsers give them. */
+  const BACKUP_TYPES = ["application/zip", "application/x-zip-compressed", "application/json"];
+
+  /**
+   * @param {DragEvent} event
+   * @returns {boolean} whether it drags a backup or a settings file
+   */
+  function isBackupDrag(event) {
+    return [...(event.dataTransfer?.items ?? [])].some(
+      (item) => item.kind === "file" && BACKUP_TYPES.includes(item.type),
+    );
+  }
+
   // Dropped PDFs open in place of Home, through the shell, which keeps them.
+  // A dropped backup or settings file is imported.
   window.addEventListener(
     "dragover",
     (event) => {
-      if (!isPdfDrag(event)) return;
+      if (!isPdfDrag(event) && !isBackupDrag(event)) return;
       event.preventDefault();
       /** @type {DataTransfer} */ (event.dataTransfer).dropEffect = "copy";
     },
@@ -216,11 +230,16 @@
   window.addEventListener(
     "drop",
     (event) => {
-      if (!isPdfDrag(event)) return;
+      const pdf = isPdfDrag(event);
+      if (!pdf && !isBackupDrag(event)) return;
       event.preventDefault();
-      const files = [.../** @type {DataTransfer} */ (event.dataTransfer).files].filter(
-        (file) => file.type === "application/pdf",
-      );
+      const dropped = [.../** @type {DataTransfer} */ (event.dataTransfer).files];
+      if (!pdf) {
+        const backup = dropped.find((file) => BACKUP_TYPES.includes(file.type));
+        if (backup) send("importFile", backup);
+        return;
+      }
+      const files = dropped.filter((file) => file.type === "application/pdf");
       if (files.length > 0) send("openFiles", files, true);
     },
     true,
