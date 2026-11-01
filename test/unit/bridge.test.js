@@ -793,6 +793,8 @@ function loadBridge({
   const app = {
     initializedPromise: Promise.resolve(),
     eventBus,
+    /** Whether pdf.js has shown the document where it opens. */
+    isInitialViewSet: true,
     url: "/doc/t/a.pdf",
     _docFilename: "a.pdf",
     page: 1,
@@ -800,6 +802,7 @@ function loadBridge({
       /** How many pages the viewer shows, with the page tools' changes. */
       pagesCount: 1,
       currentScaleValue: "auto",
+      isInPresentationMode: false,
       pagesRotation: 0,
       /** @type {Promise<void> | null} */
       pagesPromise: null,
@@ -4195,6 +4198,47 @@ describe("bridge.js changes to annotations", () => {
     await bridge.run("save");
     assert.deepEqual(ended, [0, 1]);
     assert.deepEqual(named(bridge.calls, "ui.unselectAll"), []);
+  });
+});
+
+describe("bridge.js view", () => {
+  /**
+   * @param {number} page
+   * @param {number | string} scale
+   * @returns {{ location: object }} pdf.js's updateviewarea event
+   */
+  const viewArea = (page, scale) => ({
+    location: { pageNumber: page, scale, left: -8.4, top: 700.2, rotation: 0, pdfOpenParams: "#x" },
+  });
+
+  it("tells a host with setView where the document is, at most every 500 ms", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    /** @type {object[]} */
+    const views = [];
+    const bridge = loadBridge({ host: { setView: (/** @type {object} */ view) => views.push({ ...view }) } });
+    await bridge.load();
+    bridge.app.eventBus.dispatch("updateviewarea", viewArea(2, 100));
+    bridge.app.eventBus.dispatch("updateviewarea", viewArea(3, "page-fit"));
+    t.mock.timers.tick(499);
+    assert.deepEqual(views, []);
+    t.mock.timers.tick(1);
+    assert.deepEqual(views, [{ page: 3, zoom: "page-fit", left: -8.4, top: 700.2 }]);
+
+    // Not before pdf.js has shown the document where it opens, nor in
+    // Presentation Mode.
+    bridge.app.isInitialViewSet = false;
+    bridge.app.eventBus.dispatch("updateviewarea", viewArea(4, 100));
+    bridge.app.isInitialViewSet = true;
+    bridge.app.pdfViewer.isInPresentationMode = true;
+    bridge.app.eventBus.dispatch("updateviewarea", viewArea(5, 100));
+    t.mock.timers.tick(1000);
+    assert.equal(views.length, 1);
+  });
+
+  it("tells a host without setView nothing", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    assert.doesNotThrow(() => bridge.app.eventBus.dispatch("updateviewarea", viewArea(2, 100)));
   });
 });
 

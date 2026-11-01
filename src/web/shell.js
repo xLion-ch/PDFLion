@@ -14,6 +14,13 @@
  * Documents save by themselves (bridge.js's autosave) into the library,
  * which leaves the files they came from as they were, so the shell says so,
  * and Share sends a document elsewhere.
+ *
+ * iPadOS limits a web app's memory, and each frame runs its own pdf.js, so
+ * only the documents shown last keep their frames: the others sleep, saved,
+ * and load again where they were once they're shown. The open tabs are kept
+ * in the library (session.js), since iPadOS ends a suspended web app without
+ * warning, and come back at the next launch. New versions come through the
+ * service worker (updates.js).
  */
 import { blankPdf, paperSize } from "../shared/blank.js";
 import { CREDITS } from "../shared/credits.js";
@@ -31,6 +38,7 @@ import {
   DELETE,
   OK,
   RENAME,
+  RESTART_NOW,
   SHARE,
   closeUnsavedPrompt,
   closedNotInFiles,
@@ -42,19 +50,25 @@ import {
   openError,
   pageDialog,
   renamePrompt,
+  restartUnsavedPrompt,
   saveError,
   savedNotInFiles,
   savedNow,
   shareError,
   shareReady,
+  webAppNotDownloaded,
   webAppUnavailable,
 } from "../shared/wording.js";
 import * as dialogs from "./dialogs.js";
 import { Library, cleanName, freeName, isDocumentId, isNotInFiles } from "./library.js";
+import { parseSession, parseView, viewHash } from "./session.js";
+import { checkForUpdates, followUpdates } from "./updates.js";
 import { PDFJS_VERSION, VERSION } from "./version.js";
 
 /** @typedef {import("./library.js").DocumentRecord} DocumentRecord */
 /** @typedef {import("../shared/tools.js").ToolSettings} ToolSettings */
+/** @typedef {import("./session.js").View} View */
+/** @typedef {import("./session.js").Session} Session */
 
 /** The one window, as the desktop's tablist.js counts them. */
 const WINDOW = 0;
@@ -80,6 +94,19 @@ const PDF_HEADER_WITHIN = 1024;
 /** How long closing a tab waits for its document to save, in ms. */
 const CLOSE_SAVE_TIMEOUT = 60_000;
 
+/**
+ * How many documents keep their frames loaded. The others sleep. A guess
+ * until it's tried on an iPad, whose memory decides it.
+ */
+const MAX_LOADED_DOCUMENTS = 4;
+
+/**
+ * How long the session waits to be stored after a document's view changed,
+ * in ms, since it changes with every scroll. Other changes are stored at
+ * once.
+ */
+const VIEW_DELAY = 1000;
+
 /** Which modifier the shortcuts use here: ⌘ on Apple's keyboards. */
 const commandKey = PDFLionKeys.commandKeyHere();
 
@@ -89,8 +116,13 @@ const commandKey = PDFLionKeys.commandKeyHere();
  * @property {"document" | "home"} kind
  * @property {string | null} documentId the library's, for a document
  * @property {string} name what the strip shows
- * @property {HTMLIFrameElement} frame the viewer or Home
+ * @property {HTMLIFrameElement | null} frame the viewer or Home, or null
+ *   while the tab sleeps
  * @property {MessagePort | null} port to the frame's host, once it has connected
+ * @property {View | null} view where the document was, as its viewer last
+ *   said, which it loads at after sleeping or a launch
+ * @property {number} shownAt when it was last shown, by a count of tabs shown
+ * @property {boolean} sleeping whether it's saving before it sleeps
  * @property {boolean} edited whether the document has changes that aren't
  *   stored yet
  * @property {boolean} closing
@@ -138,6 +170,18 @@ let stripMenuAt = { x: 0, y: 0 };
 /** Whether an update of every Home is on its way. */
 let updatingHomes = false;
 
+/** How many times a tab was shown, for the tabs' `shownAt`. */
+let shownCount = 0;
+
+/** Whether the session is stored with each change, once it's restored. */
+let keepingSession = false;
+
+/** @type {ReturnType<typeof setTimeout> | null} the session's next storing */
+let sessionTimer = null;
+
+/** When the session is next stored, in ms. */
+let sessionDue = 0;
+
 const frames = /** @type {HTMLElement} */ (document.getElementById("frames"));
 
 // The shell runs only as the page itself, never in another's frame, since a
@@ -151,14 +195,18 @@ if (window.top === window) {
   window.addEventListener("message", connect);
   start().catch((error) => {
     console.error("PDFLion couldn't start:", error);
-    dialogs.alert(webAppUnavailable(String(error?.message ?? error)));
+    dialogs.alert(
+      error instanceof DownloadError
+        ? webAppNotDownloaded()
+        : webAppUnavailable(String(error?.message ?? error)),
+    );
   });
 } else {
   document.body.replaceChildren();
 }
 
 async function start() {
-  await controlledByServiceWorker();
+  const registration = await controlledByServiceWorker();
   library = await Library.open();
   // Asks the browser to keep the library when storage runs low. Safari
   // answers without asking the user.
@@ -172,12 +220,22 @@ async function start() {
   followKeys();
   followDrops();
   stopPinching();
-  showHome();
+  if (!(await restoreSession())) showHome();
+  keepSession();
+  followUpdates(registration, { version: VERSION, beforeRestart: saveEverything });
 }
 
+/** The first download of the app failed, or wasn't what its service worker lists. */
+class DownloadError extends Error {}
+
 /**
- * Registers the service worker, which serves the library's documents, and
- * waits until it controls the page, so that the frames load through it.
+ * Registers the service worker, which keeps the app for offline use and
+ * serves the library's documents, and waits until it controls the page, so
+ * that the frames load through it. The first time, that's once it has
+ * downloaded the app.
+ *
+ * @returns {Promise<ServiceWorkerRegistration>}
+ * @throws {DownloadError} if the first download fails
  */
 async function controlledByServiceWorker() {
   if (!("serviceWorker" in navigator)) throw new Error("This browser has no service workers.");
@@ -185,18 +243,33 @@ async function controlledByServiceWorker() {
   const controlled = new Promise((resolve) =>
     serviceWorker.addEventListener("controllerchange", resolve, { once: true }),
   );
-  await serviceWorker.register(new URL("sw.js", BASE), {
+  const registration = await serviceWorker.register(new URL("sw.js", BASE), {
     type: "module",
     scope: BASE.pathname,
     updateViaCache: "none",
   });
-  if (serviceWorker.controller) return;
-  // An active worker that doesn't control the page, as after a reload that
-  // bypassed it, takes it over when asked.
-  const { active } = await serviceWorker.ready;
-  if (serviceWorker.controller) return;
-  active?.postMessage("claim");
-  await controlled;
+  if (serviceWorker.controller) return registration;
+  // Without an active worker, the first install, which may fail.
+  const { installing } = registration;
+  const failed = new Promise((_resolve, reject) => {
+    installing?.addEventListener("statechange", () => {
+      if (installing.state === "redundant" && !registration.active) {
+        reject(new DownloadError("The service worker didn't install."));
+      }
+    });
+  });
+  await Promise.race([
+    (async () => {
+      // An active worker that doesn't control the page, as after a reload
+      // that bypassed it, takes it over when asked.
+      const { active } = await serviceWorker.ready;
+      if (serviceWorker.controller) return;
+      active?.postMessage("claim");
+      await controlled;
+    })(),
+    failed,
+  ]);
+  return registration;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,37 +330,69 @@ document.addEventListener(
 );
 
 /**
- * Adds a tab, which loads its page, but doesn't show it.
+ * Adds a tab, but doesn't show it.
  *
  * @param {Tab["kind"]} kind
  * @param {string | null} documentId
  * @param {string} name
  * @param {number} index where it goes in the strip
+ * @param {{ load?: boolean, view?: View | null }} [options] whether it loads
+ *   its page now, rather than once it's shown, and where its document was
  * @returns {Tab}
  */
-function addTab(kind, documentId, name, index) {
-  const frame = document.createElement("iframe");
-  frame.className = "page";
-  frame.title = name;
-  frame.allow = "fullscreen; clipboard-write";
-  frame.src =
-    kind === "home" ? HOME_PAGE.href : viewerUrl(/** @type {string} */ (documentId), name);
+function addTab(kind, documentId, name, index, { load = true, view = null } = {}) {
   /** @type {Tab} */
   const tab = {
     id: crypto.randomUUID(),
     kind,
     documentId,
     name,
-    frame,
+    frame: null,
     port: null,
+    view,
+    shownAt: 0,
+    sleeping: false,
     edited: false,
     closing: false,
     saveFailed: false,
   };
   tabs.set(tab.id, tab);
   tabList.add(WINDOW, tab.id, index);
-  frames.append(frame);
+  if (load) loadFrame(tab);
   return tab;
+}
+
+/**
+ * Gives a tab its frame, which loads its page: a document where it was.
+ *
+ * @param {Tab} tab
+ */
+function loadFrame(tab) {
+  const frame = document.createElement("iframe");
+  frame.className = "page";
+  frame.title = tab.name;
+  frame.allow = "fullscreen; clipboard-write";
+  frame.src =
+    tab.kind === "home"
+      ? HOME_PAGE.href
+      : viewerUrl(/** @type {string} */ (tab.documentId), tab.name, tab.view);
+  tab.frame = frame;
+  frames.append(frame);
+}
+
+/**
+ * Takes a tab's frame away, without saving.
+ *
+ * @param {Tab} tab
+ */
+function unloadFrame(tab) {
+  tab.port?.close();
+  tab.port = null;
+  tab.frame?.remove();
+  tab.frame = null;
+  for (const pending of [...pendingCommands.values()]) {
+    if (pending.tab === tab) pending.settle(null);
+  }
 }
 
 /**
@@ -298,22 +403,47 @@ function addTab(kind, documentId, name, index) {
 function removeTab(tab) {
   if (!tabs.delete(tab.id)) return;
   tabList.remove(tab.id);
-  tab.port?.close();
-  tab.port = null;
-  tab.frame.remove();
-  for (const pending of [...pendingCommands.values()]) {
-    if (pending.tab === tab) pending.settle(null);
-  }
+  unloadFrame(tab);
   render();
+}
+
+/**
+ * Has the documents shown longest ago sleep, beyond MAX_LOADED_DOCUMENTS.
+ */
+function sleepTabs() {
+  const active = activeTab();
+  const loaded = [...tabs.values()].filter((tab) => tab.kind === "document" && tab.frame);
+  const sleepy = loaded
+    .filter((tab) => tab !== active && !tab.sleeping && !tab.closing)
+    .sort((a, b) => a.shownAt - b.shownAt);
+  const excess = loaded.length - loaded.filter((tab) => tab.sleeping).length - MAX_LOADED_DOCUMENTS;
+  for (const tab of sleepy.slice(0, Math.max(0, excess))) sleep(tab);
+}
+
+/**
+ * Saves a tab's document, then takes its frame away, unless it's shown
+ * meanwhile, or its changes couldn't be saved.
+ *
+ * @param {Tab} tab
+ */
+async function sleep(tab) {
+  tab.sleeping = true;
+  const saved = await runCommand(tab, "saveNow", CLOSE_SAVE_TIMEOUT);
+  tab.sleeping = false;
+  if (!tabs.has(tab.id) || tab.closing || tab === activeTab()) return;
+  if (tab.edited && saved !== true) return;
+  unloadFrame(tab);
 }
 
 /**
  * @param {string} id
  * @param {string} name
+ * @param {View | null} [view] where to show it
  * @returns {string} the viewer's URL for a document of the library
  */
-function viewerUrl(id, name) {
-  return `${VIEWER_PAGE.href}?${new URLSearchParams({ file: documentPath(id, name) })}`;
+function viewerUrl(id, name, view = null) {
+  const hash = view ? `#${viewHash(view)}` : "";
+  return `${VIEWER_PAGE.href}?${new URLSearchParams({ file: documentPath(id, name) })}${hash}`;
 }
 
 /**
@@ -344,6 +474,7 @@ function render() {
   const ids = tabList.tabsOf(WINDOW);
   const active = activeTab();
   for (const tab of tabs.values()) {
+    if (!tab.frame) continue;
     const shown = tab === active;
     tab.frame.classList.toggle("active", shown);
     tab.frame.inert = !shown;
@@ -363,11 +494,13 @@ function render() {
       };
     }),
   );
+  scheduleSession();
 }
 
 /**
- * Shows a tab. The document of the tab left saves now, so that changes with
- * pdf.js's page tools, which autosave holds back, are stored.
+ * Shows a tab, loading it if it sleeps. The document of the tab left saves
+ * now, so that changes with pdf.js's page tools, which autosave holds back,
+ * are stored. Documents shown longest ago may sleep.
  *
  * @param {Tab} tab
  * @param {{ focus?: boolean }} [options] whether keys then go to it
@@ -375,9 +508,12 @@ function render() {
 function activate(tab, { focus = true } = {}) {
   const previous = activeTab();
   tabList.activate(tab.id);
+  tab.shownAt = ++shownCount;
+  if (!tab.frame) loadFrame(tab);
   render();
   if (previous && previous !== tab && previous.edited) runCommand(previous, "saveNow");
-  if (focus) tab.frame.contentWindow?.focus();
+  if (focus) tab.frame?.contentWindow?.focus();
+  sleepTabs();
 }
 
 /** Shows Home: the home tab, or a new one after the active tab. */
@@ -501,7 +637,7 @@ function runCommand(tab, command, timeout = 0) {
  */
 function connect(event) {
   if (event.origin !== location.origin || event.data?.pdflion !== "connect") return;
-  const tab = [...tabs.values()].find((other) => other.frame.contentWindow === event.source);
+  const tab = [...tabs.values()].find((other) => other.frame?.contentWindow === event.source);
   const [port] = event.ports;
   if (!tab || !port || event.data.kind !== (tab.kind === "home" ? "home" : "viewer")) return;
   tab.port?.close();
@@ -554,6 +690,12 @@ const VIEWER_MESSAGES = {
   },
   closeMenu: () => dialogs.closeMenus(),
   showHome: () => showHome(),
+  view(tab, value) {
+    const view = parseView(value);
+    if (!view) return;
+    tab.view = view;
+    scheduleSession(VIEW_DELAY);
+  },
   thumbnail(tab, png) {
     if (tab.documentId && isThumbnail(png)) keepThumbnail(tab.documentId, png);
   },
@@ -594,7 +736,7 @@ const HOME_MESSAGES = {
  * @returns {{ x: number, y: number }} that place in the shell
  */
 function inFrame(tab, x, y) {
-  const { left, top } = tab.frame.getBoundingClientRect();
+  const { left, top } = tab.frame?.getBoundingClientRect() ?? { left: 0, top: 0 };
   const finite = (/** @type {unknown} */ value) =>
     typeof value === "number" && Number.isFinite(value) ? value : 0;
   return { x: left + finite(x), y: top + finite(y) };
@@ -969,7 +1111,7 @@ async function renameDocument(documentId) {
   for (const tab of tabs.values()) {
     if (tab.documentId !== documentId) continue;
     tab.name = name;
-    tab.frame.title = name;
+    if (tab.frame) tab.frame.title = name;
   }
   render();
   updateHomes();
@@ -993,7 +1135,8 @@ function showDocumentMenu(documentId, at) {
 }
 
 /**
- * Home's ⓘ menu: About, pen-only drawing, and how much the library takes.
+ * Home's ⓘ menu: About, Check for Updates…, pen-only drawing, and how much
+ * the library takes.
  *
  * @param {{ x: number, y: number }} at
  */
@@ -1002,6 +1145,7 @@ async function showInfoMenu(at) {
   /** @type {import("./dialogs.js").MenuItem[]} */
   const items = [
     { label: "About PDFLion", action: showAbout },
+    { label: "Check for Updates…", action: checkForUpdates },
     { label: "", separator: true },
     {
       label: "Draw Only with a Pen",
@@ -1107,6 +1251,115 @@ async function homeState() {
     open: tabOf(record.id) !== null,
     status: isNotInFiles(record) ? notInFilesLabel(record.source === "new") : null,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// The session
+
+/**
+ * Opens the tabs the session kept, each loading once it's shown, but for
+ * the active one, which shows. Documents deleted meanwhile are left out.
+ *
+ * @returns {Promise<boolean>} whether any tab opened
+ */
+async function restoreSession() {
+  const session = parseSession(await library.session());
+  const records = new Map((await library.documents()).map((record) => [record.id, record]));
+  /** @type {Tab | null} */
+  let active = null;
+  /** @type {Tab | null} */
+  let last = null;
+  for (const [index, kept] of session.tabs.entries()) {
+    const record = kept.kind === "document" ? records.get(kept.documentId) : null;
+    if (kept.kind === "document" && !record) continue;
+    last = record
+      ? addTab("document", record.id, record.name, tabs.size, { load: false, view: kept.view })
+      : addTab("home", null, "Home", tabs.size, { load: false });
+    if (index === session.active) active = last;
+  }
+  const shown = active ?? last;
+  if (shown) activate(shown);
+  return shown !== null;
+}
+
+/** @returns {Session} the open tabs, as session.js keeps them */
+function currentSession() {
+  const ids = tabList.tabsOf(WINDOW);
+  const active = tabList.activeTab(WINDOW);
+  return {
+    tabs: ids.map((id) => {
+      const tab = /** @type {Tab} */ (tabs.get(id));
+      return tab.kind === "home"
+        ? { kind: "home" }
+        : { kind: "document", documentId: /** @type {string} */ (tab.documentId), view: tab.view };
+    }),
+    active: active ? ids.indexOf(active) : -1,
+  };
+}
+
+/**
+ * Stores the session from now on: after each change, a view's a while
+ * after, and at once when the app is hidden, since iPadOS may end it then.
+ */
+function keepSession() {
+  keepingSession = true;
+  storeSession();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") storeSession();
+  });
+  window.addEventListener("pagehide", () => storeSession());
+}
+
+/**
+ * Stores the session soon, with the changes until then.
+ *
+ * @param {number} [delay] in ms
+ */
+function scheduleSession(delay = 0) {
+  if (!keepingSession) return;
+  const due = Date.now() + delay;
+  if (sessionTimer !== null) {
+    if (sessionDue <= due) return;
+    clearTimeout(sessionTimer);
+  }
+  sessionDue = due;
+  sessionTimer = setTimeout(storeSession, delay);
+}
+
+/** Stores the session now. */
+async function storeSession() {
+  if (sessionTimer !== null) clearTimeout(sessionTimer);
+  sessionTimer = null;
+  if (!keepingSession) return;
+  try {
+    await library.setSession(currentSession());
+  } catch (error) {
+    console.error("Couldn't keep the open tabs:", error);
+  }
+}
+
+/**
+ * Saves every document and the session, before the page reloads for a new
+ * version.
+ *
+ * @param {boolean} ask whether to ask about changes that couldn't be saved
+ * @returns {Promise<boolean>} whether to go ahead
+ */
+async function saveEverything(ask) {
+  const documents = [...tabs.values()].filter((tab) => tab.kind === "document");
+  const saved = await Promise.all(
+    documents.map((tab) => runCommand(tab, "saveNow", CLOSE_SAVE_TIMEOUT)),
+  );
+  await storeSession();
+  if (!ask) return true;
+  for (const [index, tab] of documents.entries()) {
+    if (!tab.edited || saved[index] === true) continue;
+    const restart = await dialogs.confirm(restartUnsavedPrompt(tab.name), RESTART_NOW, {
+      destructive: true,
+    });
+    if (!restart) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------

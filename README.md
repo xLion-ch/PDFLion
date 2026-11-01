@@ -107,13 +107,15 @@ pdf.js is a Git submodule in `vendor/pdf.js`, pinned to a release and never edit
 
 ### Trying the web app on an iPad
 
-A web app of PDFLion for the iPad is on its way, in `src/web/`. It runs the same viewer in Safari, keeps its own copy of each document, and saves into it by itself, with Share to put a document back into Files. It isn't published yet. `scripts/serve-web.js` serves it at `/PDFLion/`, as GitHub Pages will.
+A web app of PDFLion for the iPad is on its way, in `src/web/`. It runs the same viewer in Safari, keeps its own copy of each document, and saves into it by itself, with Share to put a document back into Files. Once it has run, it works offline, and it updates itself when a new build is served. It isn't published yet. `scripts/serve-web.js` serves it at `/PDFLion/`, as GitHub Pages will.
 
 ```sh
 npm run web:build                 # build dist/web/
 npm run web:serve                 # serve it at http://localhost:8080/PDFLion/
 npm run web:serve -- --https      # the same over HTTPS, for an iPad on the same network
 ```
+
+The app runs from the copy its service worker keeps, so a reload shows the same build. After `npm run web:build`, a build with other files is offered as an update: at once with the ⓘ menu's Check for Updates…, and its Restart Now brings it up.
 
 Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas.
 
@@ -218,14 +220,16 @@ The web app, on an iPad with iPadOS 18 and one with iPadOS 26, in Safari and as 
 - Home's Open… shows the Files picker, and the PDFs picked open as tabs, the first in Home's place. Picking the same file again opens the document PDFLion keeps. A PDF dragged from Files in Split View onto Home, the strip or a document opens too.
 - A change saves by itself after about 2 seconds. The first save ever explains that the file in Files hasn't changed, and later the first save of each document says so in a message at the bottom, with Share…. The toolbar's status and Home's card say "Not in Files", or "Only in PDFLion" for a new document.
 - Share in the toolbar shows the share sheet. Save to Files asks to replace the file there, then replaces it, and the status goes. Mail attaches the document as it is.
-- Drawing, then going to the Home Screen and ending PDFLion in the app switcher, then opening it again, keeps the drawing in the document.
+- Drawing, then going to the Home Screen and ending PDFLion in the app switcher, then opening it again, keeps the drawing in the document, and brings back the tabs, the one that showed, and each document's page and zoom.
+- With six documents open, switching between them keeps working, those not shown for longest load again where they were, and iPadOS doesn't reload the app. A 200 MB PDF opens, and autosaves without stalling drawing.
+- After one launch online, the app and its documents open in Airplane Mode, also after ending it in the app switcher. A new build served meanwhile is offered once Wi-Fi is back, or from the ⓘ menu's Check for Updates…: Restart Now brings it up with the tabs, and Later keeps the old one until the app has been ended.
 - A page deleted in the sidebar asks first if the document has XMP metadata, and is saved once another tab shows or the app is left, and not while pdf.js offers to undo it.
 - With a hardware keyboard, ⌘O, ⌘N, ⌘W, ⌘S, ⇧⌘S, ⇧⌘N, ⌥⌘6, ⇧⌘E, ⇧⌘H, ⌃Tab and ⌃⇧Tab each do one thing, where iPadOS lets them through, and ⌘P, ⌘F and the zoom keys stay pdf.js's.
 - With a trackpad, or a long press of a finger or the Pencil, a card's context menu renames and deletes its document, which asks first, and a tab's closes it or the others. A long press on a favourite shows Remove Favourite, and dragging it on moves it among the others.
 - Drawing with each kind of Apple Pencil keeps up with it, without gaps. The first stroke turns Draw Only with a Pen on, after which fingers scroll and pinch the pages with Pencil, Highlight or the Eraser on, and a palm resting on the screen neither scrolls nor draws. On an iPad with Pencil hover, the Eraser's circle follows the hovering Pencil. Scribble writes into form fields and text boxes.
 - A pinch or a double tap on the toolbar, the strip or Home zooms nothing, and a long press there shows no callout. Buttons, tabs, menu items and cards are easy to tap.
 - In Split View, Slide Over, Stage Manager and iPadOS 26's windows at their smallest, the toolbar fits, putting the drawing tools into one button and Find, Page Overview and Insert Blank Page into the ⋮ menu as it narrows, and nothing is under the window controls.
-- Home's ⓘ menu shows About, with the versions and credits, the pen setting, and the storage the documents take.
+- Home's ⓘ menu shows About, with the versions and credits, Check for Updates…, the pen setting, and the storage the documents take.
 - Links in a document open in Safari, and the viewer and Home opened on their own show nothing.
 
 ## License

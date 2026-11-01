@@ -381,6 +381,36 @@ export function updateNotInstalled(version, { checkForUpdates, needsPassword }) 
 }
 
 /**
+ * The web app's prompt for a new version that has installed, with Restart
+ * Now, Later and Release Notes. It starts by itself once nothing runs the
+ * old one, as when iPadOS has ended the app.
+ *
+ * @param {string | null} version the new one's, if it's known
+ * @returns {Text}
+ */
+export function webUpdateReady(version) {
+  return {
+    message: version ? `PDFLion ${version} is ready.` : "A new version of PDFLion is ready.",
+    detail:
+      "Restart PDFLion to use it: your documents are saved first, and your tabs come back. Otherwise it starts the next time you open PDFLion.",
+  };
+}
+
+/**
+ * The prompt before the web app restarts for an update while a document's
+ * changes couldn't be saved, with Restart Now and Cancel.
+ *
+ * @param {string} name the document's
+ * @returns {Text}
+ */
+export function restartUnsavedPrompt(name) {
+  return {
+    message: `The changes to “${name}” couldn’t be saved.`,
+    detail: "If PDFLion restarts now, they’re lost.",
+  };
+}
+
+/**
  * The web app keeps its own copy of each document and saves into it, which
  * leaves the file in the Files app as it was. These say so: a document whose
  * copy holds changes the file doesn't is "not in Files", and one made in
@@ -513,6 +543,14 @@ export function closeUnsavedPrompt(name) {
  */
 export function shareError(name, { message }) {
   return { message: `“${name}” couldn’t be shared.`, detail: message };
+}
+
+/** @returns {Text} that the web app's first download failed */
+export function webAppNotDownloaded() {
+  return {
+    message: "PDFLion couldn’t be downloaded.",
+    detail: "Check your internet connection, and reload the page.",
+  };
 }
 
 /**

@@ -14,8 +14,9 @@
  * - `web/`: src/web/, with version.js written for this build
  * - `lib/pdf-lib.min.js`: @cantoo/pdf-lib's browser build
  * - `index.html`, `sw.js` and `manifest.webmanifest` at the root, since the
- *   service worker's scope is its folder. sw.js gets the version, so that
- *   each build's differs.
+ *   service worker's scope is its folder. sw.js gets the version, and every
+ *   other file of the build with its SHA-256 and size, which it keeps for
+ *   offline use, so that each build's differs.
  *
  * The stylesheets name their icons from the origin (`/pdflion/icons/`), as
  * the desktop serves them, so they get the app's path before them.
@@ -23,6 +24,7 @@
  *   node scripts/build-web.js [--version <version>] [--out <folder>]
  */
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -129,14 +131,60 @@ export function prefixIcons(css, name) {
 }
 
 /**
+ * @param {string} out the build's folder
+ * @returns {import("../src/web/precache.js").FileList} every file of the
+ *   build but sw.js, with its SHA-256 and size
+ */
+export function fileList(out) {
+  /** @type {import("../src/web/precache.js").FileList} */
+  const files = {};
+  for (const relative of listFiles(out)) {
+    if (relative === "sw.js") continue;
+    const bytes = fs.readFileSync(path.join(out, relative));
+    files[relative] = [crypto.createHash("sha256").update(bytes).digest("hex"), bytes.length];
+  }
+  return files;
+}
+
+/**
+ * @param {import("../src/web/precache.js").FileList} files
+ * @returns {string} an id of the build by its files, for its cache's name
+ */
+export function buildId(files) {
+  return crypto.createHash("sha256").update(JSON.stringify(files)).digest("hex").slice(0, 12);
+}
+
+/**
  * @param {string} source sw.js
  * @param {string} version
- * @returns {string} sw.js for that version
+ * @param {import("../src/web/precache.js").FileList} files every other
+ *   file of the build
+ * @returns {string} sw.js for that version and those files
  */
-export function serviceWorker(source, version) {
-  const line = /^const VERSION = "dev";$/m;
-  if (!line.test(source)) throw new Error('sw.js has no `const VERSION = "dev";`');
-  return source.replace(line, `const VERSION = ${JSON.stringify(version)};`);
+export function serviceWorker(source, version, files) {
+  /** @type {[RegExp, string, string][]} */
+  const lines = [
+    [/^const VERSION = "dev";$/m, 'const VERSION = "dev";', `const VERSION = ${JSON.stringify(version)};`],
+    [/^const BUILD = "dev";$/m, 'const BUILD = "dev";', `const BUILD = ${JSON.stringify(buildId(files))};`],
+    [/^const FILES = \{\};$/m, "const FILES = {};", `const FILES = ${fileListSource(files)};`],
+  ];
+  let result = source;
+  for (const [line, expected, replacement] of lines) {
+    if (!line.test(result)) throw new Error(`sw.js has no \`${expected}\``);
+    result = result.replace(line, () => replacement);
+  }
+  return result;
+}
+
+/**
+ * @param {import("../src/web/precache.js").FileList} files
+ * @returns {string} as a JavaScript object, a file a line
+ */
+function fileListSource(files) {
+  const lines = Object.entries(files).map(
+    ([relative, entry]) => `  ${JSON.stringify(relative)}: ${JSON.stringify(entry)},`,
+  );
+  return lines.length > 0 ? `{\n${lines.join("\n")}\n}` : "{}";
 }
 
 /**
@@ -183,7 +231,6 @@ export function build({ version, out = OUT }) {
   transform(out, "web/web.css", (css) => prefixIcons(css, "web.css"));
   write(out, "web/version.js", versionModule(version, pdfjsVersion()));
   write(out, "index.html", injectShell(fs.readFileSync(path.join(SRC, "web", "index.html"), "utf8")));
-  write(out, "sw.js", serviceWorker(fs.readFileSync(path.join(SRC, "web", "sw.js"), "utf8"), version));
   fs.copyFileSync(path.join(SRC, "web", "manifest.webmanifest"), path.join(out, "manifest.webmanifest"));
 
   fs.mkdirSync(path.join(out, "lib"));
@@ -191,6 +238,10 @@ export function build({ version, out = OUT }) {
     path.join(ROOT, "node_modules", "@cantoo", "pdf-lib", "dist", "pdf-lib.min.js"),
     path.join(out, "lib", "pdf-lib.min.js"),
   );
+
+  // Last, with every other file.
+  const source = fs.readFileSync(path.join(SRC, "web", "sw.js"), "utf8");
+  write(out, "sw.js", serviceWorker(source, version, fileList(out)));
 }
 
 /** @returns {string | null} the pdf.js build's version, from build/version.json */

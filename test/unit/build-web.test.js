@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,8 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   build,
+  buildId,
+  fileList,
   injectHome,
   injectShell,
   injectViewer,
@@ -72,13 +75,25 @@ describe("build-web.js parts", () => {
     assert.throws(() => prefixIcons("a {}", "x.css"), /x\.css has no/);
   });
 
-  it("writes the version into the service worker and version.js", () => {
-    const source = 'import x from "./y.js";\nconst VERSION = "dev";\nconsole.log(VERSION);\n';
+  it("writes the version and the files into the service worker, and the version into version.js", () => {
+    const source = 'import x from "./y.js";\nconst VERSION = "dev";\nconst BUILD = "dev";\nconst FILES = {};\n';
+    const files = { "index.html": /** @type {[string, number]} */ (["a".repeat(64), 12]) };
     assert.equal(
-      serviceWorker(source, "1.2.3-pr.4"),
-      'import x from "./y.js";\nconst VERSION = "1.2.3-pr.4";\nconsole.log(VERSION);\n',
+      serviceWorker(source, "1.2.3-pr.4", files),
+      [
+        'import x from "./y.js";',
+        'const VERSION = "1.2.3-pr.4";',
+        `const BUILD = "${buildId(files)}";`,
+        "const FILES = {",
+        `  "index.html": ["${"a".repeat(64)}",12],`,
+        "};",
+        "",
+      ].join("\n"),
     );
-    assert.throws(() => serviceWorker("const VERSION = 1;", "1.2.3"), /VERSION/);
+    assert.match(buildId(files), /^[0-9a-f]{12}$/);
+    assert.notEqual(buildId(files), buildId({ "index.html": ["b".repeat(64), 12] }));
+    assert.throws(() => serviceWorker("const VERSION = 1;", "1.2.3", files), /VERSION/);
+    assert.throws(() => serviceWorker('const VERSION = "dev";\nconst BUILD = "dev";', "1.2.3", files), /FILES/);
     assert.match(versionModule("1.2.3", "6.4.299"), /VERSION = "1\.2\.3";\nexport const PDFJS_VERSION = "6\.4\.299";/);
   });
 
@@ -144,6 +159,20 @@ describe("build-web.js build", { skip: !fs.existsSync(PDFJS_BUILD) && "there's n
   it("has the version in the service worker and version.js", () => {
     assert.match(fs.readFileSync(path.join(out, "sw.js"), "utf8"), /^const VERSION = "9\.8\.7";$/m);
     assert.match(fs.readFileSync(path.join(out, "web", "version.js"), "utf8"), /"9\.8\.7"/);
+  });
+
+  it("lists every other file in the service worker, with its SHA-256 and size", () => {
+    const listed = fileList(out);
+    assert.deepEqual(Object.keys(listed), files.filter((file) => file !== "sw.js"));
+    const viewer = fs.readFileSync(path.join(out, "viewer", "web", "viewer.html"));
+    assert.deepEqual(listed["viewer/web/viewer.html"], [
+      crypto.createHash("sha256").update(viewer).digest("hex"),
+      viewer.length,
+    ]);
+    const source = fs.readFileSync(path.join(out, "sw.js"), "utf8");
+    assert.ok(source.includes(`const BUILD = "${buildId(listed)}";`));
+    assert.ok(source.includes(`  "web/version.js": ${JSON.stringify(listed["web/version.js"])},`));
+    assert.ok(files.includes("web/precache.js"));
   });
 
   it("names no icon from the origin's root", () => {

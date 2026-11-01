@@ -10,7 +10,7 @@
  *   leaves the revision before it.
  * - `thumbnails`: its first page as a PNG Blob, by its id
  * - `settings`: what the user chose, by name, such as `toolSettings`
- * - `session`: the open tabs, for when iPadOS ends the app
+ * - `session`: the open tabs (session.js), for when iPadOS ends the app
  *
  * Its version goes up with every change of these, and upgrade() takes a
  * database of any earlier version along without losing anything.
@@ -21,6 +21,9 @@ export const DATABASE_NAME = "pdflion";
 
 /** The schema's version. */
 const DATABASE_VERSION = 1;
+
+/** The key of the open tabs in the `session` store. */
+const SESSION_KEY = "tabs";
 
 /** The longest name a document may have, as most file systems allow. */
 const MAX_NAME_LENGTH = 255;
@@ -301,6 +304,18 @@ export class Library {
   async setSetting(name, value) {
     await this.#write(["settings"], (transaction) => {
       transaction.objectStore("settings").put(value, name);
+    });
+  }
+
+  /** @returns {Promise<unknown>} the open tabs, as stored, which session.js checks */
+  session() {
+    return settled(this.#store("session").get(SESSION_KEY));
+  }
+
+  /** @param {import("./session.js").Session} session the open tabs */
+  async setSession(session) {
+    await this.#write(["session"], (transaction) => {
+      transaction.objectStore("session").put(session, SESSION_KEY);
     });
   }
 

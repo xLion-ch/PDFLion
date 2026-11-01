@@ -162,6 +162,8 @@
     /** Closes the shell's menu, once a long press that opened it drags its favourite. */
     closeMenu: () => send("closeMenu"),
     showHome: () => send("showHome"),
+    /** @param {object} view where the document is shown, which the shell keeps */
+    setView: (view) => send("view", view),
     /** @param {Uint8Array} png */
     setThumbnail: (png) => send("thumbnail", png),
     /**

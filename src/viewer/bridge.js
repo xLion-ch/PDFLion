@@ -54,7 +54,9 @@
  * `showAbout`, and Undo and Redo buttons without `nativeMenu`. With
  * `autosave`, it saves by itself, after changes and when the page is hidden.
  * A host's `closeMenu` closes the menu a long press opened, once its
- * favourite is dragged.
+ * favourite is dragged. A host's `setView` hears where the document is
+ * shown, so that it can show it there again, as the web app does after a
+ * tab slept or the app was ended.
  */
 "use strict";
 
@@ -278,6 +280,9 @@
 
   /** pdf.js's bar that offers to undo a page change (web/viewer.html). */
   const UNDO_BAR = "viewsManagerStatusUndo";
+
+  /** How often the host hears where the document is shown, at most, in ms. */
+  const VIEW_INTERVAL = 500;
 
   /**
    * Whether shortcuts use ⌘, as on macOS and iPad keyboards, rather than
@@ -692,6 +697,7 @@
       hideChangesIndicator(app);
       if (!hasNativeMenu) followUndoButtons(app);
       if (autosaves) followAutosave(app);
+      if (typeof window.pdflion.setView === "function") followView(app);
     });
   }
 
@@ -1057,6 +1063,31 @@
       if (document.visibilityState === "hidden") saveNow(app);
     });
     window.addEventListener("pagehide", () => saveNow(app));
+  }
+
+  /**
+   * Tells the host where the document is shown, at most every
+   * VIEW_INTERVAL: the page, the zoom, and the point at the view's top left,
+   * as pdf.js's location has them, which pdf.js shows a document at again
+   * from its viewer's hash. Not before pdf.js has shown the document where
+   * it opens, nor in Presentation Mode, whose zoom fits the screen.
+   *
+   * @param {any} app
+   */
+  function followView(app) {
+    /** @type {any} pdf.js's last location */
+    let location = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let timer = null;
+    app.eventBus.on("updateviewarea", (/** @type {any} */ event) => {
+      if (!app.isInitialViewSet || app.pdfViewer.isInPresentationMode) return;
+      location = event.location;
+      timer ??= setTimeout(() => {
+        timer = null;
+        const { pageNumber, scale, left, top } = location;
+        window.pdflion.setView({ page: pageNumber, zoom: scale, left, top });
+      }, VIEW_INTERVAL);
+    });
   }
 
   /**

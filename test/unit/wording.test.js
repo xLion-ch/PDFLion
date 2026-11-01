@@ -29,7 +29,10 @@ import {
   updateOnReadOnlyVolume,
   updateReady,
   upToDate,
+  restartUnsavedPrompt,
+  webAppNotDownloaded,
   webAppUnavailable,
+  webUpdateReady,
 } from "../../src/shared/wording.js";
 
 describe("wording isPageDialog", () => {
@@ -316,5 +319,22 @@ describe("wording updates", () => {
       updateNotInstalled("1.0.8", linux).detail,
       "Installing it needs an administrator’s password. Help > Check for Updates… offers it again.",
     );
+  });
+
+  it("says when the web app's update starts, and what a restart loses", () => {
+    assert.deepEqual(webUpdateReady("1.0.8"), {
+      message: "PDFLion 1.0.8 is ready.",
+      detail:
+        "Restart PDFLion to use it: your documents are saved first, and your tabs come back. Otherwise it starts the next time you open PDFLion.",
+    });
+    assert.equal(webUpdateReady(null).message, "A new version of PDFLion is ready.");
+    assert.deepEqual(webAppNotDownloaded(), {
+      message: "PDFLion couldn’t be downloaded.",
+      detail: "Check your internet connection, and reload the page.",
+    });
+    assert.deepEqual(restartUnsavedPrompt("A.pdf"), {
+      message: "The changes to “A.pdf” couldn’t be saved.",
+      detail: "If PDFLion restarts now, they’re lost.",
+    });
   });
 });
