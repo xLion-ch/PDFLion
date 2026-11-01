@@ -73,6 +73,23 @@ export function cleanName(name) {
   return cleaned === "" || cleaned === "." || cleaned === ".." ? null : cleaned;
 }
 
+/** pdf.js reads a PDF whose header is within its first 1024 bytes. */
+const PDF_HEADER = new TextEncoder().encode("%PDF-");
+const PDF_HEADER_WITHIN = 1024;
+
+/**
+ * @param {{ slice: (start: number, end: number) => { arrayBuffer: () => Promise<ArrayBuffer> } }} blob
+ * @returns {Promise<boolean>} whether it has `%PDF-` within its first bytes,
+ *   as a PDF pdf.js opens does
+ */
+export async function hasPdfHeader(blob) {
+  const start = new Uint8Array(await blob.slice(0, PDF_HEADER_WITHIN).arrayBuffer());
+  for (let index = 0; index + PDF_HEADER.length <= start.length; index++) {
+    if (PDF_HEADER.every((byte, offset) => start[index + offset] === byte)) return true;
+  }
+  return false;
+}
+
 /**
  * @param {DocumentRecord} record
  * @returns {boolean} whether the copy has changes the file in Files doesn't,
@@ -204,6 +221,26 @@ export class Library {
       transaction.objectStore("bytes").add(blob, record.id);
     });
     return record;
+  }
+
+  /**
+   * Adds a document from a backup, with its record as the backup has it,
+   * its bytes and its thumbnail, in one transaction, which fails rather than
+   * replace a document of the same id.
+   *
+   * @param {DocumentRecord} record
+   * @param {Blob} blob
+   * @param {Blob | null} thumbnail a PNG
+   */
+  async importDocument(record, blob, thumbnail) {
+    const { id, name, size, createdAt, openedAt, modifiedAt, revision, exportedRevision, source, sha256 } = record;
+    await this.#write(["documents", "bytes", "thumbnails"], (transaction) => {
+      transaction
+        .objectStore("documents")
+        .add({ id, name, size, createdAt, openedAt, modifiedAt, revision, exportedRevision, source, sha256 });
+      transaction.objectStore("bytes").add(blob, id);
+      if (thumbnail) transaction.objectStore("thumbnails").put(thumbnail, id);
+    });
   }
 
   /**

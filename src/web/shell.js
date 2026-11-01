@@ -43,6 +43,7 @@ import {
   closeUnsavedPrompt,
   closedNotInFiles,
   deletePrompt,
+  formatSize,
   isPageDialog,
   notAPdf,
   notInFilesExplanation,
@@ -59,8 +60,9 @@ import {
   webAppNotDownloaded,
   webAppUnavailable,
 } from "../shared/wording.js";
+import { exportBackup, importFile } from "./backup.js";
 import * as dialogs from "./dialogs.js";
-import { Library, cleanName, freeName, isDocumentId, isNotInFiles } from "./library.js";
+import { Library, cleanName, freeName, hasPdfHeader, isDocumentId, isNotInFiles } from "./library.js";
 import { parseSession, parseView, viewHash } from "./session.js";
 import { checkForUpdates, followUpdates } from "./updates.js";
 import { PDFJS_VERSION, VERSION } from "./version.js";
@@ -86,10 +88,6 @@ const MAX_FILES = 100;
 
 /** Larger than any PDF pdf.js can hold in memory. */
 const MAX_DOCUMENT_BYTES = 2 ** 31;
-
-/** pdf.js reads a PDF whose header is within its first 1024 bytes. */
-const PDF_HEADER = new TextEncoder().encode("%PDF-");
-const PDF_HEADER_WITHIN = 1024;
 
 /** How long closing a tab waits for its document to save, in ms. */
 const CLOSE_SAVE_TIMEOUT = 60_000;
@@ -726,6 +724,7 @@ const HOME_MESSAGES = {
   remove: (_tab, id) => isDocumentId(id) && deleteDocument(id),
   contextMenu: (tab, id, x, y) => isDocumentId(id) && showDocumentMenu(id, inFrame(tab, x, y)),
   infoMenu: (tab, x, y) => showInfoMenu(inFrame(tab, x, y)),
+  importFile: (_tab, file) => file instanceof File && importFile(file, backupHost()),
   key: (_tab, action) => typeof action === "string" && runShortcut(action),
 };
 
@@ -822,7 +821,7 @@ async function keepFile(file, source) {
     return null;
   }
   const buffer = await file.arrayBuffer();
-  if (!hasPdfHeader(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, PDF_HEADER_WITHIN)))) {
+  if (!(await hasPdfHeader(file))) {
     await dialogs.alert(notAPdf(file.name));
     return null;
   }
@@ -836,17 +835,6 @@ async function keepFile(file, source) {
     sha256,
   });
   return record.id;
-}
-
-/**
- * @param {Uint8Array} start a file's first bytes
- * @returns {boolean} whether they have `%PDF-`
- */
-function hasPdfHeader(start) {
-  for (let index = 0; index + PDF_HEADER.length <= start.length; index++) {
-    if (PDF_HEADER.every((byte, offset) => start[index + offset] === byte)) return true;
-  }
-  return false;
 }
 
 /**
@@ -1135,8 +1123,8 @@ function showDocumentMenu(documentId, at) {
 }
 
 /**
- * Home's ⓘ menu: About, Check for Updates…, pen-only drawing, and how much
- * the library takes.
+ * Home's ⓘ menu: About, Check for Updates…, Export… and Import…, pen-only
+ * drawing, and how much the library takes.
  *
  * @param {{ x: number, y: number }} at
  */
@@ -1146,6 +1134,9 @@ async function showInfoMenu(at) {
   const items = [
     { label: "About PDFLion", action: showAbout },
     { label: "Check for Updates…", action: checkForUpdates },
+    { label: "", separator: true },
+    { label: "Export…", action: () => exportBackup(backupHost()) },
+    { label: "Import…", action: pickBackup },
     { label: "", separator: true },
     {
       label: "Draw Only with a Pen",
@@ -1164,27 +1155,6 @@ async function showInfoMenu(at) {
 
 function showAbout() {
   dialogs.showAbout({ version: VERSION, pdfjsVersion: PDFJS_VERSION, credits: CREDITS });
-}
-
-/**
- * @param {number} bytes
- * @returns {string} such as `1.2 MB`, in decimal units, as Home gives them
- */
-function formatSize(bytes) {
-  /** @type {[string, number][]} */
-  const units = [
-    ["gigabyte", 1e9],
-    ["megabyte", 1e6],
-    ["kilobyte", 1e3],
-  ];
-  const [unit, size] = units.find(([, other]) => bytes >= other) ?? units[2];
-  const format = new Intl.NumberFormat("en", {
-    style: "unit",
-    unit,
-    unitDisplay: "short",
-    maximumFractionDigits: 1,
-  });
-  return format.format(bytes / size);
 }
 
 /**
@@ -1438,6 +1408,42 @@ function pickFiles() {
     picker = input;
   }
   picker.click();
+}
+
+/** The shell's file picker for Import…, which iPadOS opens in response to the menu's tap. */
+let backupPicker = /** @type {HTMLInputElement | null} */ (null);
+
+function pickBackup() {
+  if (!backupPicker) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".zip,.json,application/zip,application/json";
+    input.hidden = true;
+    input.addEventListener("change", () => {
+      const [file] = /** @type {FileList} */ (input.files);
+      input.value = "";
+      if (file) importFile(file, backupHost());
+    });
+    document.body.append(input);
+    backupPicker = input;
+  }
+  backupPicker.click();
+}
+
+/** @returns {import("./backup.js").BackupHost} what Export… and Import… use of the shell */
+function backupHost() {
+  return {
+    library,
+    toolSettings: () => toolSettings,
+    updateToolSettings,
+    saveAll: () => saveEverything(false),
+    share: shareFile,
+    imported(ids) {
+      for (const id of ids) thumbnailVersions.set(id, (thumbnailVersions.get(id) ?? 0) + 1);
+      updateHomes();
+    },
+    maxDocumentBytes: MAX_DOCUMENT_BYTES,
+  };
 }
 
 /**

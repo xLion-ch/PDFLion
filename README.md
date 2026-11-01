@@ -51,6 +51,8 @@ Check for Updates… and Check for Updates Automatically are in the PDFLion menu
 
 File > Export Settings… saves your favourites, the eraser's and Pencil's settings and whether updates are checked automatically, as `PDFLion Settings.json`. File > Import Settings… on the other computer, on any of the three systems, asks first, then replaces those settings and adds the favourites you don't have there yet. Neither takes your documents or the recent documents along.
 
+The web app keeps its documents itself, so its Home has Export… and Import… in the ⓘ menu. Export… makes the settings file, or a backup, `PDFLion Backup <date>.zip`, with the settings and every document under its own name, to save to Files. Import… takes either, on the same iPad or another, asks first, and never replaces a document: one changed since the backup comes in as a copy. To get the settings out of a backup on a Mac or PC, open the ZIP in Finder or Explorer, and import the `PDFLion Settings.json` inside with File > Import Settings….
+
 ## Shortcuts
 
 | | macOS | Windows | Linux |
@@ -229,7 +231,8 @@ The web app, on an iPad with iPadOS 18 and one with iPadOS 26, in Safari and as 
 - Drawing with each kind of Apple Pencil keeps up with it, without gaps. The first stroke turns Draw Only with a Pen on, after which fingers scroll and pinch the pages with Pencil, Highlight or the Eraser on, and a palm resting on the screen neither scrolls nor draws. On an iPad with Pencil hover, the Eraser's circle follows the hovering Pencil. Scribble writes into form fields and text boxes.
 - A pinch or a double tap on the toolbar, the strip or Home zooms nothing, and a long press there shows no callout. Buttons, tabs, menu items and cards are easy to tap.
 - In Split View, Slide Over, Stage Manager and iPadOS 26's windows at their smallest, the toolbar fits, putting the drawing tools into one button and Find, Page Overview and Insert Blank Page into the ⋮ menu as it narrows, and nothing is under the window controls.
-- Home's ⓘ menu shows About, with the versions and credits, Check for Updates…, the pen setting, and the storage the documents take.
+- Home's ⓘ menu shows About, with the versions and credits, Check for Updates…, Export…, Import…, the pen setting, and the storage the documents take.
+- Export… with the documents, then Save to Files, gives a ZIP that Files opens, with every document. Deleting the app from the Home Screen, adding it again and importing that ZIP brings back the documents, their "Not in Files" marks and the settings, and importing it again adds nothing. A backup of more than 1 GB exports and imports, with its progress shown. Settings exported on a Mac, AirDropped to the iPad and imported there, add the favourites, and the iPad's Settings Only imports on a Mac.
 - Links in a document open in Safari, and the viewer and Home opened on their own show nothing.
 
 ## License

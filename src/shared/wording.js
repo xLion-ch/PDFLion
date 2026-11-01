@@ -235,6 +235,14 @@ const SETTINGS = { eraser: "eraser", penOnly: "pen", automaticUpdates: "update" 
  * @returns {Text}
  */
 export function importSettingsPrompt(name, { replaced, added }) {
+  return { message: `Import the settings from “${name}”?`, detail: settingsChanges({ replaced, added }) };
+}
+
+/**
+ * @param {{ replaced: string[], added: number }} changes as for importSettingsPrompt()
+ * @returns {string} what importing settings changes
+ */
+function settingsChanges({ replaced, added }) {
   const settings = new Intl.ListFormat("en").format(replaced.map((setting) => SETTINGS[setting]));
   const some =
     added === 1
@@ -242,11 +250,9 @@ export function importSettingsPrompt(name, { replaced, added }) {
       : `${added} favourites you don’t have yet are`;
   const favourites =
     added === 0 ? "it has no favourites you don’t have yet" : `its ${some} added after yours`;
-  const detail =
-    replaced.length === 0
-      ? `${favourites[0].toUpperCase()}${favourites.slice(1)}.`
-      : `Your ${settings} settings are replaced, and ${favourites}.`;
-  return { message: `Import the settings from “${name}”?`, detail };
+  return replaced.length === 0
+    ? `${favourites[0].toUpperCase()}${favourites.slice(1)}.`
+    : `Your ${settings} settings are replaced, and ${favourites}.`;
 }
 
 /**
@@ -543,6 +549,178 @@ export function closeUnsavedPrompt(name) {
  */
 export function shareError(name, { message }) {
   return { message: `“${name}” couldn’t be shared.`, detail: message };
+}
+
+/**
+ * @param {number} bytes
+ * @returns {string} such as `1.2 MB`, in decimal units, as Files gives them
+ */
+export function formatSize(bytes) {
+  /** @type {[string, number][]} */
+  const units = [
+    ["gigabyte", 1e9],
+    ["megabyte", 1e6],
+    ["kilobyte", 1e3],
+  ];
+  const [unit, size] = units.find(([, other]) => bytes >= other) ?? units[2];
+  const format = new Intl.NumberFormat("en", {
+    style: "unit",
+    unit,
+    unitDisplay: "short",
+    maximumFractionDigits: 1,
+  });
+  return format.format(bytes / size);
+}
+
+/**
+ * The web app's backups: Export… makes a ZIP of the settings and every
+ * document PDFLion keeps, or a settings file, and Import… takes either.
+ */
+
+/** Export…'s buttons. */
+export const SETTINGS_ONLY = "Settings Only";
+export const SETTINGS_AND_DOCUMENTS = "Settings and Documents";
+
+/**
+ * Export…'s question, with Cancel, Settings Only and Settings and
+ * Documents.
+ *
+ * @param {number} documents how many the library has
+ * @param {number} bytes what they take
+ * @returns {Text}
+ */
+export function exportPrompt(documents, bytes) {
+  const them = documents === 1 ? "the document" : `the ${documents} documents`;
+  return {
+    message: "What do you want to export?",
+    detail: `The settings are your favourites, and the eraser and pen settings. With the documents, the backup also has ${them} PDFLion keeps (${formatSize(bytes)}), and brings them back on this device or another.`,
+  };
+}
+
+/**
+ * @param {number} percent of the documents read
+ * @returns {string} the snackbar while a backup is made, with Cancel
+ */
+export function exportProgress(percent) {
+  return `Preparing the backup… ${percent}%`;
+}
+
+/**
+ * @param {{ message: string }} error
+ * @returns {Text}
+ */
+export function exportError({ message }) {
+  return { message: "The backup couldn’t be made.", detail: message };
+}
+
+/**
+ * @param {number} done
+ * @param {number} total
+ * @returns {string} the snackbar while documents are imported, with Cancel
+ */
+export function importProgress(done, total) {
+  return total === 1 ? "Importing the document…" : `Importing ${done} of ${total} documents…`;
+}
+
+/**
+ * The prompt before a backup is imported, with Import and Cancel.
+ *
+ * @param {string} name the backup's
+ * @param {object} changes
+ * @param {number} changes.documents how many come in, copies too
+ * @param {number} changes.bytes what they take
+ * @param {number} changes.here how many are here already, as they are
+ * @param {number} changes.copies how many have other changes here, and come
+ *   in as copies
+ * @param {{ replaced: string[], added: number } | null} changes.settings
+ *   what its settings change, as for importSettingsPrompt(), or null
+ * @returns {Text}
+ */
+export function importBackupPrompt(name, { documents, bytes, here, copies, settings }) {
+  const what = documents === 1 ? "one document" : `${documents} documents`;
+  const message =
+    documents === 0
+      ? `Import the settings from “${name}”?`
+      : `Import ${what} (${formatSize(bytes)})${settings ? " and the settings" : ""} from “${name}”?`;
+  const details = [];
+  if (copies === 1) {
+    details.push("One of them has other changes here, which stay, and the backup’s comes in as a copy.");
+  } else if (copies > 1) {
+    details.push(`${copies} of them have other changes here, which stay, and the backup’s come in as copies.`);
+  }
+  if (here === 1) details.push("Another document in it is here already, as it is.");
+  else if (here > 1) details.push(`${here} other documents in it are here already, as they are.`);
+  if (settings) details.push(settingsChanges(settings));
+  return { message, detail: details.join(" ") };
+}
+
+/**
+ * @param {string} name the backup's
+ * @returns {Text} that a backup would change nothing
+ */
+export function nothingInBackup(name) {
+  return {
+    message: `There’s nothing to import from “${name}”.`,
+    detail: "Its documents are here already, as they are, and it has no settings you don’t have yet.",
+  };
+}
+
+/**
+ * @param {string} name the backup's
+ * @param {number | null} missing how many more bytes it needs, if that's known
+ * @returns {Text}
+ */
+export function notEnoughSpace(name, missing) {
+  return {
+    message: `There isn’t enough space to import “${name}”.`,
+    detail: `${missing === null ? "It needs more space." : `It needs ${formatSize(missing)} more.`} Delete documents you don’t need, or free space on the device, and try again.`,
+  };
+}
+
+/** @typedef {"not-backup" | "damaged" | "newer" | "too-large"} BackupError */
+
+/** @type {Record<BackupError, string>} */
+const BACKUP_ERRORS = {
+  "not-backup": "It isn’t a PDFLion backup or settings file.",
+  damaged: "It’s damaged.",
+  newer: "It comes from a newer version of PDFLion. Update PDFLion, and try again.",
+  "too-large": "It lists more than a backup can.",
+};
+
+/**
+ * @param {string} name the file's
+ * @param {BackupError} error
+ * @returns {Text}
+ */
+export function backupError(name, error) {
+  return { message: `“${name}” couldn’t be imported.`, detail: BACKUP_ERRORS[error] };
+}
+
+/**
+ * @param {string[]} names the documents' that a backup lists, but that are
+ *   missing or damaged in it, or aren't PDFs
+ * @returns {Text}
+ */
+export function documentsNotImported(names) {
+  if (names.length === 1) {
+    return { message: `“${names[0]}” couldn’t be imported.`, detail: "It’s missing or damaged in the backup." };
+  }
+  const list = new Intl.ListFormat("en").format(names.map((name) => `“${name}”`));
+  return {
+    message: `${names.length} documents couldn’t be imported.`,
+    detail: `They’re missing or damaged in the backup: ${list}.`,
+  };
+}
+
+/**
+ * @param {number} documents how many came in
+ * @param {boolean} settings whether the settings did
+ * @returns {string} the snackbar after an import
+ */
+export function importedNow(documents, settings) {
+  const what = documents === 1 ? "one document" : `${documents} documents`;
+  if (documents === 0) return "The settings are imported.";
+  return settings ? `Imported ${what} and the settings.` : `Imported ${what}.`;
 }
 
 /** @returns {Text} that the web app's first download failed */

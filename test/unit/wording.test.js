@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  backupError,
   closeUnsavedPrompt,
+  documentsNotImported,
+  exportError,
+  exportProgress,
+  exportPrompt,
+  formatSize,
+  importBackupPrompt,
+  importProgress,
+  importedNow,
+  notEnoughSpace,
+  nothingInBackup,
   closedNotInFiles,
   deletePrompt,
   importSettingsPrompt,
@@ -336,5 +347,75 @@ describe("wording updates", () => {
       message: "The changes to “A.pdf” couldn’t be saved.",
       detail: "If PDFLion restarts now, they’re lost.",
     });
+  });
+});
+
+describe("wording for the web app's backups", () => {
+  it("gives sizes in decimal units, as Files does", () => {
+    assert.equal(formatSize(512), "0.5 kB");
+    assert.equal(formatSize(1_234_567), "1.2 MB");
+    assert.equal(formatSize(2_500_000_000), "2.5 GB");
+  });
+
+  it("asks what to export, and says how it goes", () => {
+    assert.deepEqual(exportPrompt(23, 1_200_000_000), {
+      message: "What do you want to export?",
+      detail:
+        "The settings are your favourites, and the eraser and pen settings. With the documents, the backup also has the 23 documents PDFLion keeps (1.2 GB), and brings them back on this device or another.",
+    });
+    assert.match(exportPrompt(1, 1000).detail ?? "", /has the document PDFLion keeps \(1 kB\)/);
+    assert.equal(exportProgress(45), "Preparing the backup… 45%");
+    assert.deepEqual(exportError({ message: "Disk full" }), { message: "The backup couldn’t be made.", detail: "Disk full" });
+    assert.equal(importProgress(3, 23), "Importing 3 of 23 documents…");
+    assert.equal(importProgress(1, 1), "Importing the document…");
+  });
+
+  it("says what a backup brings, before it's imported", () => {
+    assert.deepEqual(
+      importBackupPrompt("B.zip", {
+        documents: 23,
+        bytes: 1_200_000_000,
+        here: 4,
+        copies: 1,
+        settings: { replaced: ["eraser", "penOnly"], added: 12 },
+      }),
+      {
+        message: "Import 23 documents (1.2 GB) and the settings from “B.zip”?",
+        detail:
+          "One of them has other changes here, which stay, and the backup’s comes in as a copy. 4 other documents in it are here already, as they are. Your eraser and pen settings are replaced, and its 12 favourites you don’t have yet are added after yours.",
+      },
+    );
+    assert.deepEqual(importBackupPrompt("B.zip", { documents: 1, bytes: 1000, here: 1, copies: 2, settings: null }), {
+      message: "Import one document (1 kB) from “B.zip”?",
+      detail:
+        "2 of them have other changes here, which stay, and the backup’s come in as copies. Another document in it is here already, as it is.",
+    });
+    assert.equal(
+      importBackupPrompt("B.zip", { documents: 0, bytes: 0, here: 3, copies: 0, settings: { replaced: [], added: 1 } }).message,
+      "Import the settings from “B.zip”?",
+    );
+  });
+
+  it("says why a backup or its documents couldn't be imported", () => {
+    assert.equal(nothingInBackup("B.zip").message, "There’s nothing to import from “B.zip”.");
+    assert.deepEqual(notEnoughSpace("B.zip", 2_000_000), {
+      message: "There isn’t enough space to import “B.zip”.",
+      detail: "It needs 2 MB more. Delete documents you don’t need, or free space on the device, and try again.",
+    });
+    assert.match(notEnoughSpace("B.zip", null).detail ?? "", /^It needs more space\. /);
+    assert.deepEqual(backupError("B.zip", "not-backup"), {
+      message: "“B.zip” couldn’t be imported.",
+      detail: "It isn’t a PDFLion backup or settings file.",
+    });
+    for (const reason of /** @type {const} */ (["damaged", "newer", "too-large"])) {
+      assert.ok(backupError("B.zip", reason).detail, reason);
+    }
+    assert.deepEqual(documentsNotImported(["A.pdf", "B.pdf", "C.pdf"]), {
+      message: "3 documents couldn’t be imported.",
+      detail: "They’re missing or damaged in the backup: “A.pdf”, “B.pdf”, and “C.pdf”.",
+    });
+    assert.equal(importedNow(2, true), "Imported 2 documents and the settings.");
+    assert.equal(importedNow(1, false), "Imported one document.");
+    assert.equal(importedNow(0, true), "The settings are imported.");
   });
 });

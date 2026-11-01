@@ -380,12 +380,34 @@ export async function drawStroke(page, frame, offset = 0.3) {
 export async function stubShare(page, answer) {
   await page.evaluate((answer) => {
     window.shared = [];
+    window.sharedFiles = [];
     window.shareCalls = 0;
     navigator.canShare = () => true;
     navigator.share = async ({ files }) => {
       window.shareCalls++;
       if (answer === "cancel") throw new DOMException("Share canceled", "AbortError");
-      for (const file of files) window.shared.push({ name: file.name, size: file.size, type: file.type });
+      for (const file of files) {
+        window.shared.push({ name: file.name, size: file.size, type: file.type });
+        window.sharedFiles.push(file);
+      }
     };
   }, answer);
+}
+
+/**
+ * @param {Page} page with `navigator.share` stubbed
+ * @param {number} index
+ * @returns {Promise<{ name: string, type: string, bytes: Buffer }>} the file
+ *   shared at that place, once it has been
+ */
+export async function sharedFile(page, index) {
+  await expect.poll(() => page.evaluate(() => window.sharedFiles.length)).toBeGreaterThan(index);
+  const { name, type, base64 } = await page.evaluate(async (index) => {
+    const file = window.sharedFiles[index];
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let text = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return { name: file.name, type: file.type, base64: btoa(text) };
+  }, index);
+  return { name, type, bytes: Buffer.from(base64, "base64") };
 }

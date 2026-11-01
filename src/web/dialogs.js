@@ -178,6 +178,41 @@ export function snackbar(message, { action, onAction } = {}) {
 }
 
 /**
+ * Shows a snackbar that stays until it's dismissed, for work under way, with
+ * Cancel.
+ *
+ * @param {string} message
+ * @param {() => void} onCancel
+ * @returns {{ update: (message: string) => void, dismiss: () => void }}
+ */
+export function progress(message, onCancel) {
+  shownSnackbar?.dismiss();
+  const bar = element("div", "snackbar", "");
+  bar.setAttribute("role", "status");
+  const text = element("span", "text", message);
+  const button = element("button", "action", CANCEL);
+  button.type = "button";
+  const dismiss = () => {
+    bar.remove();
+    if (shownSnackbar === shown) shownSnackbar = null;
+  };
+  button.addEventListener("click", () => {
+    dismiss();
+    onCancel();
+  });
+  bar.append(text, button);
+  const shown = { dismiss };
+  shownSnackbar = shown;
+  document.body.append(bar);
+  return {
+    update(next) {
+      text.textContent = next;
+    },
+    dismiss,
+  };
+}
+
+/**
  * @typedef {object} MenuItem
  * @property {string} label
  * @property {() => void} [action]
