@@ -90,7 +90,9 @@ const thumbnail = (page, number) =>
   page.locator(`#thumbnailsView > .thumbnail[page-number="${number}"]`);
 
 /**
- * Opens the sidebar on the pages' thumbnails, where pdf.js's page tools are.
+ * Opens the sidebar on the pages' thumbnails, where pdf.js's page tools are,
+ * and waits until it has slid in. As it ends, pdf.js rescales the document to
+ * where it last saw it scrolled, which can undo a page change made meanwhile.
  *
  * @param {Page} page
  */
@@ -99,6 +101,7 @@ async function showThumbnails(page) {
   await expect(page.locator("#thumbnailsView")).toBeVisible();
   const count = await page.evaluate(() => PDFViewerApplication.pagesCount);
   await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(count);
+  await settled(page);
 }
 
 /**
@@ -533,7 +536,6 @@ test("the page overview leaves the sidebar as it was, and the document in its pl
 }) => {
   const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
   await showThumbnails(page);
-  await settled(page);
   const sidebar = await boundsOf(page, "#viewsManager");
   const documentArea = await boundsOf(page, "#viewerContainer");
   const scale = await page.evaluate(() => PDFViewerApplication.pdfViewer.currentScale);
@@ -592,7 +594,6 @@ test("pages moved and deleted in the page overview's grid are saved", async ({ p
   // pdf.js works out where the thumbnails are in the sidebar's column first,
   // once it has slid in.
   await showThumbnails(page);
-  await settled(page);
   await page.locator("#pdflionPageOverview").click();
   await expect.poll(() => overviewOpen(page)).toBe(true);
 

@@ -3483,13 +3483,17 @@
   /**
    * @param {HTMLElement} viewer #toolbarViewer, whose groups keep their width
    *   (web/viewer.css)
-   * @returns {number} by how much its groups are wider than it, in pixels
+   * @returns {number} by how much its groups, with the gaps between them, are
+   *   wider than it, in pixels
    */
   function toolbarOverflow(viewer) {
     const width = (/** @type {Element} */ element) => element.getBoundingClientRect().width;
-    const groups = [...viewer.children].reduce((sum, group) => sum + width(group), 0);
+    const groups = [...viewer.children];
+    // #toolbarViewer is a .toolbarHorizontalGroup too, with its gap (overrides.css).
+    const gaps = (groups.length - 1) * (parseFloat(getComputedStyle(viewer).columnGap) || 0);
+    const used = groups.reduce((sum, group) => sum + width(group), gaps);
     // Less than half a pixel is rounding.
-    return groups - width(viewer) - 0.5;
+    return used - width(viewer) - 0.5;
   }
 
   /**
