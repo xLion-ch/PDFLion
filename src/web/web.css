@@ -47,7 +47,8 @@ body {
   overflow: hidden;
 }
 
-/* The strip and the frames, inside the safe area, as below iPadOS's status bar. */
+/* The strip and the frames, inside the safe area, where there is one: index.html
+   keeps the app below iPadOS's status bar. */
 body {
   display: flex;
   flex-direction: column;
