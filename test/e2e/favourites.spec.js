@@ -226,6 +226,13 @@ test("a favourite shows in every window's toolbar, draws with its settings, and 
   await expect(favourite).toHaveAttribute("aria-pressed", "true");
   await drawLine(other);
   expect(await inkDrawings(other)).toEqual([{ color: [30, 102, 245], thickness: 5, opacity: 0.35 }]);
+  // A click on the favourite that's on turns its tool off, and another on again.
+  await favourite.click();
+  await expect(other.locator("#editorInkButton")).not.toHaveClass(/toggled/);
+  await expect(favourite).toHaveAttribute("aria-pressed", "false");
+  await favourite.click();
+  await expect(other.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await expect(favourite).toHaveAttribute("aria-pressed", "true");
   // Pencil off and on again opens its box, with the favourite's settings.
   await other.locator("#editorInkButton").click();
   await other.locator("#editorInkButton").click();

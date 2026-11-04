@@ -3762,6 +3762,11 @@
     if (!ui) return;
     const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
     commitDrawing(ui);
+    // The favourite that's on turns its tool off, as the tool's own button does.
+    if (isFavouriteOn(app, favourite)) {
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
+      return;
+    }
     if (erasing && mode === EDITOR_INK) stopErasing(app, EDITOR_INK);
     if (app.pdfViewer.annotationEditorMode !== mode) {
       favouriteMode = mode;
@@ -3780,6 +3785,27 @@
   }
 
   /**
+   * @param {any} app
+   * @returns {Favourite | null} the tool that's on with its settings, as its
+   *   option box shows them, and none while the eraser is on
+   */
+  function currentFavourite(app) {
+    const mode = app.pdfViewer?.annotationEditorMode;
+    const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
+    return tool && !erasing ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
+  }
+
+  /**
+   * @param {any} app
+   * @param {Favourite} favourite
+   * @returns {boolean} whether its tool is on with its settings
+   */
+  function isFavouriteOn(app, favourite) {
+    const current = currentFavourite(app);
+    return !!current && sameFavourite(favourite, current);
+  }
+
+  /**
    * Shows as pressed the favourites whose tool is on with their settings,
    * as its option box shows them, and none while the eraser is on. It reads
    * them once pdf.js has shown a change: Highlight's colour picker marks the
@@ -3789,10 +3815,7 @@
    */
   function updateFavouritesPressed(app) {
     Promise.resolve().then(() => {
-      const mode = app.pdfViewer?.annotationEditorMode;
-      const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
-      const current =
-        tool && !erasing ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
+      const current = currentFavourite(app);
       for (const { favourite, button, item } of favouriteButtons) {
         const on = !!current && sameFavourite(favourite, current);
         button.classList.toggle("toggled", on);
