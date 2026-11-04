@@ -418,8 +418,9 @@
    * @property {number} thickness
    * @property {[number, number, number, number]} box around the strokes'
    *   points as they were
-   * @property {any} shown the editor on the page for it: the drawing's own,
-   *   one built from what's left of its strokes, or null once it's erased
+   * @property {any[]} shown the editors on the page for it: the drawing's
+   *   own, or one for each stroke left of it, which is a drawing of its own
+   *   from then on, or none once it's erased
    * @property {boolean} cut whether its strokes changed since `shown` was built
    */
 
@@ -2808,19 +2809,20 @@
       await redraw(app, ended);
       const ui = uiManager(app);
       const changed = [...ended.drawings.values()].filter(
-        (drawing) => drawing !== null && drawing.shown !== drawing.editor,
+        (drawing) =>
+          drawing !== null && !(drawing.shown.length === 1 && drawing.shown[0] === drawing.editor),
       );
       if (!ui || changed.length === 0) return;
       ui.addCommands({
         cmd: () => {
           for (const { editor, shown } of changed) {
             editor.remove();
-            if (shown) restoreEditor(ui, shown);
+            for (const piece of shown) restoreEditor(ui, piece);
           }
         },
         undo: () => {
           for (const { editor, shown } of changed) {
-            shown?.remove();
+            for (const piece of shown) piece.remove();
             restoreEditor(ui, editor);
           }
         },
@@ -2881,7 +2883,7 @@
       if (!drawing || !touches(drawing, center, radius)) continue;
       if (drag.mode === "object") {
         editor.remove();
-        drawing.shown = null;
+        drawing.shown = drawing.shown.filter((piece) => piece !== editor);
         continue;
       }
       // A stroke's round ends reach half its thickness past its points.
@@ -2913,9 +2915,10 @@
   }
 
   /**
-   * Replaces each drawing the drag cut since it last showed with one of what's
-   * left of its strokes, with the same colour, thickness and opacity, or
-   * removes it when nothing is left.
+   * Replaces each drawing the drag cut since it last showed with a drawing
+   * for each stroke left of it, with the same colour, thickness and opacity,
+   * so that each piece of a cut line is a drawing of its own, which the
+   * eraser's Object mode erases alone. A drawing with nothing left goes.
    *
    * @param {any} app
    * @param {Gesture} drag
@@ -2928,25 +2931,27 @@
       drawing.cut = false;
       const { editor, data, strokes } = drawing;
       const layer = ui.getLayer(editor.pageIndex);
-      const next =
-        layer && strokes.length > 0
-          ? await layer.deserialize({
-              annotationType: EDITOR_INK,
-              color: data.color,
-              thickness: data.thickness,
-              opacity: data.opacity,
-              paths: { points: strokes.map((stroke) => Float32Array.from(stroke)) },
-              // pdf.js replaces it with the box around the strokes.
-              rect: data.rect,
-              rotation: data.rotation,
-            })
-          : null;
-      drawing.shown?.remove();
-      if (next) {
-        addWithoutUndo(layer, next);
-        drag.replacements.set(next, drawing);
+      /** @type {any[]} */
+      const pieces = [];
+      for (const stroke of layer ? strokes : []) {
+        const piece = await layer.deserialize({
+          annotationType: EDITOR_INK,
+          color: data.color,
+          thickness: data.thickness,
+          opacity: data.opacity,
+          paths: { points: [Float32Array.from(stroke)] },
+          // pdf.js replaces it with the box around the stroke.
+          rect: data.rect,
+          rotation: data.rotation,
+        });
+        if (piece) pieces.push(piece);
       }
-      drawing.shown = next;
+      for (const piece of drawing.shown) piece.remove();
+      for (const piece of pieces) {
+        addWithoutUndo(layer, piece);
+        drag.replacements.set(piece, drawing);
+      }
+      drawing.shown = pieces;
     }
   }
 
@@ -2986,7 +2991,7 @@
           strokes: data.paths.points,
           thickness: data.thickness,
           box: boxAround(data.paths.points),
-          shown: editor,
+          shown: [editor],
           cut: false,
         },
       );

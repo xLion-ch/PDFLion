@@ -2556,7 +2556,7 @@ describe("bridge.js eraser", () => {
     assert.equal(page.commands.length, 1);
   });
 
-  it("cuts strokes in Line mode, and shows what's left, as one step to undo", async () => {
+  it("cuts strokes in Line mode, and shows each stroke left as a drawing, as one step to undo", async () => {
     const bridge = loadBridge();
     const page = await erasing(
       bridge,
@@ -2567,36 +2567,39 @@ describe("bridge.js eraser", () => {
     // every 5, passes 2 points off at the closest. It reaches its radius, 10,
     // and half the stroke's thickness, 1, from there.
     await page.drag([[200, 50], [200, 150]], false);
-    const [first] = built(bridge.calls);
+    const first = built(bridge.calls);
     const across = Math.sqrt(11 ** 2 - 2 ** 2);
     const round = (/** @type {number} */ value) => Math.round(value * 100) / 100;
     assert.deepEqual(
-      first.paths.points.map((/** @type {Float32Array} */ points) => [...points].map(round)),
+      first.map((drawing) => [
+        ...drawing.paths.points.map((/** @type {Float32Array} */ points) => [...points].map(round)),
+      ]),
       [
-        [100, 700, round(200 - across), 700],
-        [round(200 + across), 700, 300, 700],
-        [100, 500, 300, 500],
+        [[100, 700, round(200 - across), 700]],
+        [[round(200 + across), 700, 300, 700]],
+        [[100, 500, 300, 500]],
       ],
     );
-    assert.ok(first.paths.points.every((/** @type {any} */ points) => points.constructor.name === "Float32Array"));
-    assert.deepEqual(
-      { ...first, paths: undefined },
-      { annotationType: 15, color: [255, 0, 0], thickness: 2, opacity: 0.5, paths: undefined, rect: [1, 2, 3, 4], rotation: 0 },
-    );
-    assert.deepEqual(page.ids(), ["built 1"]);
+    for (const drawing of first) {
+      assert.ok(drawing.paths.points.every((/** @type {any} */ points) => points.constructor.name === "Float32Array"));
+      assert.deepEqual(
+        { ...drawing, paths: undefined },
+        { annotationType: 15, color: [255, 0, 0], thickness: 2, opacity: 0.5, paths: undefined, rect: [1, 2, 3, 4], rotation: 0 },
+      );
+    }
+    assert.deepEqual(page.ids(), ["built 1", "built 2", "built 3"]);
 
     // On to the right, across the first stroke again, in a later frame.
     await page.drag([[260, 150], [260, 50]]);
-    assert.equal(built(bridge.calls).length, 2);
-    assert.equal(built(bridge.calls)[1].paths.points.length, 4);
-    assert.deepEqual(page.ids(), ["built 2"]);
+    assert.equal(built(bridge.calls).length, 7);
+    assert.deepEqual(page.ids(), ["built 4", "built 5", "built 6", "built 7"]);
     // pdf.js would make each new drawing a step to undo.
     assert.equal(page.commands.length, 1);
     const [{ cmd, undo }] = page.commands;
     undo();
     assert.deepEqual(page.ids(), ["long"]);
     cmd();
-    assert.deepEqual(page.ids(), ["built 2"]);
+    assert.deepEqual(page.ids(), ["built 4", "built 5", "built 6", "built 7"]);
   });
 
   it("removes a drawing in Line mode once nothing is left of it", async () => {

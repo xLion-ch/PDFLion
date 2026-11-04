@@ -376,7 +376,7 @@ async function eraseLines(page) {
   await expect(page.locator('input[name="pdflionEraserMode"][value="line"]')).toBeChecked();
 }
 
-test("Line erasing cuts a stroke in two, which keeps its look, as one step to undo", async ({
+test("Line erasing cuts a stroke into two drawings, which keep its look, as one step to undo", async ({
   pdflion,
 }) => {
   const file = path.join(await tempDir(), "pages.pdf");
@@ -393,11 +393,13 @@ test("Line erasing cuts a stroke in two, which keeps its look, as one step to un
 
   await eraseLines(page);
   await drag(page, [[200, 700], [200, 600]]);
-  await expect.poll(async () => (await inkDrawings(page)).map((drawing) => drawing.strokes.length)).toEqual([2]);
-  const [cut] = await inkDrawings(page);
-  expect(cut).toMatchObject({ color: [30, 102, 245], thickness: 5, opacity: 0.5 });
+  await expect.poll(async () => (await inkDrawings(page)).map((drawing) => drawing.strokes.length)).toEqual([1, 1]);
+  const pieces = (await inkDrawings(page)).sort((a, b) => a.strokes[0][0] - b.strokes[0][0]);
+  for (const piece of pieces) {
+    expect(piece).toMatchObject({ color: [30, 102, 245], thickness: 5, opacity: 0.5 });
+  }
   // The eraser, 10 points wide, and the stroke's round ends, 2.5 points, either side of x 200.
-  const [left, right] = cut.strokes;
+  const [[left], [right]] = pieces.map((piece) => piece.strokes);
   expect(left[0]).toBeCloseTo(drawn.strokes[0][0], 0);
   expect(left.at(-2)).toBeLessThan(193);
   expect(right[0]).toBeGreaterThan(207);
@@ -413,14 +415,35 @@ test("Line erasing cuts a stroke in two, which keeps its look, as one step to un
   await page.keyboard.press("ControlOrMeta+Shift+z");
   await expect.poll(strokeCounts).toEqual([1]);
   await clickMenu(app, page, "redo");
-  await expect.poll(strokeCounts).toEqual([2]);
+  await expect.poll(strokeCounts).toEqual([1, 1]);
 
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
   await app.close();
 
   ({ page } = await pdflion([file]));
-  expect(await annotations(page)).toEqual([{ subtype: "Ink", strokes: 2 }]);
+  expect(await annotations(page)).toEqual([
+    { subtype: "Ink", strokes: 1 },
+    { subtype: "Ink", strokes: 1 },
+  ]);
+});
+
+test("Object erasing removes one piece of a line that Line erasing cut", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  const { page } = await pdflion([file]);
+  await page.locator("#editorInkButton").click();
+  await drag(page, [[100, 650], [300, 650]]);
+  await page.keyboard.press("Escape");
+  await eraseLines(page);
+  await drag(page, [[200, 700], [200, 600]]);
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1", "ink of 1"]);
+
+  await page.locator(".pdflionEraserMode", { hasText: "Object" }).click();
+  await drag(page, [[120, 700], [120, 600]]);
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1"]);
+  const [[right]] = (await inkDrawings(page)).map((drawing) => drawing.strokes);
+  expect(right[0]).toBeGreaterThan(200);
 });
 
 test("Line erasing removes a drawing it leaves nothing of, which Undo brings back", async ({
@@ -451,14 +474,19 @@ test("Line erasing cuts an ink annotation from the file, which Save replaces", a
   await expect.poll(() => drawings(page)).toEqual(["ink of 2"]);
   // Across the first stroke, away from the second.
   await drag(page, [[200, 630], [200, 570]]);
-  await expect.poll(() => drawings(page)).toEqual(["ink of 3"]);
-  const [cut] = await inkDrawings(page);
-  expect(cut).toMatchObject({ color: [255, 0, 0], thickness: 4 });
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1", "ink of 1", "ink of 1"]);
+  for (const cut of await inkDrawings(page)) {
+    expect(cut).toMatchObject({ color: [255, 0, 0], thickness: 4 });
+  }
 
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
   await app.close();
 
   ({ page } = await pdflion([file]));
-  expect(await annotations(page)).toEqual([{ subtype: "Ink", strokes: 3 }]);
+  expect(await annotations(page)).toEqual([
+    { subtype: "Ink", strokes: 1 },
+    { subtype: "Ink", strokes: 1 },
+    { subtype: "Ink", strokes: 1 },
+  ]);
 });
