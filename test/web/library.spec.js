@@ -162,6 +162,10 @@ test("after the explanation, each document's first save says so once a session",
   await expect.poll(async () => (await readLibrary(page))[0].revision, { timeout: 10_000 }).toBe(2);
   await expect(page.locator(".snackbar:not([data-seen])")).toHaveCount(0);
   await expect(page.locator("dialog")).toHaveCount(0);
+
+  // Its close button dismisses it.
+  await snackbar.getByRole("button", { name: "Dismiss" }).click();
+  await expect(snackbar).toHaveCount(0);
 });
 
 /**

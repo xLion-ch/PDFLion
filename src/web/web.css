@@ -311,6 +311,31 @@ body {
       background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
     }
   }
+
+  & .close {
+    flex: none;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: var(--md-shape-full);
+    background-color: transparent;
+    color: inherit;
+
+    &::before {
+      display: block;
+      width: 20px;
+      height: 20px;
+      margin: auto;
+      background-color: currentColor;
+      mask: url(/pdflion/icons/close.svg) center / contain no-repeat;
+      content: "";
+    }
+
+    &:hover {
+      background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
+    }
+  }
 }
 
 @media (forced-colors: active) {
@@ -346,7 +371,8 @@ body {
 
 /*
  * With a finger, touch targets are at least 44px, as Apple asks: the tabs,
- * Home's among them, and their close buttons, buttons, menu items and the snackbar's action.
+ * Home's among them, and their close buttons, buttons, menu items and the snackbar's
+ * action and close button.
  */
 @media (pointer: coarse) {
   #tabs {
@@ -375,6 +401,11 @@ body {
 
   .button,
   .snackbar .action {
+    height: 44px;
+  }
+
+  .snackbar .close {
+    width: 44px;
     height: 44px;
   }
 

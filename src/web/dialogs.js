@@ -172,6 +172,13 @@ export function snackbar(message, { action, onAction } = {}) {
     });
     bar.append(button);
   }
+  // Material's close icon, for those who'd rather not wait for it to go.
+  const close = element("button", "close", "");
+  close.type = "button";
+  close.title = t("dismiss");
+  close.setAttribute("aria-label", t("dismiss"));
+  close.addEventListener("click", dismiss);
+  bar.append(close);
   const timer = setTimeout(dismiss, action ? SNACKBAR_ACTION_TIME : SNACKBAR_TIME);
   const shown = { dismiss };
   shownSnackbar = shown;
