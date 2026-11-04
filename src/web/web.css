@@ -64,11 +64,6 @@ body {
   flex: none;
 }
 
-/* As on the desktop, the strip shows only for two tabs or more. */
-body.oneTab #tabs {
-  display: none;
-}
-
 #frames {
   position: relative;
   flex: 1;
@@ -349,13 +344,14 @@ body {
 }
 
 /*
- * With a finger, touch targets are at least 44px, as Apple asks: the tabs and
- * their close buttons, buttons, menu items and the snackbar's action.
+ * With a finger, touch targets are at least 44px, as Apple asks: the tabs,
+ * Home's among them, and their close buttons, buttons, menu items and the snackbar's action.
  */
 @media (pointer: coarse) {
   #tabs {
     --strip-height: 48px;
     --tab-min-width: 120px;
+    --home-tab-width: 56px;
   }
 
   .tab {

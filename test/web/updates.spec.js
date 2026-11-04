@@ -12,6 +12,7 @@ import {
   openApp,
   openFromHome,
   serveApp,
+  stripTabs,
   test,
 } from "./pdflion.js";
 
@@ -96,8 +97,8 @@ test("a new version downloads only what changed, and Restart Now brings it up wi
     expect(await appVersion(page)).toBe(NEW);
     // The old version's files are gone.
     expect(await page.evaluate(() => caches.keys())).toEqual([expect.stringMatching(/^pdflion-1\.0\.2-[0-9a-f]{12}$/)]);
-    expect(await page.locator("#tabs .tab .name").allTextContents()).toEqual([PAPER, "Home"]);
-    await page.locator("#tabs .tab").first().click();
+    expect((await stripTabs(page)).map((tab) => tab.name)).toEqual(["Home", PAPER]);
+    await page.locator("#tabs .tab").nth(1).click();
     await documentFrame(page, PAPER);
   } finally {
     await server.close();

@@ -29,11 +29,11 @@ contextBridge.exposeInMainWorld("pdflionHome", {
     ipcRenderer.on("pdflion-home:state", (_event, documents) => callback(documents));
     ipcRenderer.send("pdflion-home:ready");
   },
-  /** @param {string} id opens that recent document, in place of Home */
+  /** @param {string} id opens that recent document, in a new tab */
   open: (id) => ipcRenderer.send("pdflion-home:open", id),
-  /** Shows the Open panel, whose documents open in place of Home. */
+  /** Shows the Open panel, whose documents open in new tabs. */
   showOpenPanel: () => ipcRenderer.send("pdflion-home:show-open-panel"),
-  /** Makes an untitled document, in place of Home. */
+  /** Makes an untitled document, in a new tab. */
   newDocument: () => ipcRenderer.send("pdflion-home:new-document"),
   /** @param {string} id takes that document off the list */
   remove: (id) => ipcRenderer.send("pdflion-home:remove", id),

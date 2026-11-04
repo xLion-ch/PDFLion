@@ -102,7 +102,7 @@ export function handleHome() {
     if (tab && entry) showContextMenu(tab, entry);
   });
 
-  // PDFs dropped on Home open in its window, the first in its place.
+  // PDFs dropped on Home open in its window, as tabs after Home.
   ipcMain.on("pdflion-home:open-files", (event, paths) => {
     const tab = homeTab(event);
     if (tab && isPathList(paths)) openDocuments(paths, tabs.windowOf(tab) ?? undefined);
@@ -138,8 +138,8 @@ export function homeTab(event) {
 }
 
 /**
- * Opens a recent document in a home tab's window, where it takes the home
- * tab's place, or selects its tab if it's open. If its file is gone, offers to
+ * Opens a recent document in a new tab of a home tab's window, or selects
+ * its tab if it's open. If its file is gone, offers to
  * take it off the list.
  *
  * @param {tabs.Tab} tab

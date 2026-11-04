@@ -52,6 +52,17 @@ const tabItems = new Map();
 /** @param {BrowserWindow | null} win */
 const hasSeveralTabs = (win) => win !== null && tabs.tabsOf(win).length > 1;
 
+/**
+ * Whether the focused window's active tab is a document that has another
+ * with it, to move to a window of its own.
+ *
+ * @param {BrowserWindow | null} win
+ */
+const canMoveToNewWindow = (win) =>
+  activeDocument(win) !== undefined &&
+  win !== null &&
+  tabs.tabsOf(win).filter((tab) => !tabs.isHome(tab)).length > 1;
+
 export function installMenu() {
   setAboutPanel();
   setMenu();
@@ -142,6 +153,8 @@ function template() {
           id: "closeTab",
           label: "&Close Tab",
           accelerator: "CmdOrCtrl+W",
+          // On Home, which stays, it closes the window, as a browser's
+          // last tab does.
           click: (_item, win) => {
             const tab = win instanceof BrowserWindow ? tabs.activeTab(win) : undefined;
             if (tab) closeTab(tab);
@@ -357,7 +370,7 @@ function tabMenuItems() {
       ),
       visible: false,
     },
-    tabItem("&Move Tab to New Window", "moveTabToNewWindow", undefined, hasSeveralTabs, (win) => {
+    tabItem("&Move Tab to New Window", "moveTabToNewWindow", undefined, canMoveToNewWindow, (win) => {
       const tab = tabs.activeTab(win);
       if (tab) moveTabToNewWindow(tab);
     }),

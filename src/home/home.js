@@ -2,7 +2,7 @@
  * Home, a home tab's page: the recent documents as a grid of cards, and Open
  * and New. It draws what the host sends through `window.pdflionHome`, and
  * asks the host for everything else, naming documents by their ids. The host
- * opens a document in the home tab's place. On the desktop the host is main,
+ * opens a document in a new tab, after Home. On the desktop the host is main,
  * through src/preload/home.cjs, and in the web app the shell, through
  * src/web/home-host.js, where the documents are the library's, with their
  * sizes rather than their folders, and Home has an ⓘ menu rather than Clear.
@@ -94,7 +94,9 @@
     document.body.classList.toggle("empty", documents.length === 0);
     recent.hidden = documents.length === 0;
     empty.hidden = documents.length > 0;
-    if (!documents.some(({ id }) => id === current)) current = documents[0]?.id ?? null;
+    // Home lives as long as its window, so the keyboard comes back to the
+    // newest card, unless it's on the list now.
+    if (!hadFocus || !documents.some(({ id }) => id === current)) current = documents[0]?.id ?? null;
     list.replaceChildren(...documents.map(card));
     if (hadFocus) cardOf(current)?.focus();
   }

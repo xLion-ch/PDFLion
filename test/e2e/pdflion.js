@@ -216,14 +216,16 @@ export async function stripOf(app, page) {
 
 /**
  * @param {Page} strip
- * @returns {Promise<{ id: string, name: string, active: boolean, edited: boolean, label: string }[]>}
- *   the tabs the strip shows, left to right
+ * @returns {Promise<{ id: string, name: string, home: boolean, active: boolean, edited: boolean, label: string }[]>}
+ *   the tabs the strip shows, left to right, Home first
  */
 export function stripTabs(strip) {
   return strip.evaluate(() =>
     [...document.querySelectorAll(".tab")].map((tab) => ({
       id: /** @type {HTMLElement} */ (tab).dataset.id ?? "",
-      name: tab.querySelector(".name")?.textContent ?? "",
+      // Home shows its icon alone, and its name as its title.
+      name: tab.getAttribute("title") ?? "",
+      home: tab.classList.contains("home"),
       active: tab.getAttribute("aria-selected") === "true",
       edited: tab.classList.contains("edited"),
       label: tab.getAttribute("aria-label") ?? "",

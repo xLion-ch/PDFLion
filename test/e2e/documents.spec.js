@@ -127,6 +127,7 @@ test("New opens an untitled blank page, Letter or A4 by region", async ({ pdflio
   expect(await pageView(letter)).toEqual([0, 0, 612, 792]);
   expect(await windowTitle(app, letter)).toBe("Untitled.pdf");
   expect(await stripTabs(strip)).toMatchObject([
+    { name: "Home", active: false, edited: false },
     { name: "tracemonkey.pdf", active: false, edited: false },
     { name: "Untitled.pdf", active: true, edited: false },
   ]);
@@ -183,6 +184,7 @@ test("Save on an unchanged new document asks where, and then it's that file", as
   expect(saved).toMatch(/\/MediaBox \[0 0 [\d.]+ [\d.]+\]/);
   expect(await windowTitle(app, untitled)).toBe("saved.pdf");
   expect((await stripTabs(await stripOf(app, untitled))).map(({ name }) => name)).toEqual([
+    "Home",
     "tracemonkey.pdf",
     "saved.pdf",
   ]);
@@ -244,7 +246,7 @@ test("the save prompt's Save on a new document asks where to save it", async ({ 
     if (!sender) throw new Error(`No page at ${url}`);
     ipcMain.emit("pdflion:set-edited", { sender, senderFrame: sender.mainFrame }, true);
   }, untitled.url());
-  await expect.poll(async () => (await stripTabs(await stripOf(app, page)))[1].edited).toBe(true);
+  await expect.poll(async () => (await stripTabs(await stripOf(app, page)))[2].edited).toBe(true);
 
   await answerMessages(app, "Save");
   const closed = untitled.waitForEvent("close");

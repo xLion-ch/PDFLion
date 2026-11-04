@@ -32,6 +32,26 @@ async function toWindow(page, x, y) {
 }
 
 /**
+ * Scrolls the document so that a height of the first page, in PDF
+ * coordinates, is in the middle of the view, for points the window's height
+ * doesn't show at first.
+ *
+ * @param {Page} page
+ * @param {number} y
+ */
+async function scrollToHeight(page, y) {
+  await page.evaluate(async (y) => {
+    const view = PDFViewerApplication.pdfViewer.getPageView(0);
+    const [, vy] = view.viewport.convertToViewportPoint(0, y);
+    const container = /** @type {HTMLElement} */ (document.getElementById("viewerContainer"));
+    const shown = container.getBoundingClientRect();
+    const top = view.div.getBoundingClientRect().top + view.div.clientTop + vy;
+    container.scrollTop += top - (shown.top + container.clientHeight / 2);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }, y);
+}
+
+/**
  * Drags the mouse along points of the first page, in PDF coordinates.
  *
  * @param {Page} page
@@ -196,6 +216,7 @@ test("erases an ink annotation from the file, which Save deletes", async ({ pdfl
   await expect.poll(() => drawings(page)).toEqual(["ink of 2"]);
   // Across the second stroke, away from the first.
   const [x, y] = INK_STROKES[1].slice(20, 22);
+  await scrollToHeight(page, y);
   await drag(page, [[x, y - 30], [x, y + 30]]);
   await expect.poll(() => drawings(page)).toEqual([]);
 
@@ -243,6 +264,7 @@ test("a pen's eraser end with no tool on turns the eraser on, and erases the fil
 
   // Across the second stroke, which pdf.js has as a drawing only in a tool.
   const [x, y] = INK_STROKES[1].slice(20, 22);
+  await scrollToHeight(page, y);
   await eraseWithPen(page, [[x, y - 30], [x, y + 30]]);
   await expect.poll(() => isErasing(page)).toBe(true);
   await expect(page.locator("#pdflionEditorEraserButton")).toHaveClass(/toggled/);

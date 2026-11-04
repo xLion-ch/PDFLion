@@ -209,10 +209,12 @@ async function frameWhere(page, test) {
 
 /**
  * @param {Page} page
- * @returns {Promise<Frame>} Home's frame, once it has drawn
+ * @returns {Promise<Frame>} Home's frame, once it shows and has drawn. Home's
+ *   tab is there from the start, so its frame may be loaded but hidden.
  */
 export async function homeFrame(page) {
   const frame = await frameWhere(page, (url) => url.includes("/home/home.html"));
+  await page.locator("#frames > .page.active[src$='/home/home.html']").waitFor({ state: "attached" });
   await frame.locator("#recent:not([hidden]), #empty:not([hidden])").waitFor();
   return frame;
 }
@@ -328,7 +330,8 @@ export function stripTabs(page) {
   return page.locator("#tabs .tab").evaluateAll((tabs) =>
     tabs.map((tab) => ({
       id: /** @type {HTMLElement} */ (tab).dataset.id ?? "",
-      name: tab.querySelector(".name")?.textContent ?? "",
+      // Home shows its icon alone, and its name as its title.
+      name: tab.getAttribute("title") ?? "",
       home: tab.classList.contains("home"),
       edited: tab.classList.contains("edited"),
       active: tab.classList.contains("active"),

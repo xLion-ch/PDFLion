@@ -1,9 +1,9 @@
 /**
- * One tab per document, and home tabs. A tab is a WebContentsView showing the
- * viewer, or Home, in a window whose own page is the tab strip. Moving a tab
- * to another window moves its view, and its page, with any unsaved changes,
- * comes along. A document opened in a window whose active tab is Home takes
- * the home tab's place.
+ * One tab per document, and a home tab per window. A tab is a WebContentsView
+ * showing the viewer, or Home, in a window whose own page is the tab strip.
+ * Moving a tab to another window moves its view, and its page, with any
+ * unsaved changes, comes along. Every window has its home tab from the start,
+ * pinned as its leftmost tab: it doesn't move or close, but with its window.
  *
  * This module lays out each window's views, titles the window after its
  * active tab, and tells the strip what to show. Closing a tab here never asks
@@ -21,7 +21,7 @@ import { HOME_URL, isHomeUrl, isViewerUrl, viewerUrl } from "./routes.js";
 
 const isMac = process.platform === "darwin";
 
-/** The strip's height, as tabs.css draws it. It shows with two tabs or more. */
+/** The strip's height, as tabs.css draws it. */
 const STRIP_HEIGHT = 36;
 
 /** Link schemes that open in the default browser or mail app. */
@@ -58,32 +58,24 @@ const adopted = new WeakSet();
 const listeners = new Set();
 
 /**
- * Opens a document in a new tab of `win`, and selects it. If the window's
- * active tab is Home, the document takes its place.
+ * Opens a document in a new tab at the end of `win`, and selects it.
  *
  * @param {BrowserWindow} win
  * @param {string} token from documents.register()
  * @returns {Tab}
  */
 export function openTab(win, token) {
-  const active = win.isDestroyed() ? undefined : activeTab(win);
-  const home = active?.kind === "home" ? active : undefined;
-  const index = home ? list.tabsOf(win.id).indexOf(home.id) : undefined;
-  const tab = addTab(win, "document", token, index);
-  if (home) closeTab(home);
-  return tab;
+  return addTab(win, "document", token);
 }
 
 /**
- * Opens Home in a new tab of `win`, after its active tab, and selects it.
+ * Gives `win` its home tab, pinned as its leftmost tab, and selects it.
  *
- * @param {BrowserWindow} win
+ * @param {BrowserWindow} win without a home tab
  * @returns {Tab}
  */
 export function openHomeTab(win) {
-  const active = win.isDestroyed() ? undefined : activeTab(win);
-  const index = active ? list.tabsOf(win.id).indexOf(active.id) + 1 : undefined;
-  return addTab(win, "home", null, index);
+  return addTab(win, "home", null, 0);
 }
 
 /**
@@ -117,7 +109,7 @@ function addTab(win, kind, token, index) {
   };
   tab.title = documentName(tab);
   tabs.set(tab.id, tab);
-  list.add(win.id, tab.id, index);
+  list.add(win.id, tab.id, index, { pinned: kind === "home" });
 
   if (kind === "home") keepOnHome(webContents);
   else keepOnViewer(webContents);
@@ -188,21 +180,21 @@ export function selectTab(tab, { focus = true } = {}) {
 }
 
 /**
- * Moves a tab to `index` among the tabs of `win`, its own window or another,
- * and selects it. A window left without tabs closes. It asks about nothing,
- * since the tab lives on.
+ * Moves a document's tab to `index` among the tabs of `win`, its own window
+ * or another, and selects it. A window left with only Home closes. It asks
+ * about nothing, since the tab lives on. Home doesn't move.
  *
  * @param {Tab} tab
  * @param {BrowserWindow} win
- * @param {number} [index] from 0 to the number of other tabs in `win`;
- *   defaults to the end
+ * @param {number} [index] from 1, after Home, to the number of other tabs
+ *   in `win`; defaults to the end
  */
 export function moveTab(tab, win, index) {
   const from = windowOf(tab);
-  if (!from) return;
+  if (!from || tab.kind === "home") return;
   adopt(win);
   const others = list.tabsOf(win.id).filter((id) => id !== tab.id).length;
-  list.move(tab.id, win.id, index ?? others);
+  if (!list.move(tab.id, win.id, index ?? others)) return;
   if (from !== win) {
     from.contentView.removeChildView(tab.view);
     win.contentView.addChildView(tab.view);
@@ -210,12 +202,12 @@ export function moveTab(tab, win, index) {
     // attached to it follow. The page doesn't reload.
   }
   selectTab(tab);
-  if (from !== win) afterTabLeft(from);
+  if (from !== win) afterTabLeft(from, { moved: true });
 }
 
 /**
- * Closes a tab, and its window if it was the last one there. It asks about
- * nothing: unsaved.js has done that.
+ * Closes a tab, and its window if it was the last one there. Closing a
+ * document leaves Home. It asks about nothing: unsaved.js has done that.
  *
  * @param {Tab} tab
  */
@@ -309,7 +301,7 @@ export function isHome(tab) {
 
 /**
  * @param {BrowserWindow} win
- * @returns {Tab | undefined} a home tab of `win`, the leftmost
+ * @returns {Tab | undefined} the home tab of `win`, its leftmost
  */
 export function homeTabOf(win) {
   return tabsOf(win).find(isHome);
@@ -490,21 +482,24 @@ function focusTab(tab) {
 }
 
 /**
- * Closes a window a tab has left if it has none left, or shows its new
- * active tab.
+ * Closes a window a tab has left if it has no tabs left, or only Home after
+ * its last document moved to another window, as a browser's window goes
+ * with its last tab. Otherwise shows its new active tab.
  *
  * @param {BrowserWindow} win
+ * @param {{ moved?: boolean }} [options] whether the tab moved to another
+ *   window, rather than closing
  */
-function afterTabLeft(win) {
+function afterTabLeft(win, { moved = false } = {}) {
   const active = activeTab(win);
-  if (active) selectTab(active, { focus: win.isFocused() });
+  const onlyHome = tabsOf(win).every(isHome);
+  if (active && !(moved && onlyHome)) selectTab(active, { focus: win.isFocused() });
   else win.close();
 }
 
 /**
  * Shows the active tab's view and hides the others. The view sits below the
- * strip, or fills the window while the strip is hidden or the page is full
- * screen.
+ * strip, or fills the window while the page is full screen.
  *
  * @param {BrowserWindow} win
  */
@@ -513,7 +508,7 @@ function layout(win) {
   const windowTabs = tabsOf(win);
   const active = activeTab(win);
   for (const tab of windowTabs) {
-    const top = windowTabs.length > 1 && !tab.fullScreen ? STRIP_HEIGHT : 0;
+    const top = tab.fullScreen ? 0 : STRIP_HEIGHT;
     tab.view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
     tab.view.setVisible(tab === active);
   }
@@ -531,9 +526,10 @@ function setFullScreen(tab, fullScreen) {
 
 /**
  * Titles a window after its active tab's page, or PDFLion while it's Home.
- * With one tab, the title also shows unsaved changes: `name.pdf — Edited` on
- * macOS, as Preview and TextEdit do, and `*name.pdf` on Windows and Linux, as
- * Notepad and gedit do. With several, the strip shows them on each tab. On
+ * With one document, the title also shows unsaved changes: `name.pdf —
+ * Edited` on macOS, as Preview and TextEdit do, and `*name.pdf` on Windows
+ * and Linux, as Notepad and gedit do. With several, the strip shows them on
+ * each tab. On
  * macOS the close button's dot means that some tab in the window has changes,
  * since closing would ask.
  *
@@ -543,7 +539,7 @@ function updateTitle(win) {
   const windowTabs = tabsOf(win);
   const active = activeTab(win);
   if (!active) return;
-  const edited = windowTabs.length === 1 && active.edited;
+  const edited = windowTabs.filter((tab) => !isHome(tab)).length === 1 && active.edited;
   if (active.kind === "home") win.setTitle(app.name);
   else if (!edited) win.setTitle(active.title);
   else win.setTitle(isMac ? `${active.title} — Edited` : `*${active.title}`);
@@ -551,8 +547,7 @@ function updateTitle(win) {
 }
 
 /**
- * Sends the strip its window's tabs. The strip shows them with two tabs or
- * more, and is covered by the active tab's view with one.
+ * Sends the strip its window's tabs.
  *
  * @param {BrowserWindow} win
  */

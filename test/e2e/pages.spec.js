@@ -105,6 +105,13 @@ async function showThumbnails(page) {
 }
 
 /**
+ * Where a drag of a thumbnail ends on the one it goes after, as a share of
+ * its height: past its middle, which is all pdf.js needs, with a margin, and
+ * as little as that, so that the drag fits in WINDOW_SIZE below the strip.
+ */
+const DROP_HEIGHT = 0.6;
+
+/**
  * Drags a page's thumbnail with the mouse, and drops it after another's.
  *
  * pdf.js scrolls the thumbnails while the dragged one nears their edge, which
@@ -127,7 +134,7 @@ async function dragThumbnail(page, from, after, { grid = false } = {}) {
   // The sidebar may still be sliding in.
   await settled(page);
   const fits = await page.evaluate(
-    async ([from, after]) => {
+    async ([from, after, dropHeight]) => {
       /** @param {number} number */
       const image = (number) =>
         /** @type {Element} */ (
@@ -138,13 +145,13 @@ async function dragThumbnail(page, from, after, { grid = false } = {}) {
       const container = /** @type {HTMLElement} */ (document.getElementById("viewsManagerContent"));
       const [start, end] = [image(from), image(after)];
       const top = start.top;
-      const bottom = end.top + end.height * 0.75 + start.height / 2;
+      const bottom = end.top + end.height * dropHeight + start.height / 2;
       const middle = container.getBoundingClientRect().top + container.clientHeight / 2;
       container.scrollTop += (top + bottom) / 2 - middle;
       await new Promise((resolve) => requestAnimationFrame(resolve));
       return bottom - top <= container.clientHeight;
     },
-    [from, after],
+    [from, after, DROP_HEIGHT],
   );
   if (!fits) throw new Error(`Dragging thumbnail ${from} after ${after} doesn't fit in the window`);
   const start = await thumbnail(page, from).locator(".thumbnailImageContainer").boundingBox();
@@ -152,7 +159,7 @@ async function dragThumbnail(page, from, after, { grid = false } = {}) {
   if (!start || !end) throw new Error("No thumbnail to drag");
   await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
   await page.mouse.down();
-  await page.mouse.move(end.x + end.width * x, end.y + end.height * 0.75, { steps: 20 });
+  await page.mouse.move(end.x + end.width * x, end.y + end.height * DROP_HEIGHT, { steps: 20 });
   await page.mouse.up();
 }
 
@@ -332,7 +339,7 @@ test("a new document with an inserted page asks about saving when it closes", as
   await clickMenu(app, untitled, "insertBlankPage");
   await expect.poll(() => pagesCount(untitled)).toBe(2);
   const strip = await stripOf(app, page);
-  await expect.poll(async () => (await stripTabs(strip))[1]).toMatchObject({
+  await expect.poll(async () => (await stripTabs(strip))[2]).toMatchObject({
     name: "Untitled.pdf",
     edited: true,
   });

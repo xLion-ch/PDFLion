@@ -28,8 +28,8 @@ test("a PDF from Files is kept, shows on Home, and opens the same document again
   await openApp(page);
   await openFromHome(page, [TRACEMONKEY]);
   const viewer = await documentFrame(page, "compressed.tracemonkey-pldi-09.pdf");
-  // It took Home's place.
-  expect(await stripTabs(page)).toHaveLength(1);
+  // After Home.
+  expect(await stripTabs(page)).toMatchObject([{ home: true, active: false }, { home: false, active: true }]);
   const [record] = await readLibrary(page);
   expect(record).toMatchObject({
     name: "compressed.tracemonkey-pldi-09.pdf",

@@ -115,7 +115,7 @@ async function tabId(strip, name) {
  * @param {string} name
  */
 function tab(strip, name) {
-  return strip.locator(".tab", { hasText: name });
+  return strip.locator(`.tab[title=${JSON.stringify(name)}]`);
 }
 
 /**
@@ -206,17 +206,34 @@ async function dropTab(page, id, clientX = 0) {
   );
 }
 
-test("a second file opens as a tab, and the strip appears", async ({ pdflion }) => {
+test("files open as tabs after Home, the leftmost tab, an icon alone", async ({ pdflion }) => {
   const dir = await tempDir();
   const { app, page: first } = await pdflion([await tracemonkey(dir, "first.pdf")]);
   const strip = await stripOf(app, first);
-  // With one tab, the document covers the strip.
+  // With one document, the strip shows Home before it.
+  expect(await stripTabs(strip)).toMatchObject([
+    { name: "Home", home: true, active: false },
+    { name: "first.pdf", home: false, active: true },
+  ]);
   const one = await viewBounds(app, first);
-  expect(one.view).toEqual({ x: 0, y: 0, width: one.content.width, height: one.content.height });
+  expect(one.view).toEqual({
+    x: 0,
+    y: STRIP_HEIGHT,
+    width: one.content.width,
+    height: one.content.height - STRIP_HEIGHT,
+  });
+  const home = strip.locator(".tab.home");
+  await expect(home.locator(".name")).toHaveText("");
+  await expect(home.locator(".close")).toBeHidden();
+  expect(await home.getAttribute("draggable")).toBe("false");
+  const width = async (/** @type {import("@playwright/test").Locator} */ locator) =>
+    (await locator.boundingBox())?.width ?? 0;
+  expect(await width(home)).toBeLessThan(await width(tab(strip, "first.pdf")));
 
   const second = await openAndRender(app, await tracemonkey(dir, "second.pdf"));
   expect(await windowCount(app)).toBe(1);
   expect(await stripTabs(strip)).toMatchObject([
+    { name: "Home", home: true, active: false },
     { name: "first.pdf", active: false },
     { name: "second.pdf", active: true },
   ]);
@@ -269,16 +286,29 @@ test("selects and closes tabs from the strip, and the title follows", async ({ p
   const secondClosed = second.waitForEvent("close");
   await tab(strip, "second.pdf").click({ button: "middle" });
   await secondClosed;
-  expect(await tabNames(strip)).toEqual(["first.pdf", "third.pdf"]);
+  expect(await tabNames(strip)).toEqual(["Home", "first.pdf", "third.pdf"]);
 
   // Closing the active tab selects its right neighbour.
   const firstClosed = first.waitForEvent("close");
   await tab(strip, "first.pdf").locator(".close").click();
   await firstClosed;
-  await expect.poll(() => tabNames(strip)).toEqual(["third.pdf"]);
+  await expect.poll(() => tabNames(strip)).toEqual(["Home", "third.pdf"]);
   expect(await windowTitle(app, third)).toBe("third.pdf");
-  // One tab left: the strip hides behind it.
-  expect((await viewBounds(app, third)).view.y).toBe(0);
+  expect((await viewBounds(app, third)).view.y).toBe(STRIP_HEIGHT);
+
+  // Closing the last document leaves Home, which neither the middle button
+  // nor the strip closes.
+  const thirdClosed = third.waitForEvent("close");
+  await tab(strip, "third.pdf").locator(".close").click();
+  await thirdClosed;
+  await expect.poll(() => stripTabs(strip)).toMatchObject([{ name: "Home", active: true }]);
+  expect(await windowTitle(app, strip)).toBe("PDFLion");
+  await tab(strip, "Home").click({ button: "middle" });
+  const homeId = await tabId(strip, "Home");
+  await strip.evaluate((id) => window.pdflionTabs.close(id), homeId);
+  await strip.waitForTimeout(300);
+  expect(await tabNames(strip)).toEqual(["Home"]);
+  expect(await windowCount(app)).toBe(1);
 });
 
 test("menu commands reach the active tab", async ({ pdflion }) => {
@@ -314,7 +344,7 @@ test("closing a window with two edited tabs asks about each, and Cancel keeps bo
   await pageB.locator(".annotationLayer input").fill("changed");
   const strip = await stripOf(app, pageA);
   const edits = async () => (await stripTabs(strip)).map(({ edited }) => edited);
-  await expect.poll(edits).toEqual([true, true]);
+  await expect.poll(edits).toEqual([false, true, true]);
   const win = await app.browserWindow(pageA);
   const messages = () => app.evaluate(() => /** @type {any} */ (globalThis).messages);
   const ask = (/** @type {string} */ name) =>
@@ -363,21 +393,30 @@ test("Presentation Mode in a tab fills the screen, over the strip", async ({ pdf
   await expect.poll(async () => (await viewBounds(app, second)).view.y).toBe(STRIP_HEIGHT);
 });
 
-test("Close Tab and Close Window", async ({ pdflion }) => {
-  const { app, pages } = await openTabs(pdflion, ["first.pdf", "second.pdf", "third.pdf"]);
+test("Close Tab, Close Tab on Home, and Close Window", async ({ pdflion }) => {
+  const { app, pages, files } = await openTabs(pdflion, ["first.pdf", "second.pdf", "third.pdf"]);
   const [first, second, third] = pages;
   const strip = await stripOf(app, first);
 
   const thirdClosed = third.waitForEvent("close");
   await clickMenu(app, first, "closeTab");
   await thirdClosed;
-  expect(await tabNames(strip)).toEqual(["first.pdf", "second.pdf"]);
+  expect(await tabNames(strip)).toEqual(["Home", "first.pdf", "second.pdf"]);
   expect(await activeName(strip)).toBe("second.pdf");
 
+  // On Home, which closes only with its window, it closes the window.
+  await tab(strip, "Home").click();
+  await expect.poll(() => activeName(strip)).toBe("Home");
   const closed = Promise.all([first.waitForEvent("close"), second.waitForEvent("close")]);
-  await clickMenu(app, first, "closeWindow").catch(() => {}); // Windows and Linux quit with it
+  await clickMenu(app, first, "closeTab").catch(() => {}); // Windows and Linux quit with it
   await closed;
   if (process.platform === "darwin") expect(await windowCount(app)).toBe(0);
+
+  // Close Window.
+  const { app: other, page } = await pdflion([files[0]]);
+  const pageClosed = page.waitForEvent("close");
+  await clickMenu(other, page, "closeWindow").catch(() => {});
+  await pageClosed;
 });
 
 test("Show Next Tab and Show Previous Tab wrap around", async ({ pdflion }) => {
@@ -387,11 +426,11 @@ test("Show Next Tab and Show Previous Tab wrap around", async ({ pdflion }) => {
   expect(await activeName(strip)).toBe("third.pdf");
 
   for (const [id, expected] of [
+    ["nextTab", "Home"],
     ["nextTab", "first.pdf"],
-    ["nextTab", "second.pdf"],
-    ["previousTab", "first.pdf"],
+    ["previousTab", "Home"],
     ["previousTab", "third.pdf"],
-    ["nextTabAlternate", "first.pdf"],
+    ["nextTabAlternate", "Home"],
     ["previousTabAlternate", "third.pdf"],
   ]) {
     await clickMenu(app, page, id);
@@ -414,17 +453,18 @@ test("Move Tab to New Window, then Merge All Windows", async ({ pdflion }) => {
   expect(await second.evaluate(() => /** @type {any} */ (window).marker)).toBe("kept");
   const [firstStrip, secondStrip] = [await stripOf(app, first), await stripOf(app, second)];
   expect(firstStrip).not.toBe(secondStrip);
-  expect(await tabNames(firstStrip)).toEqual(["first.pdf"]);
-  expect(await tabNames(secondStrip)).toEqual(["second.pdf"]);
-  expect((await viewBounds(app, first)).view.y).toBe(0);
-  expect((await viewBounds(app, second)).view.y).toBe(0);
+  expect(await tabNames(firstStrip)).toEqual(["Home", "first.pdf"]);
+  expect(await tabNames(secondStrip)).toEqual(["Home", "second.pdf"]);
+  expect(await activeName(secondStrip)).toBe("second.pdf");
   expect(await windowTitle(app, second)).toBe("second.pdf");
   await expect.poll(() => isMenuItemEnabled(app, "mergeAllWindows")).toBe(true);
+  // A window's only document stays in it.
+  expect(await isMenuItemEnabled(app, "moveTabToNewWindow")).toBe(false);
 
   // The new window is in front, so the other window's tabs join it.
   await clickMenu(app, second, "mergeAllWindows");
   await expect.poll(() => windowCount(app)).toBe(1);
-  expect(await tabNames(secondStrip)).toEqual(["second.pdf", "first.pdf"]);
+  expect(await tabNames(secondStrip)).toEqual(["Home", "second.pdf", "first.pdf"]);
   expect(await activeName(secondStrip)).toBe("second.pdf");
   expect(await first.evaluate(() => PDFViewerApplication.pagesCount)).toBe(14);
   await expect.poll(() => isMenuItemEnabled(app, "mergeAllWindows")).toBe(false);
@@ -438,25 +478,37 @@ test("the tab context menu closes and moves tabs", async ({ pdflion }) => {
 
   await chooseFromContextMenu(app, strip, "second.pdf", "Move Tab to New Window");
   await expect.poll(() => windowCount(app)).toBe(2);
-  expect(await tabNames(strip)).toEqual(["first.pdf", "third.pdf"]);
-  expect(await tabNames(await stripOf(app, second))).toEqual(["second.pdf"]);
+  expect(await tabNames(strip)).toEqual(["Home", "first.pdf", "third.pdf"]);
+  expect(await tabNames(await stripOf(app, second))).toEqual(["Home", "second.pdf"]);
 
+  // Home stays.
   const thirdClosed = third.waitForEvent("close");
   await chooseFromContextMenu(app, strip, "first.pdf", "Close Other Tabs");
   await thirdClosed;
-  expect(await tabNames(strip)).toEqual(["first.pdf"]);
+  expect(await tabNames(strip)).toEqual(["Home", "first.pdf"]);
 
-  // The last tab of a window closes it.
+  // The last document of a window leaves Home.
   const firstClosed = first.waitForEvent("close");
   await chooseFromContextMenu(app, strip, "first.pdf", "Close Tab");
   await firstClosed;
-  // With one tab, there are no others to close or to move away from.
+  // With one document, there are no others to close or to move away from.
   expect(await contextMenuItems(app)).toEqual([
     { label: "Close Tab", enabled: true },
     { label: "Close Other Tabs", enabled: false },
     { label: "Move Tab to New Window", enabled: false },
   ]);
-  await expect.poll(() => windowCount(app)).toBe(1);
+  await expect.poll(() => tabNames(strip)).toEqual(["Home"]);
+  expect(await windowCount(app)).toBe(2);
+
+  // Home's menu only closes the documents.
+  await chooseFromContextMenu(app, strip, "Home", "Close Other Tabs");
+  expect(await contextMenuItems(app)).toEqual([{ label: "Close Other Tabs", enabled: false }]);
+  const otherStrip = await stripOf(app, second);
+  const secondClosed = second.waitForEvent("close");
+  await chooseFromContextMenu(app, otherStrip, "Home", "Close Other Tabs");
+  expect(await contextMenuItems(app)).toEqual([{ label: "Close Other Tabs", enabled: true }]);
+  await secondClosed;
+  expect(await tabNames(otherStrip)).toEqual(["Home"]);
 });
 
 test("reorders tabs by dragging them within the strip", async ({ pdflion }) => {
@@ -466,14 +518,22 @@ test("reorders tabs by dragging them within the strip", async ({ pdflion }) => {
   await tab(strip, "third.pdf").dragTo(tab(strip, "first.pdf"), {
     targetPosition: { x: 4, y: 10 },
   });
-  await expect.poll(() => tabNames(strip)).toEqual(["third.pdf", "first.pdf", "second.pdf"]);
+  await expect.poll(() => tabNames(strip)).toEqual(["Home", "third.pdf", "first.pdf", "second.pdf"]);
   expect(await activeName(strip)).toBe("third.pdf");
 
   const box = /** @type {{ width: number }} */ (await tab(strip, "second.pdf").boundingBox());
   await tab(strip, "first.pdf").dragTo(tab(strip, "second.pdf"), {
     targetPosition: { x: box.width - 4, y: 10 },
   });
-  await expect.poll(() => tabNames(strip)).toEqual(["third.pdf", "second.pdf", "first.pdf"]);
+  await expect.poll(() => tabNames(strip)).toEqual(["Home", "third.pdf", "second.pdf", "first.pdf"]);
+
+  // Nothing goes before Home, which doesn't move.
+  await tab(strip, "second.pdf").dragTo(tab(strip, "Home"), { targetPosition: { x: 4, y: 10 } });
+  await expect.poll(() => tabNames(strip)).toEqual(["Home", "second.pdf", "third.pdf", "first.pdf"]);
+  const homeId = await tabId(strip, "Home");
+  await strip.evaluate((id) => window.pdflionTabs.move(id, 2), homeId);
+  await strip.evaluate((id) => window.pdflionTabs.move(id, 0), await tabId(strip, "first.pdf"));
+  await expect.poll(() => tabNames(strip)).toEqual(["Home", "first.pdf", "second.pdf", "third.pdf"]);
 });
 
 test("a tab dropped on another window's strip or document moves there", async ({ pdflion }) => {
@@ -484,21 +544,22 @@ test("a tab dropped on another window's strip or document moves there", async ({
   await expect.poll(() => windowCount(app)).toBe(2);
   const stripB = await stripOf(app, third);
 
-  // Window B has one tab and shows no strip, so the drop lands on its document.
+  // On a document, it goes last.
   const secondId = await tabId(stripA, "second.pdf");
   await stripA.evaluate((id) => window.pdflionTabs.dragStarted(id), secondId);
   await dropTab(third, secondId);
-  await expect.poll(() => tabNames(stripB)).toEqual(["third.pdf", "second.pdf"]);
+  await expect.poll(() => tabNames(stripB)).toEqual(["Home", "third.pdf", "second.pdf"]);
   expect(await activeName(stripB)).toBe("second.pdf");
-  expect(await tabNames(stripA)).toEqual(["first.pdf"]);
+  expect(await tabNames(stripA)).toEqual(["Home", "first.pdf"]);
   expect(await second.evaluate(() => PDFViewerApplication.pagesCount)).toBe(14);
   await stripA.evaluate((id) => window.pdflionTabs.dragEnded(id, "move"), secondId);
 
-  // On a strip, it goes where it was dropped. Window A, left without tabs, closes.
+  // On a strip, it goes where it was dropped, after Home even when dropped on
+  // it. Window A, left with only Home, closes.
   const firstId = await tabId(stripA, "first.pdf");
   await stripA.evaluate((id) => window.pdflionTabs.dragStarted(id), firstId);
   await dropTab(stripB, firstId, 1);
-  await expect.poll(() => tabNames(stripB)).toEqual(["first.pdf", "third.pdf", "second.pdf"]);
+  await expect.poll(() => tabNames(stripB)).toEqual(["Home", "first.pdf", "third.pdf", "second.pdf"]);
   await expect.poll(() => windowCount(app)).toBe(1);
 });
 
@@ -518,8 +579,8 @@ test("a tab dropped outside every window tears off into its own", async ({ pdfli
   await strip.evaluate((id) => window.pdflionTabs.dragStarted(id), secondId);
   await strip.evaluate((id) => window.pdflionTabs.dragEnded(id, "none"), secondId);
   await expect.poll(() => windowCount(app)).toBe(2);
-  expect(await tabNames(strip)).toEqual(["first.pdf"]);
-  expect(await tabNames(await stripOf(app, second))).toEqual(["second.pdf"]);
+  expect(await tabNames(strip)).toEqual(["Home", "first.pdf"]);
+  expect(await tabNames(await stripOf(app, second))).toEqual(["Home", "second.pdf"]);
   const newBounds = await normalBounds(second);
   expect({ width: newBounds.width, height: newBounds.height }).toEqual({
     width: sourceBounds.width,
@@ -542,11 +603,11 @@ test("ignores a drop of a tab that isn't being dragged", async ({ pdflion }) => 
   await stripA.evaluate((id) => window.pdflionTabs.dragStarted(id), firstId);
   await stripB.evaluate((id) => window.pdflionTabs.drop(id, 0), secondId);
   await first.waitForTimeout(500);
-  expect(await tabNames(stripA)).toEqual(["first.pdf", "second.pdf"]);
-  expect(await tabNames(stripB)).toEqual(["third.pdf"]);
+  expect(await tabNames(stripA)).toEqual(["Home", "first.pdf", "second.pdf"]);
+  expect(await tabNames(stripB)).toEqual(["Home", "third.pdf"]);
 });
 
-test("shows unsaved changes in the title with one tab, and on the tabs with several", async ({
+test("shows unsaved changes in the title with one document, and on the tabs with several", async ({
   pdflion,
 }) => {
   const isMac = process.platform === "darwin";
@@ -564,7 +625,7 @@ test("shows unsaved changes in the title with one tab, and on the tabs with seve
   const windowDot = async () =>
     (await app.browserWindow(pageA)).evaluate((win) => win.isDocumentEdited());
 
-  // One tab: the title.
+  // One document: the title.
   await pageA.locator(".annotationLayer input").fill("changed");
   await expect.poll(() => windowTitle(app, pageA)).toBe(editedTitle("a.pdf"));
   expect(await isEdited(app, pageA)).toBe(true);
@@ -572,12 +633,12 @@ test("shows unsaved changes in the title with one tab, and on the tabs with seve
   await expect.poll(() => windowTitle(app, pageA)).toBe("a.pdf");
   expect(await isEdited(app, pageA)).toBe(false);
 
-  // Several tabs: each tab, and the title names the document alone.
+  // Several documents: each tab, and the title names the document alone.
   const pageB = await openAndRender(app, b);
   await pageB.locator(".annotationLayer input").fill("changed");
-  await expect.poll(edits).toEqual([false, true]);
+  await expect.poll(edits).toEqual([false, false, true]);
   expect(await windowTitle(app, pageB)).toBe("b.pdf");
-  expect((await stripTabs(strip))[1].label).toBe("b.pdf, edited");
+  expect((await stripTabs(strip))[2].label).toBe("b.pdf, edited");
   await expect(tab(strip, "b.pdf").locator(".dot")).toBeVisible();
   await expect(tab(strip, "b.pdf").locator(".close")).toBeHidden();
   await expect(tab(strip, "a.pdf").locator(".dot")).toBeHidden();
@@ -589,15 +650,15 @@ test("shows unsaved changes in the title with one tab, and on the tabs with seve
 
   await tab(strip, "a.pdf").click();
   await pageA.locator(".annotationLayer input").fill("changed again");
-  await expect.poll(edits).toEqual([true, true]);
+  await expect.poll(edits).toEqual([false, true, true]);
   expect(await windowTitle(app, pageA)).toBe("a.pdf");
   await clickMenu(app, pageA, "save");
-  await expect.poll(edits).toEqual([false, true]);
+  await expect.poll(edits).toEqual([false, false, true]);
   if (isMac) expect(await windowDot()).toBe(true);
 
   await tab(strip, "b.pdf").click();
   await clickMenu(app, pageB, "save");
-  await expect.poll(edits).toEqual([false, false]);
+  await expect.poll(edits).toEqual([false, false, false]);
   expect(await windowTitle(app, pageB)).toBe("b.pdf");
   if (isMac) expect(await windowDot()).toBe(false);
 });
@@ -611,8 +672,8 @@ test("a tab whose page goes away by itself closes", async ({ pdflion }) => {
     webContents.getAllWebContents().find((other) => other.getURL() === url)?.close();
   }, first.url());
   await closed;
-  await expect.poll(() => tabNames(strip)).toEqual(["second.pdf"]);
-  expect((await viewBounds(app, second)).view.y).toBe(0);
+  await expect.poll(() => tabNames(strip)).toEqual(["Home", "second.pdf"]);
+  expect((await viewBounds(app, second)).view.y).toBe(STRIP_HEIGHT);
   // Main still answers, and its timers run.
   expect(await app.evaluate(() => new Promise((resolve) => setTimeout(() => resolve(true), 50)))).toBe(true);
 });

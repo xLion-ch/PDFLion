@@ -1,6 +1,8 @@
 /**
  * The tabs of each window, in order, and each window's active tab. Tabs and
- * windows are plain ids here: tabs.js keeps what they stand for.
+ * windows are plain ids here: tabs.js keeps what they stand for. A window may
+ * have one pinned tab, Home, which stays its leftmost: other tabs go after
+ * it, and it doesn't move.
  * Free of Electron and Node, in src/shared/, so that the web app can use it
  * too, and unit tests under plain Node.
  */
@@ -18,24 +20,31 @@ export class TabList {
   /** @type {Map<string, number>} tab id -> window id */
   #windowOf = new Map();
 
+  /** @type {Set<string>} the pinned tabs, one at most per window */
+  #pinned = new Set();
+
   /**
    * Adds a new tab to a window. It becomes the active tab only if the window
-   * had none.
+   * had none. A pinned tab goes first, and any other after the pinned one.
    *
    * @param {number} windowId
    * @param {string} tabId not yet in any window
    * @param {number} [index] where it goes, from 0 to the number of tabs;
-   *   defaults to the end
+   *   defaults to the end. An index before the pinned tab means after it
+   * @param {{ pinned?: boolean }} [options]
    */
-  add(windowId, tabId, index) {
+  add(windowId, tabId, index, { pinned = false } = {}) {
     if (this.#windowOf.has(tabId)) throw new Error(`Tab ${tabId} is already in a window`);
     const entry = this.#windows.get(windowId) ?? { tabs: [], active: null };
-    const at = index ?? entry.tabs.length;
+    const first = this.#firstUnpinned(entry);
+    if (pinned && first > 0) throw new Error(`Window ${windowId} has a pinned tab already`);
+    const at = pinned ? 0 : (index ?? entry.tabs.length);
     checkIndex(at, entry.tabs.length);
-    entry.tabs.splice(at, 0, tabId);
+    entry.tabs.splice(Math.max(at, first), 0, tabId);
     entry.active ??= tabId;
     this.#windows.set(windowId, entry);
     this.#windowOf.set(tabId, windowId);
+    if (pinned) this.#pinned.add(tabId);
   }
 
   /**
@@ -53,6 +62,7 @@ export class TabList {
     const index = entry.tabs.indexOf(tabId);
     entry.tabs.splice(index, 1);
     this.#windowOf.delete(tabId);
+    this.#pinned.delete(tabId);
     if (entry.tabs.length === 0) {
       this.#windows.delete(windowId);
       return null;
@@ -64,24 +74,25 @@ export class TabList {
   /**
    * Moves a tab to `index` in a window, its own or another one. Leaving a
    * window works like remove() there. In the window it joins, it becomes the
-   * active tab only if that window had none.
+   * active tab only if that window had none. A pinned tab doesn't move, and
+   * no tab goes before one.
    *
    * @param {string} tabId
    * @param {number} windowId
    * @param {number} index where it ends up, from 0 to the number of tabs the
-   *   window has without it
-   * @returns {boolean} false if the tab was unknown
+   *   window has without it. An index before the pinned tab means after it
+   * @returns {boolean} false if the tab was unknown or is pinned
    */
   move(tabId, windowId, index) {
     const from = this.#windowOf.get(tabId);
-    if (from === undefined) return false;
+    if (from === undefined || this.#pinned.has(tabId)) return false;
     const target = this.#windows.get(windowId);
     const length = (target?.tabs.length ?? 0) - (from === windowId ? 1 : 0);
     checkIndex(index, length);
 
     if (from === windowId && target) {
       target.tabs.splice(target.tabs.indexOf(tabId), 1);
-      target.tabs.splice(index, 0, tabId);
+      target.tabs.splice(Math.max(index, this.#firstUnpinned(target)), 0, tabId);
     } else {
       this.remove(tabId);
       this.add(windowId, tabId, index);
@@ -128,6 +139,14 @@ export class TabList {
 
   /**
    * @param {string} tabId
+   * @returns {boolean} whether it's its window's pinned tab
+   */
+  isPinned(tabId) {
+    return this.#pinned.has(tabId);
+  }
+
+  /**
+   * @param {string} tabId
    * @returns {number | undefined}
    */
   windowOf(tabId) {
@@ -140,6 +159,14 @@ export class TabList {
    */
   activeTab(windowId) {
     return this.#windows.get(windowId)?.active ?? null;
+  }
+
+  /**
+   * @param {WindowTabs} entry
+   * @returns {number} the first index after the pinned tab, if any
+   */
+  #firstUnpinned(entry) {
+    return entry.tabs.length > 0 && this.#pinned.has(entry.tabs[0]) ? 1 : 0;
   }
 
   /**

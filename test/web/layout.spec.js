@@ -76,7 +76,7 @@ test("touch targets are 44 px, and the toolbar's buttons 40 px", async ({ page }
   await viewer.locator("#pdflionHomeButton").tap();
   const home = await homeFrame(page);
   expectAtLeast(await sizes(page.locator("#tabs .tab")), 44, 44);
-  expectAtLeast(await sizes(page.locator("#tabs .tab .close")), 44, 44);
+  expectAtLeast(await sizes(page.locator("#tabs .tab:not(.home) .close")), 44, 44);
 
   // Home's buttons and cards.
   expectAtLeast(await sizes(home.locator(".button:visible, .icon:visible")), 44, 44);

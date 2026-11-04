@@ -180,7 +180,7 @@ test("Export hands over the settings, or every document with its thumbnail too, 
   await openAppExplained(page);
   await openFromHome(page, [TRACEMONKEY, other]);
   await drawStroke(page, await documentFrame(page, "Other.pdf"));
-  await page.locator("#tabs .tab").first().click();
+  await page.locator("#tabs .tab").nth(1).click();
   await documentFrame(page, PAPER);
   await expect.poll(async () => (await readLibrary(page)).find((record) => record.name === "Other.pdf")?.revision).toBe(1);
   await expect.poll(() => thumbnailCount(page)).toBe(2);
@@ -268,7 +268,7 @@ test("a document changed since the backup stays, and the backup's comes in as a 
   const file = path.join(dir, backup.name);
   await fs.writeFile(file, backup.bytes);
 
-  await page.locator("#tabs .tab").first().click();
+  await page.locator("#tabs .tab").nth(1).click();
   await drawStroke(page, viewer);
   await expect.poll(async () => (await readLibrary(page))[0].revision).toBe(1);
   await showHome(page);

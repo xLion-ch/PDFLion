@@ -1,8 +1,8 @@
 /**
  * Document windows: where they open, which one is in front, and the Open
  * panel and Home that lead to them. Each window's own page is the tab strip,
- * and its documents and home tabs are tabs (tabs.js). Opening a document adds
- * a tab to the frontmost window, in place of Home if that's the active tab,
+ * and its home tab and documents are tabs (tabs.js). Every window has Home as
+ * its leftmost tab. Opening a document adds a tab to the frontmost window,
  * and a new window opens only when there's none.
  */
 import fs from "node:fs/promises";
@@ -103,8 +103,8 @@ export function newDocument(target) {
 
 /**
  * File > Home, the toolbar's Home button, and a launch without documents:
- * selects the window's home tab, or adds one after its active tab, and brings
- * the window to the front. Without a window, Home opens in a new one.
+ * selects the window's home tab, and brings the window to the front. Without
+ * a window, Home opens in a new one.
  *
  * @param {BrowserWindow} [target] the window to show Home in; defaults to
  *   the frontmost window
@@ -113,7 +113,6 @@ export function showHome(target) {
   const win = target && isDocumentWindow(target) ? target : (frontmostWindow() ?? createWindow());
   const home = tabs.homeTabOf(win);
   if (home) tabs.selectTab(home);
-  else tabs.openHomeTab(win);
   showWindow(win);
 }
 
@@ -141,25 +140,31 @@ function frontmostWindow() {
 }
 
 /**
- * Moves a tab into a new window of its own, which opens where new windows
- * open, or with `bounds` if given.
+ * Moves a document's tab into a new window, after that window's Home, which
+ * opens where new windows open, or with `bounds` if given.
  *
  * @param {tabs.Tab} tab
  * @param {Electron.Rectangle} [bounds] screen coordinates, kept on screen
  */
 export function moveTabToNewWindow(tab, bounds) {
+  if (tabs.isHome(tab)) return;
   const win = createWindow(bounds && onScreen(bounds));
-  tabs.moveTab(tab, win, 0);
+  tabs.moveTab(tab, win);
   showWindow(win);
 }
 
-/** Moves every tab into the frontmost window, which the others then leave. */
+/**
+ * Moves every document into the frontmost window. The other windows close
+ * once only their Home is left.
+ */
 export function mergeAllWindows() {
   const [target, ...others] = documentWindows();
   if (!target) return;
   const active = tabs.activeTab(target);
   for (const win of others) {
-    for (const tab of tabs.tabsOf(win)) tabs.moveTab(tab, target);
+    for (const tab of tabs.tabsOf(win)) {
+      if (!tabs.isHome(tab)) tabs.moveTab(tab, target);
+    }
   }
   if (active) tabs.selectTab(active);
 }
@@ -189,7 +194,7 @@ export async function showOpenPanel(target) {
 }
 
 /**
- * Opens a window showing the tab strip, still without tabs.
+ * Opens a window showing the tab strip, with its home tab.
  *
  * @param {Electron.Rectangle} [bounds] defaults to where new windows open
  * @returns {BrowserWindow}
@@ -230,6 +235,7 @@ function createWindow(bounds) {
   win.on("page-title-updated", (event) => event.preventDefault());
   keepOnStrip(win);
   win.loadURL(TABS_URL);
+  tabs.openHomeTab(win);
   return win;
 }
 

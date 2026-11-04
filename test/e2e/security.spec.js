@@ -116,7 +116,7 @@ test("takes tab messages only from the strip, and only for its own tabs", async 
   const second = await documentPage(app, "second.pdf");
   await rendered(second);
   const strip = await stripOf(app, first);
-  const [firstId, secondId] = (await stripTabs(strip)).map(({ id }) => id);
+  const [firstId, secondId] = (await stripTabs(strip)).filter(({ home }) => !home).map(({ id }) => id);
   /**
    * Hands main a message as if `from`'s page had sent it. Every strip has the
    * same URL, so a strip is found by its window.
@@ -151,6 +151,7 @@ test("takes tab messages only from the strip, and only for its own tabs", async 
   await send(second, "pdflion-tabs:drop", firstId, 0);
   await first.waitForTimeout(500);
   expect(await stripTabs(strip)).toMatchObject([
+    { name: "Home", active: false },
     { name: "first.pdf", active: false },
     { name: "second.pdf", active: true },
   ]);
@@ -167,7 +168,7 @@ test("takes tab messages only from the strip, and only for its own tabs", async 
   const closed = first.waitForEvent("close");
   await send(strip, "pdflion-tabs:close", firstId);
   await closed;
-  expect(await stripTabs(otherStrip)).toMatchObject([{ id: secondId }]);
+  expect(await stripTabs(otherStrip)).toMatchObject([{ home: true }, { id: secondId }]);
 });
 
 test("shows only the page dialogs main words, whatever the viewer asks", async ({ pdflion }) => {

@@ -1,7 +1,8 @@
 /**
  * The web app's shell, its page: it does in the browser what the desktop's
  * main process does. It shows the tab strip (src/tabs/tabs.js, through
- * `window.pdflionTabs`) and each tab as a frame, the viewer's or Home's, and
+ * `window.pdflionTabs`) and each tab as a frame, the viewer's or Home's, which
+ * is always the leftmost tab, and
  * keeps the library (library.js), the tool settings, and the shortcuts. Each
  * frame's host (viewer-host.js, home-host.js) talks to it over a
  * MessagePort, in the shape of the desktop's IPC, and the shell checks what
@@ -218,6 +219,7 @@ async function start() {
   followKeys();
   followDrops();
   stopPinching();
+  addTab("home", null, "Home", 0, { load: false });
   if (!(await restoreSession())) showHome();
   keepSession();
   followUpdates(registration, { version: VERSION, beforeRestart: saveEverything });
@@ -355,7 +357,7 @@ function addTab(kind, documentId, name, index, { load = true, view = null } = {}
     saveFailed: false,
   };
   tabs.set(tab.id, tab);
-  tabList.add(WINDOW, tab.id, index);
+  tabList.add(WINDOW, tab.id, index, { pinned: kind === "home" });
   if (load) loadFrame(tab);
   return tab;
 }
@@ -394,15 +396,20 @@ function unloadFrame(tab) {
 }
 
 /**
- * Takes a tab away at once, without saving.
+ * Takes a document's tab away at once, without saving. If it was shown, the
+ * tab that takes its place shows, loading if it has to.
  *
  * @param {Tab} tab
  */
 function removeTab(tab) {
-  if (!tabs.delete(tab.id)) return;
+  if (tab.kind === "home" || !tabs.has(tab.id)) return;
+  const shown = tab === activeTab();
+  tabs.delete(tab.id);
   tabList.remove(tab.id);
   unloadFrame(tab);
-  render();
+  const next = activeTab();
+  if (shown && next) activate(next);
+  else render();
 }
 
 /**
@@ -467,7 +474,7 @@ function tabOf(documentId) {
   return [...tabs.values()].find((tab) => tab.documentId === documentId) ?? null;
 }
 
-/** Shows the active tab, and the strip, unless there's only one. */
+/** Shows the active tab, and tells the strip. */
 function render() {
   const ids = tabList.tabsOf(WINDOW);
   const active = activeTab();
@@ -477,7 +484,6 @@ function render() {
     tab.frame.classList.toggle("active", shown);
     tab.frame.inert = !shown;
   }
-  document.body.classList.toggle("oneTab", ids.length <= 1);
   document.title = active?.kind === "document" ? `${active.name} – PDFLion` : "PDFLion";
   stripListener?.(
     ids.map((id) => {
@@ -514,27 +520,25 @@ function activate(tab, { focus = true } = {}) {
   sleepTabs();
 }
 
-/** Shows Home: the home tab, or a new one after the active tab. */
+/** @returns {Tab} the home tab, the leftmost, which never closes */
+function homeTab() {
+  return /** @type {Tab} */ (tabs.get(/** @type {string} */ (tabList.tabsOf(WINDOW)[0])));
+}
+
+/** Shows Home. */
 function showHome() {
-  const home = [...tabs.values()].find((tab) => tab.kind === "home");
-  if (home) {
-    activate(home);
-    return;
-  }
-  const active = activeTab();
-  const index = active ? tabList.tabsOf(WINDOW).indexOf(active.id) + 1 : 0;
-  activate(addTab("home", null, "Home", index));
+  activate(homeTab());
 }
 
 /**
- * Closes a tab, once its document has saved, and says if the document isn't
- * in Files. A document made with New and never changed goes, as TextEdit
- * does it. Without tabs, Home shows.
+ * Closes a document's tab, once its document has saved, and says if the
+ * document isn't in Files. A document made with New and never changed goes,
+ * as TextEdit does it. Home doesn't close.
  *
  * @param {Tab} tab
  */
 async function closeTab(tab) {
-  if (tab.closing || !tabs.has(tab.id)) return;
+  if (tab.kind === "home" || tab.closing || !tabs.has(tab.id)) return;
   tab.closing = true;
   if (tab.kind === "document") {
     const saved = await runCommand(tab, "saveNow", CLOSE_SAVE_TIMEOUT);
@@ -549,7 +553,6 @@ async function closeTab(tab) {
     }
   }
   removeTab(tab);
-  if (tabs.size === 0) showHome();
   if (tab.documentId) await afterClosing(tab.documentId);
 }
 
@@ -576,17 +579,19 @@ async function afterClosing(documentId) {
  * @param {{ x: number, y: number }} at
  */
 function showTabMenu(tab, at) {
+  const others = [...tabs.values()].filter((other) => other !== tab && other.kind !== "home");
   /** @type {import("./dialogs.js").MenuItem[]} */
   const items = [
-    { label: "Close Tab", action: () => closeTab(tab) },
     {
       label: "Close Other Tabs",
-      disabled: tabs.size < 2,
+      disabled: others.length === 0,
       action: () => {
-        for (const other of [...tabs.values()]) if (other !== tab) closeTab(other);
+        for (const other of others) closeTab(other);
       },
     },
   ];
+  // Home closes only its documents, since it stays.
+  if (tab.kind !== "home") items.unshift({ label: "Close Tab", action: () => closeTab(tab) });
   const { documentId } = tab;
   if (documentId) {
     items.push(
@@ -783,8 +788,7 @@ async function showPageDialog(tab, reason, items) {
 // The library
 
 /**
- * Keeps PDFs from the file picker or a drop, and opens them as tabs, the
- * first in place of Home if it's showing. A file the library has already,
+ * Keeps PDFs from the file picker or a drop, and opens them as tabs. A file the library has already,
  * byte for byte, opens that document.
  *
  * @param {File[]} files
@@ -876,31 +880,23 @@ function regionOf(language) {
 }
 
 /**
- * Opens documents of the library as tabs after the active one, the first in
- * place of Home if it's showing, and shows the last. One that's open
- * already shows its tab.
+ * Opens documents of the library as tabs after the active one, or at the end
+ * from Home, and shows the last. One that's open already shows its tab.
  *
  * @param {string[]} ids
  */
 async function openDocuments(ids) {
   const active = activeTab();
-  const home = active?.kind === "home" ? active : null;
   const order = tabList.tabsOf(WINDOW);
-  let index = active ? order.indexOf(active.id) + (home ? 0 : 1) : order.length;
+  let index = active?.kind === "document" ? order.indexOf(active.id) + 1 : order.length;
   /** @type {Tab | null} */
   let last = null;
-  let added = false;
   for (const id of ids) {
     const record = await library.update(id, { openedAt: Date.now() });
     if (!record) continue;
-    last = tabOf(id);
-    if (!last) {
-      last = addTab("document", id, record.name, index++);
-      added = true;
-    }
+    last = tabOf(id) ?? addTab("document", id, record.name, index++);
   }
   if (last) activate(last);
-  if (home && added) removeTab(home);
   updateHomes();
 }
 
@@ -1074,10 +1070,7 @@ async function deleteDocument(documentId) {
   });
   if (!(await dialogs.confirm(prompt, DELETE, { destructive: true }))) return;
   const tab = tabOf(documentId);
-  if (tab) {
-    removeTab(tab);
-    if (tabs.size === 0) showHome();
-  }
+  if (tab) removeTab(tab);
   await library.remove(documentId);
   thumbnailVersions.delete(documentId);
   updateHomes();
@@ -1227,10 +1220,11 @@ async function homeState() {
 // The session
 
 /**
- * Opens the tabs the session kept, each loading once it's shown, but for
- * the active one, which shows. Documents deleted meanwhile are left out.
+ * Opens the documents the session kept as tabs after Home, each loading once
+ * it's shown, but for the active one, which shows. Documents deleted
+ * meanwhile are left out.
  *
- * @returns {Promise<boolean>} whether any tab opened
+ * @returns {Promise<boolean>} whether a tab showed
  */
 async function restoreSession() {
   const session = parseSession(await library.session());
@@ -1240,11 +1234,13 @@ async function restoreSession() {
   /** @type {Tab | null} */
   let last = null;
   for (const [index, kept] of session.tabs.entries()) {
-    const record = kept.kind === "document" ? records.get(kept.documentId) : null;
-    if (kept.kind === "document" && !record) continue;
-    last = record
-      ? addTab("document", record.id, record.name, tabs.size, { load: false, view: kept.view })
-      : addTab("home", null, "Home", tabs.size, { load: false });
+    if (kept.kind === "home") {
+      if (index === session.active) active = homeTab();
+      continue;
+    }
+    const record = records.get(kept.documentId);
+    if (!record) continue;
+    last = addTab("document", record.id, record.name, tabs.size, { load: false, view: kept.view });
     if (index === session.active) active = last;
   }
   const shown = active ?? last;

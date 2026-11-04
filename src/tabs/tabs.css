@@ -14,6 +14,7 @@
   --strip-height: 36px;
   --tab-max-width: 240px;
   --tab-min-width: 72px;
+  --home-tab-width: 40px;
   --md-shape-small: 8px;
   --md-shape-full: 9999px;
   --md-hover: 8%;
@@ -105,16 +106,34 @@
   text-overflow: ellipsis;
 }
 
-/* Home's icon, before its name. The tab's own ::before is the separator. */
-.tab.home .name::before {
-  content: "";
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  margin-inline-end: 6px;
-  vertical-align: -3px;
-  background-color: currentColor;
-  mask: url(/pdflion/icons/home.svg) center / contain no-repeat;
+/*
+ * Home, each window's leftmost tab: its icon alone, without a close button.
+ * The tab's own ::before is the separator.
+ */
+.tab.home {
+  flex: none;
+  justify-content: center;
+  width: var(--home-tab-width);
+  min-width: 0;
+  padding: 0;
+
+  .name {
+    flex: none;
+    display: flex;
+  }
+
+  .name::before {
+    content: "";
+    width: 18px;
+    height: 18px;
+    background-color: currentColor;
+    mask: url(/pdflion/icons/home.svg) center / contain no-repeat;
+  }
+
+  .close,
+  .dot {
+    display: none;
+  }
 }
 
 /* The close button, or the edited dot in its place until the pointer is over the tab. */

@@ -56,14 +56,17 @@ test("a tap on PDFLion's buttons does what a click does", async ({ page }) => {
   // Home, and the strip's tabs and close buttons.
   await frame.locator("#pdflionHomeButton").tap();
   await homeFrame(page);
-  expect(await stripTabs(page)).toMatchObject([
-    { name: NAME, active: false },
+  // Home's frame is there from the start, so the strip says when it shows.
+  await expect.poll(() => stripTabs(page)).toMatchObject([
     { home: true, active: true },
+    { name: NAME, active: false },
   ]);
-  await page.locator("#tabs .tab").first().tap();
+  await page.locator("#tabs .tab:not(.home)").tap();
+  await expect.poll(() => stripTabs(page)).toMatchObject([{ active: false }, { active: true }]);
+  await page.locator("#tabs .tab.home").tap();
   await expect.poll(() => stripTabs(page)).toMatchObject([{ active: true }, { active: false }]);
-  await page.locator("#tabs .tab.home .close").tap();
-  await expect.poll(() => stripTabs(page)).toMatchObject([{ name: NAME }]);
+  await page.locator("#tabs .tab:not(.home) .close").tap();
+  await expect.poll(() => stripTabs(page)).toMatchObject([{ home: true, active: true }]);
 });
 
 test("a pinch on the pages zooms the document, not the app, also with Pencil on", async ({

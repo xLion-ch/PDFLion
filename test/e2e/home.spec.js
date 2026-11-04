@@ -134,11 +134,11 @@ test("lists the documents opened, newest first, with their thumbnails", async ({
   const second = await tracemonkey(dir, "second.pdf");
   const { app, page: home, userData } = await pdflion([]);
 
-  // The first document takes Home's place, as it's the active tab.
+  // Documents open after Home, which stays.
   await openFile(app, first);
   const firstPage = await documentPage(app, "first.pdf");
   await rendered(firstPage);
-  await expect.poll(() => homePages(app).length).toBe(0);
+  expect(homePages(app)).toEqual([home]);
   await openFile(app, second);
   const secondPage = await documentPage(app, "second.pdf");
   await rendered(secondPage);
@@ -146,18 +146,19 @@ test("lists the documents opened, newest first, with their thumbnails", async ({
   await expect.poll(() => thumbnailFiles(userData)).toHaveLength(2);
 
   await clickMenu(app, secondPage, "home");
-  const again = await homePage(app, [home]);
+  const again = await homePage(app);
+  expect(again).toBe(home);
   await expect
     .poll(() => cards(again))
     .toMatchObject([
       { name: "second.pdf", open: true, missing: false, thumbnail: true },
       { name: "first.pdf", open: true, missing: false, thumbnail: true },
     ]);
-  // After the active tab.
+  // The leftmost tab.
   expect((await stripTabs(await stripOf(app, again))).map(({ name }) => name)).toEqual([
+    "Home",
     "first.pdf",
     "second.pdf",
-    "Home",
   ]);
   expect(await windowTitle(app, again)).toBe("PDFLion");
 
@@ -166,7 +167,7 @@ test("lists the documents opened, newest first, with their thumbnails", async ({
   await expect.poll(() => cards(again)).toMatchObject([{ open: true }, { open: false }]);
 });
 
-test("a card opens its document in Home's place, or shows its tab if it's open", async ({
+test("a card opens its document in a new tab, or shows its tab if it's open", async ({
   pdflion,
 }) => {
   const dir = await tempDir();
@@ -180,15 +181,22 @@ test("a card opens its document in Home's place, or shows its tab if it's open",
   await expect
     .poll(() => stripTabs(strip))
     .toMatchObject([
-      { name: "first.pdf", active: true },
       { name: "Home", active: false },
+      { name: "first.pdf", active: true },
     ]);
 
-  // Closed: it opens in Home's place.
+  // Closed: Home shows, and it opens in a new tab after Home.
   await closeTab(app, first);
+  await expect.poll(() => stripTabs(strip)).toMatchObject([{ name: "Home", active: true }]);
   await home.locator(".card").first().click();
   await rendered(await documentPage(app, "first.pdf"));
-  await expect.poll(() => homePages(app).length).toBe(0);
+  await expect
+    .poll(() => stripTabs(strip))
+    .toMatchObject([
+      { name: "Home", active: false },
+      { name: "first.pdf", active: true },
+    ]);
+  expect(homePages(app)).toEqual([home]);
   expect(await windowCount(app)).toBe(1);
 });
 
@@ -213,31 +221,32 @@ test("a document whose file is gone shows as missing, and can be removed", async
   await expect(home.locator("#empty")).toBeVisible();
 });
 
-test("New and Open… open in Home's place", async ({ pdflion }) => {
+test("New and Open… open in new tabs after Home", async ({ pdflion }) => {
   const dir = await tempDir();
   const picked = await tracemonkey(dir, "picked.pdf");
   const { app, page: home } = await pdflion([]);
   await home.locator("#empty .new").click();
   const untitled = await documentPage(app, "Untitled.pdf");
   await rendered(untitled);
-  await expect.poll(() => homePages(app).length).toBe(0);
+  expect(homePages(app)).toEqual([home]);
 
   await clickMenu(app, untitled, "home");
-  const again = await homePage(app, [home]);
+  const again = await homePage(app);
   await app.evaluate(({ dialog }, file) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
   }, picked);
   // An untitled document isn't a recent one, so Home is still empty.
   await again.locator("#empty .open").click();
   await rendered(await documentPage(app, "picked.pdf"));
-  await expect.poll(() => homePages(app).length).toBe(0);
+  expect(homePages(app)).toEqual([home]);
   expect((await stripTabs(await stripOf(app, untitled))).map(({ name }) => name)).toEqual([
+    "Home",
     "Untitled.pdf",
     "picked.pdf",
   ]);
 });
 
-test("a PDF dropped on Home opens in its place", async ({ pdflion }) => {
+test("a PDF dropped on Home opens in a new tab", async ({ pdflion }) => {
   const file = await tracemonkey(await tempDir(), "dropped.pdf");
   const { app, page: home } = await pdflion([]);
   // A real drop of a file, so the preload gets its path.
@@ -247,7 +256,11 @@ test("a PDF dropped on Home opens in its place", async ({ pdflion }) => {
     await cdp.send("Input.dispatchDragEvent", { type, x: 300, y: 300, data });
   }
   await rendered(await documentPage(app, "dropped.pdf"));
-  await expect.poll(() => homePages(app).length).toBe(0);
+  expect(homePages(app)).toEqual([home]);
+  expect((await stripTabs(await stripOf(app, home))).map(({ name }) => name)).toEqual([
+    "Home",
+    "dropped.pdf",
+  ]);
 });
 
 test("the context menu and Delete remove a document, Clear all, with their thumbnails", async ({
@@ -327,7 +340,7 @@ test("the arrow keys move through the cards, and Return opens one", async ({ pdf
   expect(homePages(app)).toHaveLength(1);
 });
 
-test("File > Home and the Home button show the window's home tab, or add one", async ({
+test("File > Home and the Home button show the window's home tab, its leftmost", async ({
   pdflion,
 }) => {
   const dir = await tempDir();
@@ -340,17 +353,18 @@ test("File > Home and the Home button show the window's home tab, or add one", a
 
   // The toolbar's button, left of the sidebar's.
   await expect(page.locator("#pdflionHomeButton + #viewsManagerToggleButton")).toHaveCount(1);
+  await expect.poll(names).toEqual(["Home", "first.pdf*"]);
   await page.locator("#pdflionHomeButton").click();
-  await expect.poll(names).toEqual(["first.pdf", "Home*"]);
+  await expect.poll(names).toEqual(["Home*", "first.pdf"]);
   const home = await homePage(app);
   // Menu items for documents don't act on Home.
   await expect.poll(saveEnabled).toBe(false);
 
-  await strip.locator(".tab").first().click();
-  await expect.poll(names).toEqual(["first.pdf*", "Home"]);
+  await strip.locator(".tab").nth(1).click();
+  await expect.poll(names).toEqual(["Home", "first.pdf*"]);
   await expect.poll(saveEnabled).toBe(true);
   await clickMenu(app, page, "home");
-  await expect.poll(names).toEqual(["first.pdf", "Home*"]);
+  await expect.poll(names).toEqual(["Home*", "first.pdf"]);
   expect(homePages(app)).toEqual([home]);
 });
 
@@ -360,9 +374,9 @@ test("a second launch without documents shows Home in the front window", async (
   // What a second process hands the first on Windows and Linux.
   await app.evaluate(({ app }) => app.emit("second-instance", {}, [], "", { files: [] }));
   await homePage(app);
-  expect((await stripTabs(await stripOf(app, page))).map(({ name }) => name)).toEqual([
-    "first.pdf",
-    "Home",
+  expect((await stripTabs(await stripOf(app, page))).map(({ name, active }) => [name, active])).toEqual([
+    ["Home", true],
+    ["first.pdf", false],
   ]);
   expect(await windowCount(app)).toBe(1);
 });

@@ -106,7 +106,7 @@
   /** The file picker, which iPadOS opens only in response to a tap or a key. */
   let picker = /** @type {HTMLInputElement | null} */ (null);
 
-  /** Opens the file picker, whose PDFs open in place of Home. */
+  /** Opens the file picker, whose PDFs open in new tabs. */
   function showOpenPanel() {
     if (!picker) {
       picker = document.createElement("input");
@@ -215,7 +215,7 @@
     );
   }
 
-  // Dropped PDFs open in place of Home, through the shell, which keeps them.
+  // Dropped PDFs open in new tabs, through the shell, which keeps them.
   // A dropped backup or settings file is imported.
   window.addEventListener(
     "dragover",

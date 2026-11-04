@@ -68,12 +68,18 @@ export function guardUnsavedChanges() {
 }
 
 /**
- * Closes a tab, asking first whether to save its changes.
+ * Closes a tab, asking first whether to save its changes. Home closes only
+ * with its window, so closing it closes the window, which asks about every
+ * edited tab there.
  *
  * @param {tabs.Tab} tab
- * @returns {Promise<boolean>} whether it closed
+ * @returns {Promise<boolean>} whether it closed, or, for Home, false
  */
 export async function closeTab(tab) {
+  if (tabs.isHome(tab)) {
+    tabs.windowOf(tab)?.close();
+    return false;
+  }
   if (!tab.edited) {
     tabs.closeTab(tab);
     return true;
@@ -82,8 +88,8 @@ export async function closeTab(tab) {
 }
 
 /**
- * Closes every tab of a window but `keep`, asking about each edited one.
- * Cancel stops there.
+ * Closes every document of a window but `keep`, asking about each edited
+ * one. Home stays. Cancel stops there.
  *
  * @param {tabs.Tab} keep
  */
@@ -91,7 +97,7 @@ export async function closeOtherTabs(keep) {
   const win = tabs.windowOf(keep);
   if (!win) return;
   for (const tab of tabs.tabsOf(win)) {
-    if (tab === keep || !tabs.isOpen(tab)) continue;
+    if (tab === keep || tabs.isHome(tab) || !tabs.isOpen(tab)) continue;
     if (!(await closeTab(tab))) return;
   }
   if (tabs.isOpen(keep)) tabs.selectTab(keep);
