@@ -16,6 +16,7 @@ A PDF viewer for macOS, Windows and Linux. It's based on Mozilla's [pdf.js](http
 - Each of Pencil's strokes is a drawing of its own, which Undo takes back alone. The Eraser, after Pencil, erases the parts of lines it passes over, each piece left a drawing of its own, or whole drawings, also those another app left in the file, and highlights whole. A pen's eraser end erases too, without picking the Eraser.
 - Save as Favourite, in the options of Highlight, Text and Pencil, keeps the tool's settings, such as a blue pencil 1 point wide, as a button in the toolbar of every window. A click on the favourite that's on turns its tool off.
 - With a pen, such as a Surface Pen, only the pen draws once it has touched a page, as on an iPad: fingers scroll and zoom while Pencil, Highlight or the Eraser is on. Draw Only with a Pen, at the top of the ⋮ menu, turns that off for every tool.
+- In Page Scrolling, a tap or click beside the page, or a swipe across it, turns to the previous or next page.
 - Zoom, from a narrow button that shows the zoom's icon or percentage, rotation, search, sidebar, Presentation Mode and printing, from the menus and the platform's usual shortcuts.
 - Follows the system's light or dark appearance, and its language: PDFLion's menus, buttons and messages are in English, German, French and Italian, and English for any other language. The viewer comes in pdf.js's many languages.
 - Remembers the last window's place and recently opened files, and updates itself from the releases on GitHub.

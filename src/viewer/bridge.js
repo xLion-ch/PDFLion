@@ -88,6 +88,16 @@
   const EDITOR_NONE = 0;
   const EDITOR_INK = 15;
 
+  /** `ScrollMode.PAGE` in web/ui_utils.js: one page at a time. */
+  const SCROLL_MODE_PAGE = 3;
+
+  /**
+   * A finger's swipe that turns a page in Page Scrolling: at least this far
+   * across, in CSS pixels, and at most this long, in ms.
+   */
+  const SWIPE_DISTANCE = 50;
+  const SWIPE_TIME = 800;
+
   /** `AnnotationEditorType.HIGHLIGHT` in src/shared/util.js. */
   const EDITOR_HIGHLIGHT = 9;
 
@@ -700,6 +710,7 @@
       // After the overview's, whose Esc comes first.
       followEraser(app);
       followPen(app);
+      followPageTurns(app);
       followFavourites(app);
       followToolsMenu(app);
       followZoomMenu(app);
@@ -3351,10 +3362,88 @@
   }
 
   /**
+   * In Page Scrolling, where pdf.js shows one page at a time, turns pages as
+   * a book app does: a tap or click beside the page, on the viewer's dark
+   * background, goes to the previous page on the left and the next on the
+   * right, and so does a finger's swipe to the right or left. A swipe is
+   * left alone where it would draw, with a drawing tool on that fingers draw
+   * with, and where the page is wider than the view, which it scrolls.
+   *
+   * @param {any} app
+   */
+  function followPageTurns(app) {
+    const container = document.getElementById("viewerContainer");
+    if (!container) return;
+    const isPageMode = () => app.pdfViewer?.scrollMode === SCROLL_MODE_PAGE;
+    /** @param {number} delta 1 for the next page, -1 for the previous */
+    const turn = (delta) => {
+      if (delta > 0) app.pdfViewer.nextPage();
+      else app.pdfViewer.previousPage();
+    };
+
+    container.addEventListener("click", (event) => {
+      const target = /** @type {Element | null} */ (event.target);
+      if (!isPageMode() || !target || target.closest(".page")) return;
+      const page = app.pdfViewer.getPageView(app.page - 1)?.div;
+      if (!page) return;
+      const { left, right } = page.getBoundingClientRect();
+      if (event.clientX < left) turn(-1);
+      else if (event.clientX > right) turn(1);
+    });
+
+    // Touch events, which go on while the browser pans, where it cancels
+    // the pointer's events. A pen's own touches, as Safari marks them, are
+    // left out.
+    /** @type {{ x: number, y: number, time: number } | null} */
+    let swipe = null;
+    container.addEventListener(
+      "touchstart",
+      (event) => {
+        const [touch] = event.touches;
+        const mode = app.pdfViewer?.annotationEditorMode;
+        const drawsWithFingers =
+          mode !== EDITOR_NONE &&
+          mode !== EDITOR_DISABLE &&
+          !isFingerKeptOff(app, /** @type {any} */ ({ pointerType: "touch" }));
+        swipe =
+          event.touches.length === 1 &&
+          /** @type {any} */ (touch).touchType !== "stylus" &&
+          isPageMode() &&
+          !drawsWithFingers &&
+          !erasing
+            ? { x: touch.clientX, y: touch.clientY, time: event.timeStamp }
+            : null;
+      },
+      { capture: true, passive: true },
+    );
+    container.addEventListener(
+      "touchend",
+      (event) => {
+        const start = swipe;
+        swipe = null;
+        const [touch] = event.changedTouches;
+        if (!start || !touch || event.touches.length > 0) return;
+        const dx = touch.clientX - start.x;
+        const dy = touch.clientY - start.y;
+        const wider = container.scrollWidth > container.clientWidth + 1;
+        if (
+          !wider &&
+          Math.abs(dx) >= SWIPE_DISTANCE &&
+          Math.abs(dx) > 2 * Math.abs(dy) &&
+          event.timeStamp - start.time <= SWIPE_TIME
+        ) {
+          turn(dx < 0 ? 1 : -1);
+        }
+      },
+      { capture: true, passive: true },
+    );
+    container.addEventListener("touchcancel", () => (swipe = null), { capture: true, passive: true });
+  }
+
+  /**
    * Adds Save as Favourite to the end of the option boxes of Highlight, Text
    * and Pencil, as an outlined button. A click has main keep the tool's
    * settings for every tab, and the button says for a moment what it did.
-   * Its label is English, like the native menus.
    */
   function addSaveFavouriteButtons() {
     for (const [tool, { name }] of Object.entries(FAVOURITE_TOOLS)) {

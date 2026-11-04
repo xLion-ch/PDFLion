@@ -184,3 +184,52 @@ test("a pinch or a double tap on the toolbar, the strip or Home zooms nothing", 
   // On the pages, pdf.js zooms the document.
   expect((await zooming(frame, "#viewerContainer .page", "html")).pinchStopped).toBe(false);
 });
+
+test("in Page Scrolling, a swipe or a tap beside the page turns it", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#secondaryToolbarToggleButton").tap();
+  await frame.locator("#scrollPage").tap();
+  await expect.poll(() => frame.evaluate(() => PDFViewerApplication.pdfViewer.scrollMode)).toBe(3);
+  const current = () => frame.evaluate(() => PDFViewerApplication.page);
+  /** @param {number} number the page's @param {[number, number][]} points */
+  const swipe = (number, points) =>
+    dispatch(
+      frame,
+      `#viewerContainer .page[data-page-number="${number}"]`,
+      points.flatMap((at, i) => [
+        { type: i === 0 ? "touchstart" : i === points.length - 1 ? "touchend" : "touchmove", at, identifier: 3 },
+      ]),
+    );
+
+  await swipe(1, line([0.8, 0.5], [0.2, 0.52], 6));
+  await expect.poll(current).toBe(2);
+  await swipe(2, line([0.2, 0.5], [0.8, 0.5], 6));
+  await expect.poll(current).toBe(1);
+  // Mostly down, it isn't a swipe across.
+  await swipe(1, line([0.5, 0.2], [0.6, 0.8], 6));
+  expect(await current()).toBe(1);
+
+  // A tap beside the page, which Page Fit leaves room for.
+  await frame.evaluate(() => {
+    PDFViewerApplication.pdfViewer.currentScaleValue = "page-fit";
+  });
+  const container = frame.locator("#viewerContainer");
+  const box = /** @type {{ width: number, height: number }} */ (await container.boundingBox());
+  const pageBox = /** @type {{ x: number, width: number }} */ (
+    await frame.locator('#viewerContainer .page[data-page-number="1"]').boundingBox()
+  );
+  expect(pageBox.x + pageBox.width).toBeLessThan(box.width - 20);
+  await container.click({ position: { x: box.width - 10, y: box.height / 2 } });
+  await expect.poll(current).toBe(2);
+  await container.click({ position: { x: 10, y: box.height / 2 } });
+  await expect.poll(current).toBe(1);
+
+  // With Pencil on, which fingers draw with, a swipe draws instead.
+  await frame.locator("#editorInkButton").click();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await expect
+    .poll(() => frame.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode))
+    .toBe(15);
+  await swipe(1, line([0.8, 0.5], [0.2, 0.52], 6));
+  expect(await current()).toBe(1);
+});
