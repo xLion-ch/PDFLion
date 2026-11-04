@@ -29,7 +29,12 @@ export default defineConfig({
     url: `http://localhost:${PORT}/PDFLion/`,
     reuseExistingServer: !isCI,
   },
-  use: { baseURL: `http://localhost:${PORT}/PDFLion/` },
+  use: {
+    baseURL: `http://localhost:${PORT}/PDFLion/`,
+    // On GitHub Actions, a failed test's trace: the page's console, its
+    // requests and its DOM, for failures that don't happen here.
+    trace: isCI ? "retain-on-failure" : "off",
+  },
   projects: [
     { name: "ipad-webkit", use: { ...devices["iPad Pro 11 landscape"], browserName: "webkit" } },
     {
