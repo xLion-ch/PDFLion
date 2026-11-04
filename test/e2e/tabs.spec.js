@@ -580,7 +580,8 @@ test("a tab dropped outside every window tears off into its own", async ({ pdfli
   await strip.evaluate((id) => window.pdflionTabs.dragEnded(id, "none"), secondId);
   await expect.poll(() => windowCount(app)).toBe(2);
   expect(await tabNames(strip)).toEqual(["Home", "first.pdf"]);
-  expect(await tabNames(await stripOf(app, second))).toEqual(["Home", "second.pdf"]);
+  const newStrip = await stripOf(app, second);
+  await expect.poll(() => tabNames(newStrip)).toEqual(["Home", "second.pdf"]);
   const newBounds = await normalBounds(second);
   expect({ width: newBounds.width, height: newBounds.height }).toEqual({
     width: sourceBounds.width,

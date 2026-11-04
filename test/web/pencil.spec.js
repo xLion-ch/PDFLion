@@ -128,8 +128,10 @@ test("a pen draws with Pencil, turns pen-only drawing on the first time, and the
   await frame.locator("#editorInkButton").tap();
   await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.4]), { pressure: 0.8, tiltX: 30, tiltY: -10 });
   expect(await penOnlyShown(frame)).toBe("true");
+  // Each stroke is a drawing of its own, which ends a task after its lift,
+  // so the next stroke waits for it, as a person's would.
+  await expect.poll(() => drawings(frame)).toMatchObject([{ type: "ink", strokes: 1 }]);
   await pencilStroke(frame, line([0.2, 0.5], [0.6, 0.6]));
-  // Each stroke is a drawing of its own.
   await expect
     .poll(() => drawings(frame))
     .toMatchObject([
