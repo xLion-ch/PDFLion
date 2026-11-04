@@ -73,9 +73,19 @@ header {
 }
 
 h1 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin: 0;
   font-size: 28px;
   font-weight: 400;
+}
+
+/* The app icon, a copy of resources/icon.svg. */
+h1 .logo {
+  width: 40px;
+  height: 40px;
+  -webkit-user-drag: none;
 }
 
 body.empty header .actions > .button {
