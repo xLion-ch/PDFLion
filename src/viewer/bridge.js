@@ -1402,17 +1402,18 @@
 
   /**
    * Inserts an empty page after the current one, of the size that page is
-   * shown at, and goes to it. In the page overview, it goes after the last
-   * checked page, if any. The page is added after the document's bytes, as
+   * shown at, and goes to it. From the thumbnails' header, in the sidebar or
+   * the page overview, it goes after the last checked page, if any. The page is added after the document's bytes, as
    * an incremental update, so everything the file holds stays as it was.
    *
    * @param {any} app
+   * @param {boolean} [fromThumbnails] whether the thumbnails' header asked
    * @returns {Promise<boolean>} whether the page was inserted
    */
-  function insertBlankPage(app) {
+  function insertBlankPage(app, fromThumbnails = false) {
     return runPageChange(app, () => {
       // The page to insert after, which is also the new page's index.
-      const index = (overview && checkedPages().at(-1)) || app.page;
+      const index = ((overview || fromThumbnails) && checkedPages().at(-1)) || app.page;
       const { view, rotate } = app.pdfViewer.getPageView(index - 1).pdfPage;
       const [width, height] = [view[2] - view[0], view[3] - view[1]];
       // A page shown on its side, by its /Rotate, is as wide as it's tall.
@@ -2228,10 +2229,10 @@
   }
 
   /**
-   * Adds the overview's own page tools to the views manager's header, before
+   * Adds PDFLion's own page tools to the views manager's header, before
    * pdf.js's Add file: Rotate Pages Left and Right, and Insert Blank Page.
-   * overrides.css shows them in the overview only, and not for a locked
-   * document.
+   * overrides.css shows them with Add file, in the sidebar's thumbnails and
+   * the overview, and not for a locked document.
    *
    * @param {any} app
    * @returns {HTMLButtonElement[]} the buttons
@@ -2247,7 +2248,7 @@
     const rotateRight = makeButton("pdflionRotatePagesRight", className, "Rotate Pages Right");
     rotateRight.addEventListener("click", () => rotatePages(app, 90));
     const insert = makeButton("pdflionOverviewInsertBlankPage", className, "Insert Blank Page");
-    insert.addEventListener("click", () => insertBlankPage(app));
+    insert.addEventListener("click", () => insertBlankPage(app, true));
     const buttons = [rotateLeft, rotateRight, insert];
     for (const button of buttons) button.disabled = true;
     tools.append(...buttons);

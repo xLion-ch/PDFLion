@@ -660,6 +660,29 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
   expect(await overviewOpen(page)).toBe(true);
 });
 
+test("the sidebar's thumbnails have the page tools too, which act on the checked pages", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const { page } = await pdflion([file]);
+  const tools = page.locator("#pdflionPageTools");
+  await expect(tools).toBeHidden();
+  await sidebarButton(page).click();
+  await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(3);
+  await expect(tools).toBeVisible();
+  expect(await overviewOpen(page)).toBe(false);
+
+  await thumbnail(page, 2).locator("input").check();
+  await page.locator("#pdflionRotatePagesLeft").click();
+  await expect.poll(() => pageRotations(page)).toEqual([0, 270, 0]);
+  await pageChangeEnded(page);
+  await page.locator("#pdflionOverviewInsertBlankPage").click();
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "", "Page 3"]);
+  await pageChangeEnded(page);
+  expect(await overviewOpen(page)).toBe(false);
+});
+
 test("checked pages rotated in the page overview stay checked, and are saved", async ({
   pdflion,
 }) => {

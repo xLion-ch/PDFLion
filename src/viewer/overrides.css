@@ -1116,11 +1116,13 @@
   }
 }
 
+/* PDFLion's page tools show with pdf.js's Add file: in the sidebar's
+   thumbnails and in the page overview. */
 #pdflionPageTools {
   display: none;
   gap: 4px;
 
-  #outerContainer.pdflionPageOverview & {
+  &:has(~ #viewsManagerAddFileButton:not([hidden])) {
     display: flex;
   }
 
