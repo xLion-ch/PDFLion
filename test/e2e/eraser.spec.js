@@ -237,9 +237,10 @@ test("a pen's eraser end erases with Pencil on, which stays on", async ({ pdflio
   await drag(page, [[100, 650], [300, 660]]);
   await page.keyboard.press("Escape");
   await drag(page, [[100, 550], [300, 560]]);
-  expect(await drawings(page)).toHaveLength(1);
+  // Pencil ends each stroke's drawing a task after it.
+  await expect.poll(() => drawings(page)).toHaveLength(2);
 
-  // Across both, the second still Pencil's open drawing.
+  // Across both.
   await eraseWithPen(page, [[200, 700], [200, 500]]);
   await expect.poll(() => drawings(page)).toEqual([]);
   expect(await isErasing(page)).toBe(false);

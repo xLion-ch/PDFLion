@@ -313,7 +313,11 @@
           clientX,
           clientY,
         });
-        target.dispatchEvent(menu);
+        // A redraw may have replaced the element meanwhile, as a new state does.
+        const now = target.isConnected
+          ? target
+          : document.elementFromPoint(clientX, clientY)?.closest(selector);
+        if (now && container.contains(now)) now.dispatchEvent(menu);
       }, LONG_PRESS_TIME);
       signal.addEventListener("abort", () => clearTimeout(timer));
       /** @param {PointerEvent} event */
