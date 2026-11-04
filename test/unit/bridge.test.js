@@ -4119,6 +4119,9 @@ describe("bridge.js without a native menu", () => {
       // What the toolbar's narrowest steps move there.
       "pdflionVisibleTiny",
       "horizontalToolbarSeparator pdflionVisibleWithoutHome",
+      // Pen-only drawing, a setting for every tool.
+      "pdflionSecondaryPenOnly",
+      "horizontalToolbarSeparator",
       "pdflionSecondaryOpen",
       "pdflionSecondaryNew",
       "horizontalToolbarSeparator",
@@ -4481,36 +4484,23 @@ describe("bridge.js pen-only drawing", () => {
   const switchTool = (bridge, mode) =>
     bridge.app.eventBus.dispatch("switchannotationeditormode", { mode });
 
-  /**
-   * @param {any} container an option box's container
-   * @returns {any} pen-only drawing's switch at its end
-   */
-  const switchIn = (container) => {
-    const setter = container.children.at(-1);
-    assert.equal(setter.className, "pdflionPenOnlySetter");
-    const [divider, toggler] = setter.children;
-    assert.equal(divider.className, "divider");
-    const [label, button] = toggler.children;
-    assert.equal(label.textContent, "Draw Only with a Pen");
-    assert.equal(label.htmlFor, button.id);
-    assert.equal(button.className, "toggle-button");
-    return button;
+  /** @param {ReturnType<typeof loadBridge>} bridge @returns {any} pen-only drawing's ⋮ menu item */
+  const penOnlyItem = (bridge) => {
+    const item = bridge.menuContainer.children.find(
+      (/** @type {any} */ element) => element.id === "pdflionSecondaryPenOnly",
+    );
+    assert.ok(item, "in the ⋮ menu");
+    assert.equal(item.children[0].textContent, "Draw Only with a Pen");
+    assert.equal(item.attributes.role, "menuitemcheckbox");
+    return item;
   };
 
-  /** @param {ReturnType<typeof loadBridge>} bridge */
-  const switches = (bridge) => {
-    const eraser = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser");
-    const [, box] = eraser.children;
-    return [switchIn(bridge.optionBoxes.Ink), switchIn(box.children[0])];
-  };
-
-  it("adds a switch to Pencil's and the eraser's option boxes, which shows main's setting and changes it", async () => {
+  it("adds an item to the ⋮ menu, not to the tools' option boxes, which shows main's setting and changes it", async () => {
     const bridge = await withPenOnly();
-    const [ink, eraser] = switches(bridge);
-    assert.deepEqual([ink.id, eraser.id], ["pdflionInkPenOnly", "pdflionEraserPenOnly"]);
-    assert.deepEqual(
-      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
-      ["false", "false"],
+    const item = penOnlyItem(bridge);
+    assert.equal(item.attributes["aria-checked"], "false");
+    assert.ok(
+      !bridge.optionBoxes.Ink.children.some((/** @type {any} */ child) => child.className === "pdflionPenOnlySetter"),
     );
 
     bridge.pdflion.toolSettingsListener?.({
@@ -4518,18 +4508,13 @@ describe("bridge.js pen-only drawing", () => {
       penOnly: true,
       favourites: [],
     });
-    assert.deepEqual(
-      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
-      ["true", "true"],
-    );
+    assert.equal(item.attributes["aria-checked"], "true");
+    assert.ok(item.classes.has("toggled"));
     assert.ok(bridge.outerContainer.classes.has("pdflionPenOnly"));
 
-    eraser.listeners.click();
+    item.listeners.click();
     assert.deepEqual(bridge.pdflion.storedToolSettings, [{ penOnly: false }]);
-    assert.deepEqual(
-      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
-      ["false", "false"],
-    );
+    assert.equal(item.attributes["aria-checked"], "false");
     assert.ok(!bridge.outerContainer.classes.has("pdflionPenOnly"));
   });
 

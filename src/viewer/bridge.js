@@ -536,11 +536,8 @@
   let penOnly = false;
   let penOnlyChosen = false;
 
-  /**
-   * @type {HTMLButtonElement[]} pen-only drawing's switches, in Pencil's and
-   *   the eraser's option boxes
-   */
-  let penOnlySwitches = [];
+  /** @type {HTMLButtonElement | null} pen-only drawing's item in the ⋮ menu */
+  let penOnlyItem = null;
 
   /**
    * The pointer of the pen that's down on a page with one of PEN_TOOLS on,
@@ -681,7 +678,6 @@
     pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
     eraserTool = addEraserTool(app);
     addSaveFavouriteButtons();
-    penOnlySwitches = addPenOnlySwitches();
     favouritesBar = addFavouritesBar();
     undoButtons = addUndoButtons(app);
     toolsMenu = addToolsMenu(app);
@@ -689,6 +685,8 @@
     addShareButtons(app);
     addSaveStatus(app);
     addAppMenuItems(app);
+    // At the top, before Open… and New, below what the narrowest steps add.
+    penOnlyItem = addPenOnlyItem(app);
     pageButtons.push(...addNarrowMenuItems(app));
     toolSettingsLoaded = followToolSettings(app);
     followToolbarWidth();
@@ -3218,44 +3216,31 @@
   }
 
   /**
-   * Adds pen-only drawing's switch to the end of Pencil's and the eraser's
-   * option boxes, built like Highlight's Show All (#editorHighlightVisibility
-   * in web/viewer.html), which overrides.css repeats the styles of. Its label
-   * is English, like the native menus.
+   * Adds pen-only drawing's item to the top of the ⋮ menu, as a setting
+   * of its own that applies to every tool, rather than a switch in some
+   * tools' option boxes, which looked as if it applied to that tool alone.
+   * Choosing it turns it on or off, and the web app's Home has it too.
    *
-   * @returns {HTMLButtonElement[]} the switches
+   * @param {any} app
+   * @returns {HTMLButtonElement | null}
    */
-  function addPenOnlySwitches() {
-    /** @type {[string, string][]} each option box's id, and its switch's */
-    const boxes = [
-      ["editorInkParamsToolbar", "pdflionInkPenOnly"],
-      ["pdflionEditorEraserParamsToolbar", "pdflionEraserPenOnly"],
-    ];
-    return boxes.flatMap(([box, id]) => {
-      const container = document.querySelector(`#${box} > .editorParamsToolbarContainer`);
-      if (!container) return [];
-      const button = createElement("button", { type: "button", id, className: "toggle-button" });
-      button.setAttribute("aria-pressed", String(penOnly));
-      button.addEventListener("click", () => storePenOnly(!penOnly));
-      const label = createElement("label", {
-        className: "editorParamsLabel",
-        htmlFor: id,
-        textContent: t("drawOnlyWithPen"),
-      });
-      container.append(
-        createElement(
-          "div",
-          { className: "pdflionPenOnlySetter" },
-          createElement("div", { className: "divider" }),
-          createElement("div", { className: "toggler" }, label, button),
-        ),
-      );
-      return [button];
+  function addPenOnlyItem(app) {
+    const container = document.getElementById("secondaryToolbarButtonContainer");
+    if (!container) return null;
+    const button = makeButton("pdflionSecondaryPenOnly", "toolbarButton labeled", t("drawOnlyWithPen"));
+    button.setAttribute("role", "menuitemcheckbox");
+    button.setAttribute("aria-checked", String(penOnly));
+    button.classList.toggle("toggled", penOnly);
+    button.addEventListener("click", () => {
+      storePenOnly(!penOnly);
+      app.secondaryToolbar?.close();
     });
+    container.prepend(button, createElement("div", { className: "horizontalToolbarSeparator" }));
+    return button;
   }
 
   /**
-   * Shows whether only a pen draws, as main sends it: on its switches, and on
+   * Shows whether only a pen draws, as main sends it: on its ⋮ menu item, and on
    * #outerContainer, where overrides.css lets fingers scroll the pages under
    * the eraser and Highlight.
    *
@@ -3265,7 +3250,9 @@
     penOnly = settings.penOnly === true;
     penOnlyChosen = settings.penOnlyChosen === true;
     document.getElementById("outerContainer")?.classList.toggle("pdflionPenOnly", penOnly);
-    for (const button of penOnlySwitches) button.setAttribute("aria-pressed", String(penOnly));
+    penOnlyItem?.setAttribute("aria-checked", String(penOnly));
+    // As pdf.js shows the scroll mode chosen, for one.
+    penOnlyItem?.classList.toggle("toggled", penOnly);
   }
 
   /**
@@ -3282,7 +3269,7 @@
   /**
    * Pen-only drawing, as iPadOS's "Only Draw with Apple Pencil": the first
    * pen to press on a page turns it on, unless it was ever turned on or off
-   * before, and its switches turn it off. While it's on and Pencil, Highlight
+   * before, and its item in the ⋮ menu turns it off. While it's on and Pencil, Highlight
    * or the eraser is on, a finger's press on a page never reaches pdf.js's
    * layers, which would draw, select or erase with it. Its default stays, so
    * the browser scrolls, and pdf.js's TouchManager, which follows touch

@@ -80,16 +80,10 @@ const endDrawing = (frame) =>
 
 /**
  * @param {Frame} frame
- * @returns {Promise<string | null>} whether pen-only drawing's switches show it on
+ * @returns {Promise<string | null>} whether pen-only drawing's ⋮ menu item shows it on
  */
-const penOnlyShown = async (frame) => {
-  const [ink, eraser] = await Promise.all(
-    ["#pdflionInkPenOnly", "#pdflionEraserPenOnly"].map((id) =>
-      frame.locator(id).getAttribute("aria-pressed"),
-    ),
-  );
-  return ink === eraser ? ink : `${ink} and ${eraser}`;
-};
+const penOnlyShown = (frame) =>
+  frame.locator("#pdflionSecondaryPenOnly").getAttribute("aria-checked");
 
 /**
  * @param {Page} page
@@ -283,8 +277,9 @@ test("with pen-only drawing, fingers draw and erase nothing and reach none of pd
   await fingerDrag(frame, line([0.4, 0.2], [0.4, 0.4]));
   expect(await types(frame)).toEqual(["ink"]);
 
-  // Turned off in the eraser's option box, fingers erase, and draw with Pencil.
-  await frame.locator("#pdflionEraserPenOnly").tap();
+  // Turned off in the ⋮ menu, fingers erase, and draw with Pencil.
+  await frame.locator("#secondaryToolbarToggleButton").tap();
+  await frame.locator("#pdflionSecondaryPenOnly").tap();
   expect(await penOnlyShown(frame)).toBe("false");
   await expect
     .poll(() => storedToolSettings(page))
