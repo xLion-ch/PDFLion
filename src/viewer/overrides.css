@@ -652,6 +652,32 @@
   -webkit-touch-callout: none;
 }
 
+/*
+ * While Pencil is on, its drawings show no box, handles or toolbar, and let
+ * presses through to the layer, where pdf.js starts a stroke only: each
+ * stroke is a drawing of its own (bridge.js), and a stroke that starts over
+ * another draws, rather than selecting or moving it. The border stays,
+ * transparent, since pdf.js places an editor by its width.
+ */
+.annotationEditorLayer.inkEditing .inkEditor {
+  pointer-events: none;
+
+  &,
+  &.selectedEditor,
+  &:hover:not(.selectedEditor) {
+    border-color: transparent;
+    outline: none;
+
+    &::before {
+      content: none;
+    }
+  }
+
+  > :is(.resizers, .editToolbar) {
+    display: none;
+  }
+}
+
 /* viewer.css sets this on a selector three classes deep, hence !important. */
 .editToolbar {
   --editor-toolbar-delete-image: url(/pdflion/icons/delete.svg) !important;

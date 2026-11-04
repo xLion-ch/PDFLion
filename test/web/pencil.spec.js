@@ -135,8 +135,13 @@ test("a pen draws with Pencil, turns pen-only drawing on the first time, and the
   await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.4]), { pressure: 0.8, tiltX: 30, tiltY: -10 });
   expect(await penOnlyShown(frame)).toBe("true");
   await pencilStroke(frame, line([0.2, 0.5], [0.6, 0.6]));
-  await endDrawing(frame);
-  expect(await drawings(frame)).toMatchObject([{ type: "ink", strokes: 2 }]);
+  // Each stroke is a drawing of its own.
+  await expect
+    .poll(() => drawings(frame))
+    .toMatchObject([
+      { type: "ink", strokes: 1 },
+      { type: "ink", strokes: 1 },
+    ]);
   await expect
     .poll(() => storedToolSettings(page))
     .toMatchObject({ penOnly: true, penOnlyChosen: true });
@@ -196,10 +201,15 @@ test("the eraser erases with the pen, whole drawings or parts of them, and Undo 
   await frame.locator("#pdflionRedo").tap();
   await expect.poll(() => types(frame)).toEqual(["ink"]);
 
-  // Line mode cuts the second drawing in two.
+  // Line mode cuts the second drawing into two.
   await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
   await pencilStroke(frame, line([0.4, 0.5], [0.4, 0.7]));
-  await expect.poll(() => drawings(frame)).toMatchObject([{ type: "ink", strokes: 2 }]);
+  await expect
+    .poll(() => drawings(frame))
+    .toMatchObject([
+      { type: "ink", strokes: 1 },
+      { type: "ink", strokes: 1 },
+    ]);
   await undo.tap();
   await expect.poll(() => drawings(frame)).toMatchObject([{ type: "ink", strokes: 1 }]);
 });

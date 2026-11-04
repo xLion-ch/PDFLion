@@ -696,6 +696,7 @@
       followToolsMenu(app);
       followZoomMenu(app);
       followEditorChanges(app);
+      followPencilStrokes(app);
       app.eventBus.on("documentloaded", () => {
         trackEdits(app);
         checkLocked(app);
@@ -1050,6 +1051,31 @@
     if (busy) editedWhileSaving = true;
     storageEdited = true;
     updateEdited(app);
+  }
+
+  /**
+   * Makes each of Pencil's strokes a drawing of its own as it ends, rather
+   * than a stroke of an open drawing that joins the annotations only once
+   * another tool is chosen. So the eraser's Object mode erases a stroke
+   * alone, and Undo and Redo take a stroke at a time, as pdf.js's own steps
+   * of adding a drawing. pdf.js ends a stroke on a pointerup it listens for
+   * on window from the stroke's start, after this listener, so the drawing
+   * ends a task later, unless another stroke has started meanwhile, and
+   * is left unselected, as overrides.css shows Pencil's drawings meanwhile.
+   *
+   * @param {any} app
+   */
+  function followPencilStrokes(app) {
+    window.addEventListener("pointerup", () => {
+      if (app.pdfViewer?.annotationEditorMode !== EDITOR_INK || erasing) return;
+      setTimeout(() => {
+        if (app.pdfViewer?.annotationEditorMode === EDITOR_INK && !isDrawing()) {
+          endPencilDrawing(app);
+          // pdf.js selects the new drawing, with its box and toolbar.
+          uiManager(app)?.unselectAll();
+        }
+      }, 0);
+    });
   }
 
   /**

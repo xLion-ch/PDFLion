@@ -96,6 +96,8 @@ test("a fifth document sends the one shown longest ago to sleep, saved, and it w
   await openFromHome(page, [path.join(dir, "A.pdf")]);
   let viewer = await documentFrame(page, "A.pdf");
   await drawStroke(page, viewer);
+  // The stroke becomes a drawing of its own, which takes the focus, first.
+  await viewer.locator(".inkEditor").waitFor({ state: "attached" });
   await viewer.evaluate(() => {
     window.PDFViewerApplication.page = 2;
   });
