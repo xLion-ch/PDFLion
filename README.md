@@ -125,7 +125,7 @@ The app runs from the copy its service worker keeps, so a reload shows the same 
 
 CI keeps the web app of each pull request from this repository as `PDFLion-<version>-web`, for 14 days, under the run's Artifacts. To try the build that would be released, download it, unzip it into a folder, and serve that with `npm run web:serve -- --https <folder>`.
 
-Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas.
+Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, large backups, the Apple Pencil, keys, printing and safe areas.
 
 ```sh
 npm run web:trials                # build dist/trials/ and serve it at http://localhost:8080/PDFLion/

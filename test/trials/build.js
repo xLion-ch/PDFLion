@@ -11,6 +11,8 @@
  * - `pdflion/`: src/viewer/
  * - `lib/`: @cantoo/pdf-lib's browser build, which bridge.js loads from there
  * - `docs/`: PDFs to open, pdf.js's demo and one of large scanned pages
+ * - `ranges.js` and `zip.js` from src/shared/, for the service worker and
+ *   the backup trial
  * - the trial pages, a service worker that keeps all of it for offline use
  *   and serves IndexedDB's bytes with ranges, and a manifest, so the trials
  *   also run as a Home Screen app
@@ -58,7 +60,9 @@ export function build() {
   const overrides = path.join(OUT, "pdflion", "overrides.css");
   fs.writeFileSync(overrides, prefixIcons(fs.readFileSync(overrides, "utf8"), "overrides.css"));
   copyTree(HERE, OUT, (relative) => !NOT_SERVED.has(relative));
-  fs.copyFileSync(path.join(ROOT, "src", "shared", "ranges.js"), path.join(OUT, "ranges.js"));
+  for (const shared of ["ranges.js", "zip.js"]) {
+    fs.copyFileSync(path.join(ROOT, "src", "shared", shared), path.join(OUT, shared));
+  }
   fs.mkdirSync(path.join(OUT, "lib"));
   fs.copyFileSync(
     path.join(ROOT, "node_modules", "@cantoo", "pdf-lib", "dist", "pdf-lib.min.js"),
