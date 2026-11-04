@@ -408,9 +408,13 @@
   let eraserTool = null;
 
   /**
-   * @typedef {object} Drawing a Pencil drawing a drag of the eraser came to,
-   *   read once
-   * @property {any} editor the ink editor it was
+   * @typedef {object} Drawing a Pencil drawing or a highlight a drag of the
+   *   eraser came to, read once
+   * @property {any} editor the editor it was
+   * @property {boolean} highlight whether it's a highlight, which the eraser
+   *   erases whole, also in Line mode
+   * @property {ArrayLike<number>[]} quads a text highlight's boxes, as x1, y1,
+   *   x2, y2 in PDF coordinates, and none for a drawing
    * @property {any} data what `editor.serialize(true)` gave: its colour,
    *   opacity, rotation and place, for what replaces it
    * @property {ArrayLike<number>[]} strokes as the eraser has left them, x, y
@@ -2908,7 +2912,7 @@
     for (const editor of [...ui.getEditors(pageIndex)]) {
       const drawing = drag.replacements.get(editor) ?? drawingOf(drag, editor);
       if (!drawing || !touches(drawing, center, radius)) continue;
-      if (drag.mode === "object") {
+      if (drag.mode === "object" || drawing.highlight) {
         editor.remove();
         drawing.shown = drawing.shown.filter((piece) => piece !== editor);
         continue;
@@ -3003,41 +3007,103 @@
   /**
    * @param {Gesture} drag
    * @param {any} editor
-   * @returns {Drawing | null} its drawing, if it's Pencil's: not a free
-   *   highlight, nor a signature, which are drawings too
+   * @returns {Drawing | null} its drawing, if it's Pencil's or a highlight:
+   *   not a signature, which is a drawing too
    */
   function drawingOf(drag, editor) {
     const { drawings } = drag;
     if (!drawings.has(editor)) {
-      const data = editor.editorType === "ink" ? editor.serialize(true) : null;
-      drawings.set(
-        editor,
-        data && {
-          editor,
-          data,
-          strokes: data.paths.points,
-          thickness: data.thickness,
-          box: boxAround(data.paths.points),
-          shown: [editor],
-          cut: false,
-        },
-      );
+      drawings.set(editor, editor.editorType === "highlight" ? highlightOf(editor) : inkOf(editor));
     }
     return drawings.get(editor) ?? null;
+  }
+
+  /**
+   * @param {any} editor
+   * @returns {Drawing | null} a Pencil drawing's strokes and look
+   */
+  function inkOf(editor) {
+    const data = editor.editorType === "ink" ? editor.serialize(true) : null;
+    if (!data) return null;
+    const strokes = data.paths.points;
+    return {
+      editor,
+      data,
+      highlight: false,
+      quads: [],
+      strokes,
+      thickness: data.thickness,
+      box: boxAround(strokes),
+      shown: [editor],
+      cut: false,
+    };
+  }
+
+  /**
+   * A highlight's place, which pdf.js serializes only to save it: a free
+   * highlight's line, and a text highlight's boxes, in PDF coordinates, as
+   * `serialize()` in src/display/editor/highlight.js works them out.
+   *
+   * @param {any} editor
+   * @returns {Drawing | null}
+   */
+  function highlightOf(editor) {
+    const outlines = editor._drawOutlines;
+    if (!outlines || editor.isEmpty?.()) return null;
+    /** @type {ArrayLike<number>[]} */
+    let strokes = [];
+    /** @type {ArrayLike<number>[]} */
+    const quads = [];
+    let thickness = 0;
+    if (outlines.isFree) {
+      // Its line, as a list of strokes of x, y pairs.
+      strokes = [...outlines.serialize(editor.getPDFRect(), editor._drawRotation).points];
+      thickness = editor._drawingOptions?.thickness ?? 0;
+    } else {
+      const points = outlines.serializeQuadPoints(editor.pageTranslation, editor.pageDimensions);
+      // Each box's corners: top left, top right, bottom left, bottom right.
+      for (let i = 0; i + 7 < points.length; i += 8) {
+        quads.push([
+          Math.min(points[i], points[i + 2]),
+          Math.min(points[i + 1], points[i + 5]),
+          Math.max(points[i], points[i + 2]),
+          Math.max(points[i + 1], points[i + 5]),
+        ]);
+      }
+    }
+    const box = boxAround([...strokes, ...quads]);
+    return {
+      editor,
+      data: null,
+      highlight: true,
+      quads,
+      strokes,
+      thickness,
+      box,
+      shown: [editor],
+      cut: false,
+    };
   }
 
   /**
    * @param {Drawing} drawing
    * @param {number[]} center
    * @param {number} radius
-   * @returns {boolean} whether an eraser there touches the drawing's ink
+   * @returns {boolean} whether an eraser there touches the drawing's ink, or
+   *   a text highlight's boxes
    */
-  function touches({ strokes, thickness, box: [x1, y1, x2, y2] }, center, radius) {
+  function touches({ strokes, quads, thickness, box: [x1, y1, x2, y2] }, center, radius) {
     const reach = radius + thickness / 2;
     const [x, y] = center;
     if (x < x1 - reach || x > x2 + reach || y < y1 - reach || y > y2 + reach) return false;
-    return strokes.some((stroke) =>
-      window.PDFLionGeometry.hitsStroke(stroke, center, radius, thickness),
+    const inQuad = quads.some(([left, bottom, right, top]) => {
+      const dx = Math.max(left - x, 0, x - right);
+      const dy = Math.max(bottom - y, 0, y - top);
+      return dx * dx + dy * dy <= radius * radius;
+    });
+    return (
+      inQuad ||
+      strokes.some((stroke) => window.PDFLionGeometry.hitsStroke(stroke, center, radius, thickness))
     );
   }
 

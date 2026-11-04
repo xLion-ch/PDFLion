@@ -277,21 +277,37 @@ test("a pen's eraser end with no tool on turns the eraser on, and erases the fil
   expect(await annotations(page)).toEqual([]);
 });
 
-test("leaves free highlights alone", async ({ pdflion }) => {
+test("erases highlights whole, in either mode, which Undo brings back", async ({ pdflion }) => {
   const file = path.join(await tempDir(), "pages.pdf");
   await writeLabelled(file, 1);
   const { page } = await pdflion([file]);
   await page.locator("#editorHighlightButton").click();
   await drag(page, [[100, 500], [400, 500]]);
+  await drag(page, [[100, 600], [400, 600]]);
   await page.locator("#editorInkButton").click();
   await drag(page, [[250, 450], [250, 550]]);
   await page.keyboard.press("Escape");
-  await expect.poll(async () => (await drawings(page)).sort()).toEqual(["highlight", "ink of 1"]);
+  await expect
+    .poll(async () => (await drawings(page)).sort())
+    .toEqual(["highlight", "highlight", "ink of 1"]);
 
   await page.locator("#pdflionEditorEraserButton").click();
-  // Across both.
+  // Across the first highlight and the drawing.
   await drag(page, [[150, 520], [350, 480]]);
   await expect.poll(() => drawings(page)).toEqual(["highlight"]);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect
+    .poll(async () => (await drawings(page)).sort())
+    .toEqual(["highlight", "highlight", "ink of 1"]);
+
+  // Line mode takes a highlight whole too, rather than cutting it.
+  await page.keyboard.press("Escape");
+  await expect.poll(() => isErasing(page)).toBe(false);
+  await eraseLines(page);
+  await drag(page, [[300, 580], [300, 620]]);
+  await expect
+    .poll(async () => (await drawings(page)).sort())
+    .toEqual(["highlight", "ink of 1"]);
 });
 
 test("Pencil, another tool or Esc turns the eraser off, and its circle follows the pointer", async ({

@@ -2412,7 +2412,25 @@ describe("bridge.js eraser", () => {
       added: true,
       data,
       serialize: (/** @type {boolean} */ isForCopying) =>
-        isForCopying && editorType !== "highlight" ? data : null,
+        isForCopying && !editorType.endsWith("highlight") ? data : null,
+      // A highlight's place, as pdf.js's outlines give it: a free highlight's
+      // line, or a text highlight's boxes, of four corners each.
+      ...(editorType === "highlight" && {
+        _drawOutlines: {
+          isFree: true,
+          serialize: () => ({ points: data.paths.points }),
+        },
+        _drawingOptions: { thickness: data.thickness },
+        getPDFRect: () => data.rect,
+      }),
+      ...(editorType === "texthighlight" && {
+        editorType: "highlight",
+        _drawOutlines: {
+          isFree: false,
+          serializeQuadPoints: () =>
+            data.paths.points.flatMap(([x1, y1, x2, y2]) => [x1, y2, x2, y2, x1, y1, x2, y1]),
+        },
+      }),
       remove() {
         calls.push(["remove", id]);
         editors.splice(editors.indexOf(this), 1);
@@ -2521,18 +2539,21 @@ describe("bridge.js eraser", () => {
   /** @param {any[]} calls @returns {any[]} the data each editor was built from */
   const built = (calls) => named(calls, "deserialize").map(([, data]) => data);
 
-  it("erases the drawings it touches, whole, only Pencil's, as one step to undo", async () => {
+  it("erases the drawings and highlights it touches, whole, but no signature, as one step to undo", async () => {
     const bridge = loadBridge();
     const page = await erasing(bridge, [
       { id: "crossed", editorType: "ink", strokes: [[100, 700, 300, 700]] },
       { id: "missed", editorType: "ink", strokes: [[100, 500, 300, 500]] },
       { id: "signature", editorType: "signature", strokes: [[100, 700, 300, 700]] },
       { id: "highlight", editorType: "highlight", strokes: [[100, 700, 300, 700]] },
+      // A box from x 190 to 210, y 640 to 660, which the drag passes through.
+      { id: "text", editorType: "texthighlight", strokes: [[190, 640, 210, 660]] },
+      { id: "far text", editorType: "texthighlight", strokes: [[400, 640, 420, 660]] },
     ]);
     // Down from above the strokes at y 700, then on across them.
     const down = await page.drag([[200, 50], [200, 150]], false);
     assert.ok(down.stopped && down.prevented, "pdf.js gets no press to draw with");
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text"]);
     assert.deepEqual(page.commands, [], "not before the drag ends");
     // Another pointer's events are left alone.
     assert.ok(!bridge.fire("pointerup", { target: down.target, pointerId: 8 }).stopped);
@@ -2542,14 +2563,14 @@ describe("bridge.js eraser", () => {
     const [{ cmd, undo, mustExec }] = page.commands;
     assert.equal(mustExec, false);
     undo();
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight", "crossed"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text", "crossed", "highlight", "text"]);
     cmd();
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text"]);
     assert.deepEqual(built(bridge.calls), []);
     // The drag is over.
     bridge.fire("pointermove", { target: down.target, pointerId: 7, clientX: 200, clientY: 300 });
     await settleAll();
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text"]);
 
     // A drag that erases nothing is no step to undo.
     await page.drag([[200, 400], [200, 450]]);
