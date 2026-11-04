@@ -392,3 +392,18 @@ test("Pencil saves as a favourite, also where its colour takes an alpha channel"
   await favourite.tap();
   await expect(favourite).toHaveAttribute("aria-pressed", "true");
 });
+
+test("the eraser erases a free highlight with the pen, in either mode", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorHighlightButton").tap();
+  // Across the margin, where there's no text to highlight.
+  await pencilStroke(frame, line([0.03, 0.3], [0.03, 0.6]));
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
+
+  await frame.locator("#pdflionEditorEraserButton").tap();
+  await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
+  await pencilStroke(frame, line([0.01, 0.45], [0.06, 0.45]));
+  await expect.poll(() => types(frame)).toEqual([]);
+  await frame.locator("#pdflionUndo").tap();
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
+});
