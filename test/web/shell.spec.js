@@ -209,3 +209,15 @@ test.describe("in French", () => {
     await expect(page.getByRole("menuitem", { name: "À propos de PDFLion" })).toBeVisible();
   });
 });
+
+test("the Home Screen icon follows the appearance, on a dark background in dark mode", async ({ page }) => {
+  await openAppExplained(page);
+  const icon = page.locator('link[rel="apple-touch-icon"]');
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(icon).toHaveAttribute("href", "web/icons/apple-touch-icon.png");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(icon).toHaveAttribute("href", "web/icons/apple-touch-icon-dark.png");
+  // The service worker has it for offline use, like every file of the app.
+  const response = await page.request.get("web/icons/apple-touch-icon-dark.png");
+  expect(response.headers()["content-type"]).toBe("image/png");
+});

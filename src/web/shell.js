@@ -73,6 +73,18 @@ import { PDFJS_VERSION, VERSION } from "./version.js";
 setLanguage(navigator.languages);
 document.documentElement.lang = navigator.languages[0] ?? "en";
 
+// The Home Screen icon in the appearance shown: iPadOS takes it from this
+// link as the app is added, and keeps it.
+const touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
+const darkAppearance = matchMedia("(prefers-color-scheme: dark)");
+const showTouchIcon = () =>
+  touchIcon?.setAttribute(
+    "href",
+    darkAppearance.matches ? "web/icons/apple-touch-icon-dark.png" : "web/icons/apple-touch-icon.png",
+  );
+darkAppearance.addEventListener("change", showTouchIcon);
+showTouchIcon();
+
 /** @typedef {import("./library.js").DocumentRecord} DocumentRecord */
 /** @typedef {import("../shared/tools.js").ToolSettings} ToolSettings */
 /** @typedef {import("./session.js").View} View */
