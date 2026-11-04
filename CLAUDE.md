@@ -113,7 +113,7 @@ npm install
 npm run pdfjs:build      # build the pinned pdf.js viewer (once per clone and after each update)
 npm start                # run in dev; npm start -- path/to/file.pdf opens a file
 npm test                 # unit tests
-npm run test:e2e         # end-to-end tests: they open windows and take focus while they run
+npm run test:e2e         # end-to-end tests, in invisible windows that never take the focus (not on CI)
 npm run test:web         # build the web app, and test it in Playwright's WebKit and Chromium
 npm run web:build        # the web app into dist/web/; -- --version <v> for another version than CI's
 npm run web:serve        # serve dist/web/ at http://localhost:8080/PDFLion/; -- --https for an iPad
@@ -340,7 +340,7 @@ Against Electron's [security checklist](https://www.electronjs.org/docs/latest/t
 
 - `npm test` runs `node --test "test/unit/**/*.test.js"`, quoted so that Node expands the glob. Modules that unit tests import stay free of Electron, and those in `src/shared/` of Node too.
 - `bridge.test.js` runs `bridge.js` in `node:vm`, after `geometry.js`, with stand-ins for `window.pdflion` and `PDFViewerApplication`. When the bridge uses something new from the page, add it to the stand-ins. The test also checks that the bridge knows every `commandItem()` command in `menu.js`. `geometry.js` answers `Float32Array`s from its own realm, so its tests compare them as arrays.
-- The end-to-end tests drive the dev app with Playwright, each launch with its own `--user-data-dir`. `pdfs.js` writes the test PDFs, and the few that would be hard to write come from the pdf.js submodule. The suite is the safety net for pdf.js updates, so it must cover every bridge command.
+- The end-to-end tests drive the dev app with Playwright, each launch with its own `--user-data-dir`. Outside CI, `launch()` loads `background.cjs` into main with Electron's `-r`: the app never activates (on macOS the `prohibited` activation policy, since macOS still activates an `accessory` app), its windows are invisible and let clicks through, and it keeps a focus of its own that `focus()`, `isFocused()`, `getFocusedWindow()` and the focus and blur events follow. `PDFLION_E2E_FOREGROUND=1` runs as CI does, with real windows and focus. `pdfs.js` writes the test PDFs, and the few that would be hard to write come from the pdf.js submodule. The suite is the safety net for pdf.js updates, so it must cover every bridge command.
 - Playwright lists each tab's viewer or Home and each window's strip as pages. The helpers in `pdflion.js` find a document's page by its URL (`documentPage`), Home's once it has drawn (`homePage`), and a page's strip by its window (`stripOf`). `launch([])` starts with Home. A tab that isn't shown doesn't render, so tests open tabs one at a time. `setSize()` and `setWidth()` wait until the page has laid itself out.
 - `launch()` makes the first window's content 1000 × 640 (`WINDOW_SIZE`), which fits CI's smallest screen. Whatever a test points at must be in view at that size.
 - `page.evaluate()` counts as a user gesture. Where user activation matters, read the page from main with `readFromMain()`.

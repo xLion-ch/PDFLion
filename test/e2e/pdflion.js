@@ -79,6 +79,16 @@ export async function tracemonkey(dir, name = "tracemonkey.pdf") {
 }
 
 /**
+ * Outside CI, the app runs in the background (background.cjs), so the tests
+ * leave the computer usable meanwhile. PDFLION_E2E_FOREGROUND=1 shows the
+ * windows, and lets them take the focus, as on CI.
+ */
+const BACKGROUND_ARGS =
+  process.env.CI || process.env.PDFLION_E2E_FOREGROUND
+    ? []
+    : ["-r", path.join(path.dirname(fileURLToPath(import.meta.url)), "background.cjs")];
+
+/**
  * Starts PDFLion with `files` on its command line, sizes the window to
  * WINDOW_SIZE, and waits until the first of them shows its first page, or
  * without files until Home shows.
@@ -94,6 +104,7 @@ export async function launch(files, { userData, lang, args = [], env = {} } = {}
   userData ??= await tempDir();
   const app = await electron.launch({
     args: [
+      ...BACKGROUND_ARGS,
       ROOT,
       `--user-data-dir=${userData}`,
       ...(lang ? [`--lang=${lang}`] : []),

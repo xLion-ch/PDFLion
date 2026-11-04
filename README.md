@@ -101,7 +101,7 @@ npm run build                  # runs all the tests, then builds the installers 
 
 ```sh
 npm test               # unit tests
-npm run test:e2e       # end-to-end tests: they open windows and take focus while they run
+npm run test:e2e       # end-to-end tests, in invisible windows that never take the focus (not on CI)
 npm run test:web       # build the web app, and test it in Playwright's WebKit and Chromium
 npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
