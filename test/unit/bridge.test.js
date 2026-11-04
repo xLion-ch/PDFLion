@@ -2864,7 +2864,26 @@ describe("bridge.js Save as Favourite", () => {
     // In the slider's steps, from its least.
     assert.deepEqual(opacities, [0.5, 1, 0.05, 0.95]);
 
-    bridge.params.editorInkColor = { value: "rgb(30, 102, 245)" };
+    // Safari's and Firefox's alpha inputs give CSS Color 4 values instead.
+    for (const [value, opacity] of [
+      ["color(srgb 0.117647 0.4 0.960784 / 0.35)", 0.35],
+      ["color(srgb 0.117647 0.4 0.960784 / 70%)", 0.7],
+      ["rgba(30, 102, 245, 0.6)", 0.6],
+    ]) {
+      bridge.params.editorInkColor = { value };
+      await save(bridge, "Ink");
+      assert.deepEqual(
+        { ...bridge.pdflion.storedToolSettings.at(-1).favourites.at(-1) },
+        { tool: "ink", color: "#1e66f5", thickness: 1, opacity },
+        value,
+      );
+    }
+
+    // Without alpha, as the opaque one saved before.
+    bridge.params.editorInkColor = { value: "color(srgb 0.117647 0.4 0.960784)" };
+    assert.equal(await save(bridge, "Ink"), "Already a Favourite");
+
+    bridge.params.editorInkColor = { value: "blue" };
     assert.equal(await save(bridge, "Ink"), "Choose a Colour First");
   });
 

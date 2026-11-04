@@ -363,3 +363,32 @@ test("a pen draws nothing with no tool on", async ({ page }) => {
   // A pen on a page turns pen-only drawing on all the same.
   expect(await penOnlyShown(frame)).toBe("true");
 });
+
+test("Pencil saves as a favourite, also where its colour takes an alpha channel", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorInkButton").tap();
+  await frame.locator("#pdflionSaveInkFavourite").tap();
+  await expect(frame.locator("#pdflionSaveInkFavourite")).toHaveText("Saved");
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const database = await new Promise((resolve, reject) => {
+          const open = indexedDB.open("pdflion");
+          open.onsuccess = () => resolve(open.result);
+          open.onerror = () => reject(open.error);
+        });
+        const favourites = await new Promise((resolve) => {
+          const get = database.transaction("settings").objectStore("settings").get("favourites");
+          get.onsuccess = () => resolve(get.result);
+        });
+        database.close();
+        return favourites;
+      }),
+    )
+    .toEqual([{ tool: "ink", color: "#000000", thickness: 1, opacity: 1 }]);
+  // Picked with a tap, it draws in its colour.
+  await frame.locator("#editorInkButton").tap();
+  const favourite = frame.locator("#pdflionFavourites > .pdflionFavourite");
+  await favourite.tap();
+  await expect(favourite).toHaveAttribute("aria-pressed", "true");
+});

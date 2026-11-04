@@ -3456,19 +3456,65 @@
 
   /**
    * Pencil's colour and opacity. pdf.js shows the opacity in a slider of its
-   * own, or where the colour input takes an alpha channel, in the colour, as
-   * `#rrggbbaa`, and removes the slider (web/annotation_editor_params.js).
+   * own, or where the colour input takes an alpha channel, in the colour, and
+   * removes the slider (web/annotation_editor_params.js). The colour's value
+   * then comes in the browser's own format: `#rrggbbaa`, or Safari's and
+   * Firefox's `color(srgb r g b / a)`, which pdf.js reads with getRGBA() in
+   * src/display/display_utils.js, as this does.
    *
    * @param {string} value the colour input's
    * @param {HTMLInputElement | null} slider the opacity's, if there is one
    * @returns {{ color: string, opacity: number } | null}
    */
   function inkColor(value, slider) {
-    const [, color, alpha = "ff"] = /^(#[0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value) ?? [];
-    if (!color) return null;
+    const rgba = colorValues(value.trim());
+    if (!rgba) return null;
+    const [r, g, b, alpha] = rgba;
+    const color = `#${[r, g, b].map((part) => part.toString(16).padStart(2, "0")).join("")}`;
     // As the slider would have it: in steps of 0.05, from 0.05.
-    const steps = Math.max(1, Math.round((parseInt(alpha, 16) / 255) * 20));
-    return { color: color.toLowerCase(), opacity: slider?.valueAsNumber ?? steps / 20 };
+    const steps = Math.max(1, Math.round(alpha * 20));
+    return { color, opacity: slider?.valueAsNumber ?? steps / 20 };
+  }
+
+  /**
+   * @param {string} value a colour input's
+   * @returns {[number, number, number, number] | null} its red, green and
+   *   blue, from 0 to 255, and its alpha, from 0 to 1
+   */
+  function colorValues(value) {
+    const clamp = (/** @type {number} */ part) => Math.min(255, Math.max(0, Math.round(part)));
+    const hex = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value);
+    if (hex) {
+      const [, rgb, alpha = "ff"] = hex;
+      return [0, 2, 4]
+        .map((at) => parseInt(rgb.slice(at, at + 2), 16))
+        .concat(parseInt(alpha, 16) / 255);
+    }
+    const number = String.raw`(-?[\d.]+(?:e-?\d+)?)`;
+    const srgb = new RegExp(
+      String.raw`^color\(srgb\s+${number}\s+${number}\s+${number}(?:\s*\/\s*(${number.slice(1, -1)}%?|none))?\)$`,
+      "i",
+    ).exec(value);
+    if (srgb) {
+      const [, r, g, b, alpha] = srgb;
+      const opacity =
+        alpha === undefined || alpha === "none"
+          ? 1
+          : alpha.endsWith("%")
+            ? parseFloat(alpha) / 100
+            : parseFloat(alpha);
+      return [
+        ...[r, g, b].map((part) => clamp(parseFloat(part) * 255)),
+        Math.min(1, Math.max(0, opacity)),
+      ];
+    }
+    const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i.exec(value);
+    if (rgb) {
+      const [, r, g, b, alpha = "1"] = rgb;
+      const opacity = alpha.endsWith("%") ? parseFloat(alpha) / 100 : parseFloat(alpha);
+      return [...[r, g, b].map((part) => clamp(parseFloat(part))), Math.min(1, opacity)];
+    }
+    return null;
   }
 
   /**
