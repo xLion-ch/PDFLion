@@ -253,7 +253,9 @@ pdf.js's zoom select, `#scaleSelect`, is hidden, and `#pdflionZoom` stands in it
 
 ## The toolbar's width
 
-The toolbar's width depends on the language, the page count, the favourites and a signed document's button. So `layoutToolbar()` gives up as little as it can as a window narrows, one step at a time, each keeping those before it (classes of `#toolbarContainer`, `TOOLBAR_STEPS`): 32 px buttons, favourites into the ★ menu from the last, pdf.js's medium view (Print into the ⋮ menu, every favourite into ★), pdf.js's small view (no previous and next page buttons), no zoom button, no Home button, for which File > Home and the ⋮ menu's Home stand in, and the drawing tools in one button showing the one that's on, with a menu of them (`addToolsMenu()`). Narrower than a desktop window gets, Find, Page Overview and Insert Blank Page go into the ⋮ menu (`addNarrowMenuItems()`), then the zoom buttons and the status go, and last Undo and Redo go into the tools' menu.
+Print, and the web app's Share, are always in the ⋮ menu, as pdf.js has them in its medium view: `overrides.css` hides their group in the toolbar.
+
+The toolbar's width depends on the language, the page count, the favourites and a signed document's button. So `layoutToolbar()` gives up as little as it can as a window narrows, one step at a time, each keeping those before it (classes of `#toolbarContainer`, `TOOLBAR_STEPS`): 32 px buttons, favourites into the ★ menu from the last, pdf.js's medium view (every favourite into ★), pdf.js's small view (no previous and next page buttons), no zoom button, no Home button, for which File > Home and the ⋮ menu's Home stand in, and the drawing tools in one button showing the one that's on, with a menu of them (`addToolsMenu()`). Narrower than a desktop window gets, Find, Page Overview and Insert Blank Page go into the ⋮ menu (`addNarrowMenuItems()`), then the zoom buttons and the status go, and last Undo and Redo go into the tools' menu.
 
 - At the tools' step their buttons are hidden and their places shrink to nothing at its right, where their option boxes still open. A signed document's button stays.
 

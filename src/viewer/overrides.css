@@ -18,16 +18,18 @@
 }
 
 /*
- * Without Open, the separator below it would top the menu whenever the Print
- * and Save group above it is hidden. That group only shows in pdf.js's medium
- * view: its own at 750px and below (viewer.css), or the toolbar's step that
- * bridge.js takes earlier when the toolbar needs it.
+ * Print, and the web app's Share, are in the ⋮ menu at every width, as pdf.js
+ * puts them in its medium view, rather than in the toolbar: File > Print and
+ * ⌘P stay on the desktop, and the toolbar keeps its room for the tools.
+ * The toolbar's group of them, Save among them, which PDFLion hides anyway,
+ * goes with its divider.
  */
-#toolbarContainer:not(.pdflionToolbarMedium)
-  #secondaryToolbarButtonContainer
-  > .visibleMediumView
-  + .horizontalToolbarSeparator {
-  display: none;
+#toolbarViewerRight > .hiddenMediumView:is(:has(> #printButton), .verticalToolbarSeparator) {
+  display: none !important;
+}
+
+#secondaryToolbarButtonContainer > .visibleMediumView:not(.hidden, [hidden]) {
+  display: inline-block !important;
 }
 
 /* ---------------------------------------------------------------------------

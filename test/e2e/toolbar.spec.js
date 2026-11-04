@@ -107,3 +107,13 @@ test("the zoom button shows a named zoom's icon or the percentage, and its menu 
   await expect(button).not.toHaveAttribute("data-zoom");
   await expect(button).toHaveText("200%");
 });
+
+test("Print is in the ⋮ menu, not the toolbar, at every width", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const { app, page } = await pdflion([file]);
+  await setWidth(app, page, 1400);
+  await expect(page.locator("#printButton")).toBeHidden();
+  await page.locator("#secondaryToolbarToggleButton").click();
+  await expect(page.locator("#secondaryPrint")).toBeVisible();
+});

@@ -169,17 +169,13 @@ test("after the explanation, each document's first save says so once a session",
 });
 
 /**
- * Shares the document from the toolbar, or from the ⋮ menu, where Share goes
- * once the toolbar has no room for it.
+ * Shares the document from the ⋮ menu, where Share is, rather than the
+ * toolbar, which has no room for it.
  *
  * @param {import("./pdflion.js").Frame} viewer
  */
 async function share(viewer) {
-  const button = viewer.locator("#pdflionShareButton");
-  if (await button.isVisible()) {
-    await button.click();
-    return;
-  }
+  await expect(viewer.locator("#pdflionShareButton")).toBeHidden();
   await viewer.locator("#secondaryToolbarToggleButton").click();
   await viewer.locator("#pdflionSecondaryShare").click();
 }
