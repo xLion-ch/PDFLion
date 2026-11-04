@@ -2452,10 +2452,19 @@
       closeOverview(app);
       event.preventDefault();
     });
-    window.addEventListener("dblclick", (event) => {
-      // The first click went to the page.
-      if (overview && targetIn(event, THUMBNAIL_IMAGE)) closeOverview(app);
-    });
+    // A click on a page opens it, once pdf.js has gone to it from the
+    // thumbnails' own listener, which stops the click. pdf.js stops the click
+    // that ends a drag of pages on window, before it reaches the thumbnails.
+    document.querySelector(THUMBNAILS)?.addEventListener(
+      "click",
+      (event) => {
+        if (!overview || !targetIn(event, THUMBNAIL_IMAGE)) return;
+        setTimeout(() => {
+          if (overview) closeOverview(app);
+        }, 0);
+      },
+      true,
+    );
     window.addEventListener("resize", () => {
       if (overview) relayoutThumbnails(app);
     });

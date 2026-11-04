@@ -448,6 +448,8 @@ function loadBridge({
     },
   };
   const viewerContainer = Object.assign(new Element("div"), { id: "viewerContainer" });
+  /** The thumbnails' container, whose clicks pdf.js stops. */
+  const thumbnailsView = Object.assign(new Element("div"), { id: "thumbnailsView" });
   /**
    * pdf.js's drawing tools' group, which the stand-in toolbar shows as
    * coming before them, rather than holding them.
@@ -559,6 +561,7 @@ function loadBridge({
       if (selector === CHECKED_THUMBNAIL && this.checked) return {};
       if (selector === DRAGGING_PAGES && this.dragging) return {};
       if (selector === CURRENT_THUMBNAIL) return currentThumbnail;
+      if (selector === THUMBNAILS) return thumbnailsView;
       if (selector === HIGHLIGHT_SWATCH && this.highlightColor) {
         const color = this.highlightColor;
         return { getAttribute: (/** @type {string} */ name) => (name === "data-color" ? color : null) };
@@ -1099,6 +1102,7 @@ function loadBridge({
     pencilButton,
     uiManager,
     viewerContainer,
+    thumbnailsView,
     optionBoxes,
     params,
     document,
@@ -1941,17 +1945,21 @@ describe("bridge.js page overview", () => {
     assert.ok(!isOpen(bridge));
   });
 
-  it("closes with a double-click on a page, which went to the page", async () => {
+  it("closes with a click on a page, once pdf.js went to the page", async () => {
     const bridge = loadBridge();
     await bridge.load();
     bridge.run("pageOverview");
-    bridge.fire("dblclick", { target: element(THUMBNAILS) });
+    const click = (/** @type {any} */ target) => {
+      bridge.thumbnailsView.dispatchEvent({ type: "click", target });
+      return new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    await click(element(THUMBNAILS));
     assert.ok(isOpen(bridge));
-    bridge.fire("dblclick", { target: element(THUMBNAIL_IMAGE) });
+    await click(element(THUMBNAIL_IMAGE));
     assert.ok(!isOpen(bridge));
-    // Closed, a double-click on a thumbnail in the sidebar leaves it open.
+    // Closed, a click on a thumbnail in the sidebar leaves it open.
     bridge.app.viewsManager.visibleView = 1;
-    bridge.fire("dblclick", { target: element(THUMBNAIL_IMAGE) });
+    await click(element(THUMBNAIL_IMAGE));
     assert.equal(bridge.app.viewsManager.visibleView, 1);
   });
 

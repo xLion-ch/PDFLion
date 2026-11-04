@@ -488,7 +488,7 @@ test("a typed form value survives moving pages and saving", async ({ pdflion }) 
   await expect(page.locator(".annotationLayer input")).toHaveValue("Ada Lovelace");
 });
 
-test("the page overview opens and closes with its button, the menu, Esc and a double-click", async ({
+test("the page overview opens and closes with its button, the menu, Esc and a click on a page", async ({
   pdflion,
 }) => {
   const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
@@ -528,10 +528,10 @@ test("the page overview opens and closes with its button, the menu, Esc and a do
     expect(await sidebarOpen(page)).toBe(false);
   });
 
-  await test.step("a double-click on a page, which shows that page", async () => {
+  await test.step("a click on a page, which shows that page", async () => {
     await clickMenu(app, page, "pageOverview");
     await expect.poll(() => overviewOpen(page)).toBe(true);
-    await thumbnail(page, 5).locator(".thumbnailImageContainer").dblclick();
+    await thumbnail(page, 5).locator(".thumbnailImageContainer").click();
     await expect.poll(() => overviewOpen(page)).toBe(false);
     expect(await currentPage(page)).toBe(5);
     expect(await sidebarOpen(page)).toBe(false);
@@ -800,9 +800,9 @@ test("a document with a password shows its pages, but no page tools", async ({ p
   await expect.poll(() => overviewOpen(page)).toBe(true);
   await expect(thumbnail(page, 1).locator(".thumbnailImageContainer")).toBeVisible();
   await expect(page.locator("#pdflionPageTools")).toBeHidden();
-  await thumbnail(page, 1).locator(".thumbnailImageContainer").dblclick();
+  await thumbnail(page, 1).locator(".thumbnailImageContainer").click();
   await expect.poll(() => currentPage(page)).toBe(1);
-  expect(await overviewOpen(page)).toBe(false);
+  await expect.poll(() => overviewOpen(page)).toBe(false);
 });
 
 test("a signed document asks before its first drag of pages only", async ({ pdflion }) => {
