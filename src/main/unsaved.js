@@ -21,11 +21,13 @@ const isLinux = process.platform === "linux";
  * The save prompt's buttons, in each platform's order. macOS shows the first
  * one rightmost, Windows and GTK leftmost. GNOME puts Save last, rightmost.
  */
-const BUTTONS = isMac
-  ? [SAVE, CANCEL, DONT_SAVE]
-  : isWindows
-    ? [SAVE, DONT_SAVE, CANCEL]
-    : [DONT_SAVE, CANCEL, SAVE];
+/** @returns {string[]} in the language set */
+const buttons = () =>
+  isMac
+    ? [SAVE, CANCEL, DONT_SAVE]
+    : isWindows
+      ? [SAVE, DONT_SAVE, CANCEL]
+      : [DONT_SAVE, CANCEL, SAVE];
 
 /** Tabs showing the save prompt. */
 const prompting = new WeakSet();
@@ -204,6 +206,7 @@ function editedTabs(windows) {
  * @returns {Promise<string>} SAVE, CANCEL or DONT_SAVE
  */
 async function askToSave(win, tab) {
+  const BUTTONS = buttons();
   const { response } = await dialog.showMessageBox(win, {
     type: "warning",
     ...savePrompt(tabs.documentName(tab)),

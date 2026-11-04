@@ -95,19 +95,20 @@ const BACKGROUND_ARGS =
  *
  * @param {string[]} files
  * @param {{ userData?: string, lang?: string, args?: string[], env?: Record<string, string> }} [options]
- *   userData: reuse a folder. lang: the language, such as `de`, for pdf.js's
- *   labels, rather than the system's. args: more switches. env: variables to
+ *   userData: reuse a folder. lang: the language, such as `de`, for PDFLion's
+ *   and pdf.js's labels, rather than English: never the system's, so that
+ *   tests read the same everywhere. args: more switches. env: variables to
  *   set besides this process's
  * @returns {Promise<{ app: ElectronApplication, page: Page, userData: string }>}
  */
-export async function launch(files, { userData, lang, args = [], env = {} } = {}) {
+export async function launch(files, { userData, lang = "en-US", args = [], env = {} } = {}) {
   userData ??= await tempDir();
   const app = await electron.launch({
     args: [
       ...BACKGROUND_ARGS,
       ROOT,
       `--user-data-dir=${userData}`,
-      ...(lang ? [`--lang=${lang}`] : []),
+      `--lang=${lang}`,
       ...args,
       ...files,
     ],

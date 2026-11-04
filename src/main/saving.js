@@ -10,6 +10,7 @@ import { saveError } from "../shared/wording.js";
 import * as documents from "./documents.js";
 import { docPath } from "./routes.js";
 import * as tabs from "./tabs.js";
+import { t } from "../shared/i18n.js";
 
 /**
  * Writes a tab's document over its file.
@@ -54,7 +55,7 @@ export async function saveDocumentAs(tab, bytes) {
 
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     defaultPath: current ?? path.join(app.getPath("documents"), tabs.documentName(tab)),
-    filters: [{ name: "PDF Document", extensions: ["pdf"] }],
+    filters: [{ name: t("pdfDocument"), extensions: ["pdf"] }],
     properties: ["createDirectory"],
   });
   if (canceled || !filePath) return null;

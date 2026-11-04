@@ -394,3 +394,27 @@ test("on macOS, the Dock icon shows Home when no window is open", async ({ pdfli
   await expect.poll(() => cards(home)).toMatchObject([{ name: "tracemonkey.pdf", open: false }]);
   expect(await windowCount(app)).toBe(1);
 });
+
+test("PDFLion's own texts follow the language, as pdf.js's do", async ({ pdflion }) => {
+  const { app } = await pdflion([], { lang: "de" });
+  const home = await homePage(app);
+  await expect(home.locator("#empty .message")).toHaveText("Keine zuletzt geöffneten Dokumente");
+  await expect(home.locator("#empty .open")).toHaveText("Öffnen …");
+  expect(await home.evaluate(() => document.title)).toBe("Start");
+  const strip = await stripOf(app, home);
+  await expect(strip.locator("#tabs")).toHaveAttribute("aria-label", "Dokumente");
+  const labels = await app.evaluate(({ Menu }) =>
+    /** @type {Electron.Menu} */ (Menu.getApplicationMenu()).items.map((item) => item.label),
+  );
+  expect(labels).toContain("&Datei");
+  expect(labels).toContain("&Bearbeiten");
+
+  await openFile(app, await tracemonkey(await tempDir()));
+  const viewer = await documentPage(app, "tracemonkey.pdf");
+  await rendered(viewer);
+  await expect(viewer.locator("#pdflionPageOverview")).toHaveAttribute("title", "Seitenübersicht");
+  await expect(strip.locator(".tab:not(.home) .close")).toHaveAttribute(
+    "aria-label",
+    "tracemonkey.pdf schließen",
+  );
+});

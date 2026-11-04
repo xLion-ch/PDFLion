@@ -6,10 +6,13 @@
  * same. Each platform orders the buttons as its
  * own apps do, so this module only names them, and the caller puts them in
  * order.
- * PDFLion's own words are in English, like its native menus.
+ * The words themselves are in texts.js, in each of PDFLion's languages, and
+ * come in the one i18n.js has set. The buttons' names change with it, as
+ * live bindings.
  * Free of Electron and Node, in src/shared/, so that the web app can use it
  * too, and unit tests under plain Node.
  */
+import { list, locale, onLanguageChange, t } from "./i18n.js";
 
 /**
  * @typedef {object} Text what an alert or a prompt says
@@ -17,41 +20,64 @@
  * @property {string} [detail]
  */
 
-export const OK = "OK";
-export const CANCEL = "Cancel";
-export const SAVE = "Save";
-export const DONT_SAVE = "Don’t Save";
-export const RESTART_NOW = "Restart Now";
-export const LATER = "Later";
-export const RELEASE_NOTES = "Release Notes";
-export const REMOVE = "Remove";
-export const IMPORT = "Import";
-export const SHARE = "Share…";
-export const DELETE = "Delete";
-export const RENAME = "Rename";
+export let OK = t("ok");
+export let CANCEL = t("cancel");
+export let SAVE = t("save");
+export let DONT_SAVE = t("dontSave");
+export let RESTART_NOW = t("restartNow");
+export let LATER = t("later");
+export let RELEASE_NOTES = t("releaseNotes");
+export let REMOVE = t("remove");
+export let IMPORT = t("import");
+export let SHARE = t("share");
+export let DELETE = t("delete");
+export let RENAME = t("rename");
+/** The button that closes a tab whose changes couldn't be saved. */
+export let CLOSE = t("close");
+/** Export…'s buttons. */
+export let SETTINGS_ONLY = t("settingsOnly");
+export let SETTINGS_AND_DOCUMENTS = t("settingsAndDocuments");
+
+onLanguageChange(() => {
+  OK = t("ok");
+  CANCEL = t("cancel");
+  SAVE = t("save");
+  DONT_SAVE = t("dontSave");
+  RESTART_NOW = t("restartNow");
+  LATER = t("later");
+  RELEASE_NOTES = t("releaseNotes");
+  REMOVE = t("remove");
+  IMPORT = t("import");
+  SHARE = t("share");
+  DELETE = t("delete");
+  RENAME = t("rename");
+  CLOSE = t("close");
+  SETTINGS_ONLY = t("settingsOnly");
+  SETTINGS_AND_DOCUMENTS = t("settingsAndDocuments");
+});
 
 /**
  * What a save that rewrites the document drops, for `rewrite`, as its detail
- * names them. bridge.js's DROPPABLE lists the same items.
+ * names them, by their texts' ids. bridge.js's DROPPABLE lists the same items.
  * @type {Record<string, string>}
  */
 const DROPPED_ITEMS = {
-  xmp: "its XMP metadata",
-  layers: "its layers",
-  scripts: "its document scripts",
-  "viewer-settings": "how it asks to be shown when it opens",
-  tagging: "the tags that make it accessible",
-  language: "the language setting screen readers use",
-  info: "its title, author, subject and keywords",
-  "page-labels": "its page labels",
+  xmp: "droppedXmp",
+  layers: "droppedLayers",
+  scripts: "droppedScripts",
+  "viewer-settings": "droppedViewerSettings",
+  tagging: "droppedTagging",
+  language: "droppedLanguage",
+  info: "droppedInfo",
+  "page-labels": "droppedPageLabels",
 };
 
 /**
  * @typedef {object} PageDialogWords
  * @property {(name: string, items: string[]) => string} message
  * @property {(name: string, items: string[]) => string} detail
- * @property {string} [confirm] the button that goes ahead, for a prompt; an
- *   alert has only OK
+ * @property {() => string} [confirm] the button that goes ahead, for a
+ *   prompt; an alert has only OK
  * @property {boolean} [cancelByDefault] whether Return cancels
  */
 
@@ -62,30 +88,28 @@ const DROPPED_ITEMS = {
  */
 const PAGE_DIALOGS = {
   "locked-encrypted": {
-    message: (name) => `The pages of the document “${name}” can’t be changed.`,
-    detail: () => "The document is protected with a password.",
+    message: (name) => t("pagesLocked", { name }),
+    detail: () => t("pagesLockedEncrypted"),
   },
   "locked-xfa": {
-    message: (name) => `The pages of the document “${name}” can’t be changed.`,
-    detail: () => "The document is an XFA form, which PDFLion can’t change pages of.",
+    message: (name) => t("pagesLocked", { name }),
+    detail: () => t("pagesLockedXfa"),
   },
   failed: {
-    message: (name) => `The pages of the document “${name}” couldn’t be changed.`,
-    detail: () => "PDFLion can’t read the document well enough. It’s unchanged.",
+    message: (name) => t("pagesFailed", { name }),
+    detail: () => t("pagesFailedDetail"),
   },
   signed: {
-    message: (name) => `Changing pages invalidates the signatures in “${name}”.`,
-    detail: () => "Checking them will show that the document changed after it was signed.",
-    confirm: "Change Pages",
+    message: (name) => t("pagesSigned", { name }),
+    detail: () => t("pagesSignedDetail"),
+    confirm: () => t("changePages"),
     cancelByDefault: true,
   },
   rewrite: {
-    message: (name) => `Saving removes some information from “${name}”.`,
+    message: (name) => t("pagesRewrite", { name }),
     detail: (_name, items) =>
-      `Saving the changed pages removes ${new Intl.ListFormat("en").format(
-        items.map((item) => DROPPED_ITEMS[item]),
-      )}.`,
-    confirm: "Save",
+      t("pagesRewriteDetail", { items: list(items.map((item) => t(DROPPED_ITEMS[item]))) }),
+    confirm: () => t("save"),
   },
 };
 
@@ -117,7 +141,12 @@ export function isPageDialog(reason, items) {
  */
 export function pageDialog(reason, name, items = []) {
   const { message, detail, confirm, cancelByDefault = false } = PAGE_DIALOGS[reason];
-  return { message: message(name, items), detail: detail(name, items), confirm, cancelByDefault };
+  return {
+    message: message(name, items),
+    detail: detail(name, items),
+    confirm: confirm?.(),
+    cancelByDefault,
+  };
 }
 
 /**
@@ -128,10 +157,7 @@ export function pageDialog(reason, name, items = []) {
  * @returns {Text}
  */
 export function savePrompt(name) {
-  return {
-    message: `Do you want to save the changes made to the document “${name}”?`,
-    detail: "Your changes will be lost if you don’t save them.",
-  };
+  return { message: t("savePrompt", { name }), detail: t("savePromptDetail") };
 }
 
 /**
@@ -140,14 +166,14 @@ export function savePrompt(name) {
  * @type {Record<string, string>}
  */
 const SAVE_ERRORS = {
-  EACCES: "You don’t have permission to save the file.",
-  EPERM: "You don’t have permission to save the file.",
-  EROFS: "The volume is read-only.",
-  ENOSPC: "There isn’t enough space on the disk.",
+  EACCES: "saveErrorPermission",
+  EPERM: "saveErrorPermission",
+  EROFS: "saveErrorReadOnly",
+  ENOSPC: "saveErrorDiskFull",
   // Windows: another app has the file open.
-  EBUSY: "The file is in use by another app.",
+  EBUSY: "saveErrorBusy",
   // The web app: the browser's storage for PDFLion is full.
-  QuotaExceededError: "There isn’t enough space on this device.",
+  QuotaExceededError: "saveErrorQuota",
 };
 
 /**
@@ -156,7 +182,7 @@ const SAVE_ERRORS = {
  * @returns {Text}
  */
 export function saveError(name, error) {
-  return { message: `The document “${name}” could not be saved.`, detail: whyNotSaved(error) };
+  return { message: t("saveError", { name }), detail: whyNotSaved(error) };
 }
 
 /**
@@ -164,7 +190,7 @@ export function saveError(name, error) {
  * @returns {string} why a file wasn't written, or the error's own message
  */
 function whyNotSaved({ code, message }) {
-  return (code && Object.hasOwn(SAVE_ERRORS, code) && SAVE_ERRORS[code]) || message;
+  return code && Object.hasOwn(SAVE_ERRORS, code) ? t(SAVE_ERRORS[code]) : message;
 }
 
 /**
@@ -172,23 +198,19 @@ function whyNotSaved({ code, message }) {
  * @returns {Text} that a file isn't a PDF, which the web app won't keep
  */
 export function notAPdf(name) {
-  return {
-    message: `The file “${name}” couldn’t be opened.`,
-    detail: "It isn’t a PDF document.",
-  };
+  return { message: t("openError", { name }), detail: t("notAPdfDetail") };
 }
 
 /**
- * Why a file couldn't be opened, by Node's error code, as the end of the
- * alert's message. Phrased like Preview's "couldn't be opened because …"
- * alerts.
+ * Why a file couldn't be opened, by Node's error code: the alert's message.
+ * Phrased like Preview's "couldn't be opened because …" alerts.
  * @type {Record<string, string>}
  */
 const OPEN_ERRORS = {
-  ENOENT: "there is no such file",
-  EACCES: "you don’t have permission to view it",
-  EPERM: "you don’t have permission to view it",
-  EISDIR: "it isn’t a file",
+  ENOENT: "openErrorNoFile",
+  EACCES: "openErrorPermission",
+  EPERM: "openErrorPermission",
+  EISDIR: "openErrorNotFile",
 };
 
 /**
@@ -199,9 +221,9 @@ const OPEN_ERRORS = {
  */
 export function openError(name, { code, message }) {
   if (code && Object.hasOwn(OPEN_ERRORS, code)) {
-    return { message: `The file “${name}” couldn’t be opened because ${OPEN_ERRORS[code]}.` };
+    return { message: t(OPEN_ERRORS[code], { name }) };
   }
-  return { message: `The file “${name}” couldn’t be opened.`, detail: message };
+  return { message: t("openError", { name }), detail: message };
 }
 
 /**
@@ -214,7 +236,7 @@ export function openError(name, { code, message }) {
 export function missingRecent(name) {
   return {
     message: openError(name, { code: "ENOENT", message: "" }).message,
-    detail: "It may have been moved, renamed or deleted. Do you want to remove it from the recent documents?",
+    detail: t("missingRecentDetail"),
   };
 }
 
@@ -222,7 +244,7 @@ export function missingRecent(name) {
  * The settings an import replaces, as its prompt names them.
  * @type {Record<string, string>}
  */
-const SETTINGS = { eraser: "eraser", penOnly: "pen", automaticUpdates: "update" };
+const SETTINGS = { eraser: "settingEraser", penOnly: "settingPen", automaticUpdates: "settingUpdates" };
 
 /**
  * The prompt before settings are imported, with Import and Cancel.
@@ -235,7 +257,7 @@ const SETTINGS = { eraser: "eraser", penOnly: "pen", automaticUpdates: "update" 
  * @returns {Text}
  */
 export function importSettingsPrompt(name, { replaced, added }) {
-  return { message: `Import the settings from “${name}”?`, detail: settingsChanges({ replaced, added }) };
+  return { message: t("importSettingsPrompt", { name }), detail: settingsChanges({ replaced, added }) };
 }
 
 /**
@@ -243,16 +265,16 @@ export function importSettingsPrompt(name, { replaced, added }) {
  * @returns {string} what importing settings changes
  */
 function settingsChanges({ replaced, added }) {
-  const settings = new Intl.ListFormat("en").format(replaced.map((setting) => SETTINGS[setting]));
-  const some =
-    added === 1
-      ? "one favourite you don’t have yet is"
-      : `${added} favourites you don’t have yet are`;
+  const settings = list(replaced.map((setting) => t(SETTINGS[setting])));
   const favourites =
-    added === 0 ? "it has no favourites you don’t have yet" : `its ${some} added after yours`;
+    added === 0
+      ? t("favouritesNone")
+      : added === 1
+        ? t("favouritesOne")
+        : t("favouritesSome", { count: added });
   return replaced.length === 0
-    ? `${favourites[0].toUpperCase()}${favourites.slice(1)}.`
-    : `Your ${settings} settings are replaced, and ${favourites}.`;
+    ? `${favourites[0].toLocaleUpperCase(locale())}${favourites.slice(1)}.`
+    : t("settingsReplaced", { settings, favourites });
 }
 
 /**
@@ -260,17 +282,14 @@ function settingsChanges({ replaced, added }) {
  * @returns {Text} that a settings file would change nothing
  */
 export function nothingToImport(name) {
-  return {
-    message: `There’s nothing to import from “${name}”.`,
-    detail: "It has no settings, and no favourites you don’t have yet.",
-  };
+  return { message: t("nothingToImport", { name }), detail: t("nothingToImportDetail") };
 }
 
 /** @type {Record<import("./backup.js").SettingsFileError, string>} */
 const SETTINGS_FILE_ERRORS = {
-  "too-large": "The file is larger than a settings file can be.",
-  "not-settings": "It isn’t a PDFLion settings file.",
-  newer: "They come from a newer version of PDFLion. Update PDFLion, and try again.",
+  "too-large": "settingsFileTooLarge",
+  "not-settings": "settingsFileNotSettings",
+  newer: "settingsFileNewer",
 };
 
 /**
@@ -279,10 +298,7 @@ const SETTINGS_FILE_ERRORS = {
  * @returns {Text}
  */
 export function settingsFileError(name, error) {
-  return {
-    message: `The settings in “${name}” couldn’t be imported.`,
-    detail: SETTINGS_FILE_ERRORS[error],
-  };
+  return { message: t("settingsFileError", { name }), detail: t(SETTINGS_FILE_ERRORS[error]) };
 }
 
 /**
@@ -291,10 +307,7 @@ export function settingsFileError(name, error) {
  * @returns {Text}
  */
 export function settingsExportError(name, error) {
-  return {
-    message: `The settings couldn’t be exported to “${name}”.`,
-    detail: whyNotSaved(error),
-  };
+  return { message: t("settingsExportError", { name }), detail: whyNotSaved(error) };
 }
 
 /**
@@ -308,10 +321,7 @@ export function settingsExportError(name, error) {
 
 /** @returns {Text} */
 export function updateCheckFailed() {
-  return {
-    message: "PDFLion couldn’t check for updates.",
-    detail: "Check your internet connection, and try again later.",
-  };
+  return { message: t("updateCheckFailed"), detail: t("updateCheckFailedDetail") };
 }
 
 /**
@@ -319,7 +329,7 @@ export function updateCheckFailed() {
  * @returns {Text}
  */
 export function upToDate(version) {
-  return { message: "PDFLion is up to date.", detail: `PDFLion ${version} is the latest version.` };
+  return { message: t("upToDate"), detail: t("upToDateDetail", { version }) };
 }
 
 /**
@@ -327,7 +337,7 @@ export function upToDate(version) {
  * @returns {Text}
  */
 export function updateDownloadFailed(version) {
-  return { message: `PDFLion ${version} couldn’t be downloaded.`, detail: "Try again later." };
+  return { message: t("updateDownloadFailed", { version }), detail: t("tryAgainLater") };
 }
 
 /**
@@ -339,8 +349,8 @@ export function updateDownloadFailed(version) {
  */
 export function updateOnReadOnlyVolume(version, { checkForUpdates }) {
   return {
-    message: `PDFLion ${version} can’t be installed here.`,
-    detail: `PDFLion can’t update itself while it runs from a disk image or from Downloads. Move it to the Applications folder, open it from there, and choose ${checkForUpdates} again.`,
+    message: t("updateReadOnly", { version }),
+    detail: t("updateReadOnlyDetail", { checkForUpdates }),
   };
 }
 
@@ -349,10 +359,7 @@ export function updateOnReadOnlyVolume(version, { checkForUpdates }) {
  * @returns {Text}
  */
 export function updateNotInstallable(version) {
-  return {
-    message: `PDFLion ${version} can’t be installed.`,
-    detail: "Download it from PDFLion’s releases on GitHub instead.",
-  };
+  return { message: t("updateNotInstallable", { version }), detail: t("updateNotInstallableDetail") };
 }
 
 /**
@@ -365,10 +372,8 @@ export function updateNotInstallable(version) {
  */
 export function updateReady(version, { checkForUpdates, needsPassword }) {
   return {
-    message: `PDFLion ${version} is ready to install.`,
-    detail: needsPassword
-      ? `Installing it asks for an administrator’s password. ${checkForUpdates} offers it again later.`
-      : "It installs when PDFLion quits.",
+    message: t("updateReady", { version }),
+    detail: needsPassword ? t("updateReadyPassword", { checkForUpdates }) : t("updateReadyOnQuit"),
   };
 }
 
@@ -379,10 +384,10 @@ export function updateReady(version, { checkForUpdates, needsPassword }) {
  */
 export function updateNotInstalled(version, { checkForUpdates, needsPassword }) {
   return {
-    message: `PDFLion ${version} wasn’t installed.`,
+    message: t("updateNotInstalled", { version }),
     detail: needsPassword
-      ? `Installing it needs an administrator’s password. ${checkForUpdates} offers it again.`
-      : `${checkForUpdates} offers it again.`,
+      ? t("updateNotInstalledPassword", { checkForUpdates })
+      : t("updateNotInstalledAgain", { checkForUpdates }),
   };
 }
 
@@ -396,9 +401,8 @@ export function updateNotInstalled(version, { checkForUpdates, needsPassword }) 
  */
 export function webUpdateReady(version) {
   return {
-    message: version ? `PDFLion ${version} is ready.` : "A new version of PDFLion is ready.",
-    detail:
-      "Restart PDFLion to use it: your documents are saved first, and your tabs come back. Otherwise it starts the next time you open PDFLion.",
+    message: version ? t("webUpdateReady", { version }) : t("webUpdateReadyUnknown"),
+    detail: t("webUpdateReadyDetail"),
   };
 }
 
@@ -410,10 +414,7 @@ export function webUpdateReady(version) {
  * @returns {Text}
  */
 export function restartUnsavedPrompt(name) {
-  return {
-    message: `The changes to “${name}” couldn’t be saved.`,
-    detail: "If PDFLion restarts now, they’re lost.",
-  };
+  return { message: t("changesNotSaved", { name }), detail: t("restartUnsavedDetail") };
 }
 
 /**
@@ -428,7 +429,7 @@ export function restartUnsavedPrompt(name) {
  * @returns {string} the label of the toolbar's status and of Home's mark
  */
 export function notInFilesLabel(made) {
-  return made ? "Only in PDFLion" : "Not in Files";
+  return made ? t("onlyInPdflion") : t("notInFiles");
 }
 
 /**
@@ -438,9 +439,7 @@ export function notInFilesLabel(made) {
  * @returns {string}
  */
 export function savedNotInFiles(made) {
-  return made
-    ? "Saved in PDFLion. To keep it in Files too, share it."
-    : "Saved in PDFLion. The file in Files hasn’t changed.";
+  return made ? t("savedMade") : t("savedNotMade");
 }
 
 /**
@@ -453,16 +452,8 @@ export function savedNotInFiles(made) {
  */
 export function notInFilesExplanation(name, made) {
   return made
-    ? {
-        message: `“${name}” is saved in PDFLion.`,
-        detail:
-          "PDFLion keeps your documents and saves your changes as you make them. To have a copy in Files too, share the document and choose Save to Files.",
-      }
-    : {
-        message: `Your changes to “${name}” are saved in PDFLion.`,
-        detail:
-          "PDFLion keeps its own copy of the documents you open, and saves your changes into it as you make them. The file in Files stays as it was. To replace it, share the document and choose Save to Files.",
-      };
+    ? { message: t("explainMade", { name }), detail: t("explainMadeDetail") }
+    : { message: t("explainNotMade", { name }), detail: t("explainNotMadeDetail") };
 }
 
 /**
@@ -474,9 +465,7 @@ export function notInFilesExplanation(name, made) {
  * @returns {string}
  */
 export function closedNotInFiles(name, made) {
-  return made
-    ? `“${name}” is saved only in PDFLion.`
-    : `“${name}” is saved in PDFLion, not in Files.`;
+  return made ? t("closedMade", { name }) : t("closedNotMade", { name });
 }
 
 /**
@@ -484,7 +473,7 @@ export function closedNotInFiles(name, made) {
  * @returns {string} the snackbar after Save
  */
 export function savedNow(name) {
-  return `“${name}” is saved in PDFLion.`;
+  return t("savedNow", { name });
 }
 
 /**
@@ -498,10 +487,10 @@ export function savedNow(name) {
  * @returns {Text}
  */
 export function deletePrompt(name, { notInFiles, made }) {
-  let detail = "The file in Files stays as it is.";
-  if (made) detail = "It isn’t in Files, so it’s gone for good.";
-  else if (notInFiles) detail = "The changes you made in PDFLion are lost. The file in Files stays as it was.";
-  return { message: `Delete “${name}” from PDFLion?`, detail };
+  let detail = t("deleteKeepsFile");
+  if (made) detail = t("deleteMade");
+  else if (notInFiles) detail = t("deleteChanges");
+  return { message: t("deletePrompt", { name }), detail };
 }
 
 /**
@@ -511,7 +500,7 @@ export function deletePrompt(name, { notInFiles, made }) {
  * @returns {Text}
  */
 export function renamePrompt(name) {
-  return { message: `Rename “${name}”` };
+  return { message: t("renamePrompt", { name }) };
 }
 
 /**
@@ -522,11 +511,9 @@ export function renamePrompt(name) {
  * @returns {Text}
  */
 export function shareReady(name) {
-  return { message: `“${name}” is ready to share.` };
+  return { message: t("shareReady", { name }) };
 }
 
-/** The button that closes a tab whose changes couldn't be saved. */
-export const CLOSE = "Close";
 
 /**
  * The prompt before a tab closes whose changes couldn't be saved, with Close
@@ -536,10 +523,7 @@ export const CLOSE = "Close";
  * @returns {Text}
  */
 export function closeUnsavedPrompt(name) {
-  return {
-    message: `The changes to “${name}” couldn’t be saved.`,
-    detail: "If you close the document, they’re lost.",
-  };
+  return { message: t("changesNotSaved", { name }), detail: t("closeUnsavedDetail") };
 }
 
 /**
@@ -548,7 +532,7 @@ export function closeUnsavedPrompt(name) {
  * @returns {Text}
  */
 export function shareError(name, { message }) {
-  return { message: `“${name}” couldn’t be shared.`, detail: message };
+  return { message: t("shareError", { name }), detail: message };
 }
 
 /**
@@ -563,7 +547,7 @@ export function formatSize(bytes) {
     ["kilobyte", 1e3],
   ];
   const [unit, size] = units.find(([, other]) => bytes >= other) ?? units[2];
-  const format = new Intl.NumberFormat("en", {
+  const format = new Intl.NumberFormat(locale(), {
     style: "unit",
     unit,
     unitDisplay: "short",
@@ -577,9 +561,6 @@ export function formatSize(bytes) {
  * document PDFLion keeps, or a settings file, and Import… takes either.
  */
 
-/** Export…'s buttons. */
-export const SETTINGS_ONLY = "Settings Only";
-export const SETTINGS_AND_DOCUMENTS = "Settings and Documents";
 
 /**
  * Export…'s question, with Cancel, Settings Only and Settings and
@@ -590,10 +571,13 @@ export const SETTINGS_AND_DOCUMENTS = "Settings and Documents";
  * @returns {Text}
  */
 export function exportPrompt(documents, bytes) {
-  const them = documents === 1 ? "the document" : `the ${documents} documents`;
+  const size = formatSize(bytes);
   return {
-    message: "What do you want to export?",
-    detail: `The settings are your favourites, and the eraser and pen settings. With the documents, the backup also has ${them} PDFLion keeps (${formatSize(bytes)}), and brings them back on this device or another.`,
+    message: t("exportPrompt"),
+    detail:
+      documents === 1
+        ? t("exportDetailOne", { size })
+        : t("exportDetailMany", { count: documents, size }),
   };
 }
 
@@ -602,7 +586,7 @@ export function exportPrompt(documents, bytes) {
  * @returns {string} the snackbar while a backup is made, with Cancel
  */
 export function exportProgress(percent) {
-  return `Preparing the backup… ${percent}%`;
+  return t("exportProgress", { percent });
 }
 
 /**
@@ -610,7 +594,7 @@ export function exportProgress(percent) {
  * @returns {Text}
  */
 export function exportError({ message }) {
-  return { message: "The backup couldn’t be made.", detail: message };
+  return { message: t("exportError"), detail: message };
 }
 
 /**
@@ -619,7 +603,7 @@ export function exportError({ message }) {
  * @returns {string} the snackbar while documents are imported, with Cancel
  */
 export function importProgress(done, total) {
-  return total === 1 ? "Importing the document…" : `Importing ${done} of ${total} documents…`;
+  return total === 1 ? t("importProgressOne") : t("importProgressMany", { done, total });
 }
 
 /**
@@ -637,19 +621,14 @@ export function importProgress(done, total) {
  * @returns {Text}
  */
 export function importBackupPrompt(name, { documents, bytes, here, copies, settings }) {
-  const what = documents === 1 ? "one document" : `${documents} documents`;
-  const message =
-    documents === 0
-      ? `Import the settings from “${name}”?`
-      : `Import ${what} (${formatSize(bytes)})${settings ? " and the settings" : ""} from “${name}”?`;
+  const values = { name, count: documents, size: formatSize(bytes) };
+  const id = `importBackup${documents === 1 ? "One" : "Many"}${settings ? "AndSettings" : ""}`;
+  const message = documents === 0 ? t("importSettingsPrompt", { name }) : t(id, values);
   const details = [];
-  if (copies === 1) {
-    details.push("One of them has other changes here, which stay, and the backup’s comes in as a copy.");
-  } else if (copies > 1) {
-    details.push(`${copies} of them have other changes here, which stay, and the backup’s come in as copies.`);
-  }
-  if (here === 1) details.push("Another document in it is here already, as it is.");
-  else if (here > 1) details.push(`${here} other documents in it are here already, as they are.`);
+  if (copies === 1) details.push(t("copiesOne"));
+  else if (copies > 1) details.push(t("copiesMany", { count: copies }));
+  if (here === 1) details.push(t("hereOne"));
+  else if (here > 1) details.push(t("hereMany", { count: here }));
   if (settings) details.push(settingsChanges(settings));
   return { message, detail: details.join(" ") };
 }
@@ -659,10 +638,7 @@ export function importBackupPrompt(name, { documents, bytes, here, copies, setti
  * @returns {Text} that a backup would change nothing
  */
 export function nothingInBackup(name) {
-  return {
-    message: `There’s nothing to import from “${name}”.`,
-    detail: "Its documents are here already, as they are, and it has no settings you don’t have yet.",
-  };
+  return { message: t("nothingToImport", { name }), detail: t("nothingInBackupDetail") };
 }
 
 /**
@@ -671,20 +647,18 @@ export function nothingInBackup(name) {
  * @returns {Text}
  */
 export function notEnoughSpace(name, missing) {
-  return {
-    message: `There isn’t enough space to import “${name}”.`,
-    detail: `${missing === null ? "It needs more space." : `It needs ${formatSize(missing)} more.`} Delete documents you don’t need, or free space on the device, and try again.`,
-  };
+  const needs = missing === null ? t("needsSpaceUnknown") : t("needsSpace", { size: formatSize(missing) });
+  return { message: t("notEnoughSpace", { name }), detail: t("notEnoughSpaceDetail", { needs }) };
 }
 
 /** @typedef {"not-backup" | "damaged" | "newer" | "too-large"} BackupError */
 
 /** @type {Record<BackupError, string>} */
 const BACKUP_ERRORS = {
-  "not-backup": "It isn’t a PDFLion backup or settings file.",
-  damaged: "It’s damaged.",
-  newer: "It comes from a newer version of PDFLion. Update PDFLion, and try again.",
-  "too-large": "It lists more than a backup can.",
+  "not-backup": "backupNotBackup",
+  damaged: "backupDamaged",
+  newer: "backupNewer",
+  "too-large": "backupTooLarge",
 };
 
 /**
@@ -693,7 +667,7 @@ const BACKUP_ERRORS = {
  * @returns {Text}
  */
 export function backupError(name, error) {
-  return { message: `“${name}” couldn’t be imported.`, detail: BACKUP_ERRORS[error] };
+  return { message: t("backupError", { name }), detail: t(BACKUP_ERRORS[error]) };
 }
 
 /**
@@ -703,12 +677,12 @@ export function backupError(name, error) {
  */
 export function documentsNotImported(names) {
   if (names.length === 1) {
-    return { message: `“${names[0]}” couldn’t be imported.`, detail: "It’s missing or damaged in the backup." };
+    return { message: t("backupError", { name: names[0] }), detail: t("documentNotImportedDetail") };
   }
-  const list = new Intl.ListFormat("en").format(names.map((name) => `“${name}”`));
+  const quoted = names.map((name) => t("quoted", { name }));
   return {
-    message: `${names.length} documents couldn’t be imported.`,
-    detail: `They’re missing or damaged in the backup: ${list}.`,
+    message: t("documentsNotImported", { count: names.length }),
+    detail: t("documentsNotImportedDetail", { list: list(quoted) }),
   };
 }
 
@@ -718,17 +692,14 @@ export function documentsNotImported(names) {
  * @returns {string} the snackbar after an import
  */
 export function importedNow(documents, settings) {
-  const what = documents === 1 ? "one document" : `${documents} documents`;
-  if (documents === 0) return "The settings are imported.";
-  return settings ? `Imported ${what} and the settings.` : `Imported ${what}.`;
+  if (documents === 0) return t("importedSettings");
+  const id = `imported${documents === 1 ? "One" : "Many"}${settings ? "AndSettings" : ""}`;
+  return t(id, { count: documents });
 }
 
 /** @returns {Text} that the web app's first download failed */
 export function webAppNotDownloaded() {
-  return {
-    message: "PDFLion couldn’t be downloaded.",
-    detail: "Check your internet connection, and reload the page.",
-  };
+  return { message: t("webAppNotDownloaded"), detail: t("webAppNotDownloadedDetail") };
 }
 
 /**
@@ -736,8 +707,5 @@ export function webAppNotDownloaded() {
  * @returns {Text} that the web app can't run in this browser
  */
 export function webAppUnavailable(reason) {
-  return {
-    message: "PDFLion can’t run here.",
-    detail: `It needs a browser that keeps its documents and works offline, such as Safari on an iPad. ${reason}`,
-  };
+  return { message: t("webAppUnavailable"), detail: t("webAppUnavailableDetail", { reason }) };
 }

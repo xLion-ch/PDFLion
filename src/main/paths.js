@@ -43,6 +43,12 @@ export const tabsRoot = path.join(appPath, "src", "tabs");
 /** `src/home/`, the home screen, served at `pdflion://app/home/`. */
 export const homeRoot = path.join(appPath, "src", "home");
 
+/**
+ * `src/shared/`, served at `pdflion://app/shared/` for the pages' classic
+ * scripts: texts.js, PDFLion's texts in its languages.
+ */
+export const sharedRoot = path.join(appPath, "src", "shared");
+
 /** The sandboxed preload script that exposes `window.pdflion` to the viewer. */
 export const preloadPath = path.join(appPath, "src", "preload", "preload.cjs");
 

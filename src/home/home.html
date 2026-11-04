@@ -11,31 +11,32 @@
     <meta charset="utf-8" />
     <title>Home</title>
     <link rel="stylesheet" href="home.css" />
+    <script src="../shared/texts.js"></script>
     <script src="home.js" defer></script>
   </head>
   <body>
     <header>
       <h1><img class="logo" src="logo.svg" alt="" />PDFLion</h1>
       <div class="actions">
-        <button type="button" class="button filled open">Open…</button>
-        <button type="button" class="button outlined new">New</button>
-        <button type="button" class="icon info" id="info" title="About, Settings and Storage" aria-label="About, Settings and Storage" hidden></button>
+        <button type="button" class="button filled open" data-text="openFile">Open…</button>
+        <button type="button" class="button outlined new" data-text="new">New</button>
+        <button type="button" class="icon info" id="info" title="About, Settings and Storage" aria-label="About, Settings and Storage" data-label="homeInfo" hidden></button>
       </div>
     </header>
     <main>
       <section id="recent" hidden>
         <div class="heading">
-          <h2 id="recentHeading">Recent</h2>
-          <button type="button" class="button text" id="clear">Clear</button>
+          <h2 id="recentHeading" data-text="recent">Recent</h2>
+          <button type="button" class="button text" id="clear" data-text="clear">Clear</button>
         </div>
         <ul id="documents" aria-labelledby="recentHeading"></ul>
       </section>
       <section id="empty" hidden>
-        <p class="message">No recent documents</p>
-        <p class="hint">Open a PDF or make a new one. You can also drop PDFs here.</p>
+        <p class="message" data-text="noRecent">No recent documents</p>
+        <p class="hint" data-text="noRecentHint">Open a PDF or make a new one. You can also drop PDFs here.</p>
         <div class="actions">
-          <button type="button" class="button filled large open">Open…</button>
-          <button type="button" class="button outlined large new">New</button>
+          <button type="button" class="button filled large open" data-text="openFile">Open…</button>
+          <button type="button" class="button outlined large new" data-text="new">New</button>
         </div>
       </section>
     </main>

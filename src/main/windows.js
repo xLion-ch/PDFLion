@@ -15,6 +15,7 @@ import { parsePlacement, placeWindow } from "./placement.js";
 import { TABS_URL } from "./routes.js";
 import { getState, setState } from "./state.js";
 import * as tabs from "./tabs.js";
+import { t } from "../shared/i18n.js";
 
 const isLinux = process.platform === "linux";
 
@@ -185,7 +186,7 @@ export async function showOpenPanel(target) {
   try {
     ({ filePaths } = await dialog.showOpenDialog({
       properties: ["openFile", "multiSelections"],
-      filters: [{ name: "PDF Documents", extensions: ["pdf"] }],
+      filters: [{ name: t("pdfDocuments"), extensions: ["pdf"] }],
     }));
   } finally {
     openPanelShown = false;

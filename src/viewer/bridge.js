@@ -61,6 +61,12 @@
 "use strict";
 
 (() => {
+  /**
+   * PDFLion's texts (src/shared/texts.js, which the host page loads first),
+   * in the language pdf.js picks for the viewer too.
+   */
+  const t = /** @type {any} */ (globalThis).PDFLionTexts.translator(navigator.languages);
+
   /** `LinkTarget.BLANK` in web/pdf_link_service.js. */
   const LINK_TARGET_BLANK = 2;
 
@@ -177,7 +183,7 @@
    * @typedef {object} FavouriteTool a drawing tool that has favourites
    * @property {string} name in the ids of its button and option box in
    *   web/viewer.html, such as `#editor<name>ParamsToolbar`
-   * @property {string} label in English, like the native menus
+   * @property {string} label in PDFLion's language
    * @property {number} mode its `AnnotationEditorType` in src/shared/util.js
    * @property {Record<string, number>} params the `AnnotationEditorParamsType`
    *   there of each of its settings
@@ -187,14 +193,14 @@
   const FAVOURITE_TOOLS = {
     highlight: {
       name: "Highlight",
-      label: "Highlight",
+      label: t("highlight"),
       mode: EDITOR_HIGHLIGHT,
       params: { color: 31, thickness: 32 },
     },
-    freetext: { name: "FreeText", label: "Text", mode: 3, params: { color: 12, size: 11 } },
+    freetext: { name: "FreeText", label: t("text"), mode: 3, params: { color: 12, size: 11 } },
     ink: {
       name: "Ink",
-      label: "Pencil",
+      label: t("pencil"),
       mode: EDITOR_INK,
       params: { color: 21, thickness: 22, opacity: 23 },
     },
@@ -259,7 +265,7 @@
   const HIGHLIGHT_SWATCH = '#editorHighlightColorPicker [role="option"][aria-selected="true"]';
 
   /** Save as Favourite's label, and for how long it says what a click did instead, in ms. */
-  const SAVE_FAVOURITE = "Save as Favourite";
+  const SAVE_FAVOURITE = t("saveAsFavourite");
   const FAVOURITE_NOTE_TIME = 2000;
 
   /**
@@ -2041,7 +2047,7 @@
   function addInsertButton(app) {
     const separator = document.getElementById("editorModeSeparator");
     if (!separator) return null;
-    const button = makeButton("pdflionInsertBlankPage", "toolbarButton", "Insert Blank Page");
+    const button = makeButton("pdflionInsertBlankPage", "toolbarButton", t("insertBlankPage"));
     button.disabled = true;
     button.addEventListener("click", () => insertBlankPage(app));
     separator.before(button);
@@ -2057,7 +2063,7 @@
   function addHomeButton() {
     const sidebarButton = document.getElementById("viewsManagerToggleButton");
     if (!sidebarButton || typeof window.pdflion.showHome !== "function") return null;
-    const button = makeButton("pdflionHomeButton", "toolbarButton", "Home");
+    const button = makeButton("pdflionHomeButton", "toolbarButton", t("home"));
     button.addEventListener("click", () => window.pdflion.showHome());
     sidebarButton.before(button);
     return button;
@@ -2074,13 +2080,13 @@
     if (typeof window.pdflion.share !== "function") return;
     const download = document.getElementById("downloadButton");
     if (download) {
-      const button = makeButton("pdflionShareButton", "toolbarButton", "Share");
+      const button = makeButton("pdflionShareButton", "toolbarButton", t("shareButton"));
       button.addEventListener("click", () => share(app));
       download.before(button);
     }
     const secondaryDownload = document.getElementById("secondaryDownload");
     if (secondaryDownload) {
-      const item = makeButton("pdflionSecondaryShare", "toolbarButton labeled", "Share…");
+      const item = makeButton("pdflionSecondaryShare", "toolbarButton labeled", t("share"));
       item.addEventListener("click", () => {
         app.secondaryToolbar?.close();
         share(app);
@@ -2107,7 +2113,7 @@
     window.pdflion.onSaveStatus((/** @type {string | null} */ status) => {
       button.hidden = !status;
       /** @type {HTMLElement} */ (button.firstElementChild).textContent = status ?? "";
-      button.title = status ? `${status}. Share…` : "";
+      button.title = status ? t("saveStatus", { status }) : "";
       layoutToolbar();
     });
   }
@@ -2123,8 +2129,8 @@
   function addUndoButtons(app) {
     const tools = document.getElementById("editorModeButtons");
     if (hasNativeMenu || !tools) return [];
-    const undo = makeButton("pdflionUndo", "toolbarButton", "Undo");
-    const redo = makeButton("pdflionRedo", "toolbarButton", "Redo");
+    const undo = makeButton("pdflionUndo", "toolbarButton", t("undo"));
+    const redo = makeButton("pdflionRedo", "toolbarButton", t("redo"));
     undo.addEventListener("click", () => editingAction(app, "undo"));
     redo.addEventListener("click", () => editingAction(app, "redo"));
     const group = createElement(
@@ -2180,10 +2186,10 @@
     const { showOpenPanel, newDocument, showAbout } = window.pdflion;
     const top = [];
     if (typeof showOpenPanel === "function") {
-      top.push(item("pdflionSecondaryOpen", "Open…", () => window.pdflion.showOpenPanel()));
+      top.push(item("pdflionSecondaryOpen", t("openFile"), () => window.pdflion.showOpenPanel()));
     }
     if (typeof newDocument === "function") {
-      top.push(item("pdflionSecondaryNew", "New", () => window.pdflion.newDocument()));
+      top.push(item("pdflionSecondaryNew", t("new"), () => window.pdflion.newDocument()));
     }
     if (top.length > 0) {
       container.prepend(...top, createElement("div", { className: "horizontalToolbarSeparator" }));
@@ -2191,7 +2197,7 @@
     if (typeof showAbout === "function") {
       container.append(
         createElement("div", { className: "horizontalToolbarSeparator" }),
-        item("pdflionSecondaryAbout", "About PDFLion", () => window.pdflion.showAbout()),
+        item("pdflionSecondaryAbout", t("aboutPdflion"), () => window.pdflion.showAbout()),
       );
     }
   }
@@ -2220,20 +2226,20 @@
       });
       return button;
     };
-    const insert = item("pdflionSecondaryInsertBlankPage", "Insert Blank Page", () =>
+    const insert = item("pdflionSecondaryInsertBlankPage", t("insertBlankPage"), () =>
       insertBlankPage(app),
     );
     insert.disabled = true;
     const tiny = createElement(
       "div",
       { className: "pdflionVisibleTiny" },
-      item("pdflionSecondaryFind", "Find…", () => app.findBar?.open()),
-      item("pdflionSecondaryPageOverview", "Page Overview", () => toggleOverview(app)),
+      item("pdflionSecondaryFind", t("find"), () => app.findBar?.open()),
+      item("pdflionSecondaryPageOverview", t("pageOverview"), () => toggleOverview(app)),
       insert,
     );
     const items = [tiny];
     if (typeof window.pdflion.showHome === "function") {
-      items.unshift(item("pdflionSecondaryHome", "Home", () => window.pdflion.showHome()));
+      items.unshift(item("pdflionSecondaryHome", t("home"), () => window.pdflion.showHome()));
     }
     container.prepend(
       ...items,
@@ -2251,7 +2257,7 @@
   function addOverviewButton(app) {
     const sidebarButton = document.getElementById("viewsManagerToggleButton");
     if (!sidebarButton) return null;
-    const button = makeButton("pdflionPageOverview", "toolbarButton", "Page Overview");
+    const button = makeButton("pdflionPageOverview", "toolbarButton", t("pageOverview"));
     button.setAttribute("aria-pressed", "false");
     button.addEventListener("click", () => toggleOverview(app));
     sidebarButton.after(button);
@@ -2273,11 +2279,11 @@
     const tools = document.createElement("div");
     tools.id = "pdflionPageTools";
     const className = "toolbarButton viewsManagerButton";
-    const rotateLeft = makeButton("pdflionRotatePagesLeft", className, "Rotate Pages Left");
+    const rotateLeft = makeButton("pdflionRotatePagesLeft", className, t("rotatePagesLeft"));
     rotateLeft.addEventListener("click", () => rotatePages(app, -90));
-    const rotateRight = makeButton("pdflionRotatePagesRight", className, "Rotate Pages Right");
+    const rotateRight = makeButton("pdflionRotatePagesRight", className, t("rotatePagesRight"));
     rotateRight.addEventListener("click", () => rotatePages(app, 90));
-    const insert = makeButton("pdflionOverviewInsertBlankPage", className, "Insert Blank Page");
+    const insert = makeButton("pdflionOverviewInsertBlankPage", className, t("insertBlankPage"));
     insert.addEventListener("click", () => insertBlankPage(app, true));
     const buttons = [rotateLeft, rotateRight, insert];
     for (const button of buttons) button.disabled = true;
@@ -2287,8 +2293,7 @@
   }
 
   /**
-   * A button built like pdf.js's own. overrides.css draws its icon. Its label
-   * is English, like the native menus.
+   * A button built like pdf.js's own. overrides.css draws its icon.
    *
    * @param {string} id
    * @param {string} className
@@ -2524,7 +2529,7 @@
     const pencil = document.getElementById("editorInk");
     const outerContainer = document.getElementById("outerContainer");
     if (!pencil || !outerContainer) return null;
-    const button = makeButton("pdflionEditorEraserButton", "toolbarButton", "Eraser");
+    const button = makeButton("pdflionEditorEraserButton", "toolbarButton", t("eraser"));
     button.disabled = true;
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-haspopup", "true");
@@ -2541,8 +2546,8 @@
       input.addEventListener("change", () => storeEraser({ ...eraser, mode }));
       return { input, label: createElement("label", { className: "pdflionEraserMode", title }, input, text) };
     };
-    const line = modeChoice("line", "Line", "Erases the parts of lines under it");
-    const object = modeChoice("object", "Object", "Erases whole drawings");
+    const line = modeChoice("line", t("eraseLine"), t("eraseLineTitle"));
+    const object = modeChoice("object", t("eraseObject"), t("eraseObjectTitle"));
     const size = createElement("input", {
       type: "range",
       id: "pdflionEraserSize",
@@ -2567,7 +2572,7 @@
         { className: "editorParamsToolbarContainer" },
         createElement(
           "div",
-          { className: "editorParamsSetter", role: "radiogroup", ariaLabel: "Erase" },
+          { className: "editorParamsSetter", role: "radiogroup", ariaLabel: t("erase") },
           line.label,
           object.label,
         ),
@@ -2577,7 +2582,7 @@
           createElement("label", {
             className: "editorParamsLabel",
             htmlFor: "pdflionEraserSize",
-            textContent: "Size",
+            textContent: t("size"),
           }),
           size,
         ),
@@ -3235,7 +3240,7 @@
       const label = createElement("label", {
         className: "editorParamsLabel",
         htmlFor: id,
-        textContent: "Draw Only with a Pen",
+        textContent: t("drawOnlyWithPen"),
       });
       container.append(
         createElement(
@@ -3401,13 +3406,13 @@
    */
   async function saveFavourite(tool) {
     const favourite = readFavourite(tool);
-    if (!favourite) return "Choose a Colour First";
+    if (!favourite) return t("chooseColourFirst");
     await toolSettingsLoaded;
-    if (!favourites) return "Couldn't Save";
-    if (favourites.some((other) => sameFavourite(other, favourite))) return "Already a Favourite";
+    if (!favourites) return t("couldntSave");
+    if (favourites.some((other) => sameFavourite(other, favourite))) return t("alreadyFavourite");
     favourites = [...favourites, favourite];
     window.pdflion.setToolSettings({ favourites });
-    return "Saved";
+    return t("saved");
   }
 
   /**
@@ -3491,7 +3496,7 @@
     const moreButton = makeButton(
       "pdflionFavouritesMoreButton",
       "toolbarButton",
-      "More Favourites",
+      t("moreFavourites"),
     );
     moreButton.disabled = true;
     moreButton.setAttribute("aria-expanded", "false");
@@ -3844,8 +3849,12 @@
    * @returns {string} what it is, such as "Pencil, #1E66F5, 1 pt, 100 %"
    */
   function describeFavourite({ tool, color, thickness, size, opacity }) {
-    const parts = [FAVOURITE_TOOLS[tool].label, color.toUpperCase(), `${size ?? thickness} pt`];
-    if (opacity !== undefined) parts.push(`${Math.round(opacity * 100)} %`);
+    const parts = [
+      FAVOURITE_TOOLS[tool].label,
+      color.toUpperCase(),
+      t("points", { size: size ?? thickness }),
+    ];
+    if (opacity !== undefined) parts.push(t("percent", { percent: Math.round(opacity * 100) }));
     return parts.join(", ");
   }
 
@@ -4092,7 +4101,7 @@
   function addToolsMenu(app) {
     const tools = document.getElementById("editorModeButtons");
     if (!tools) return null;
-    const button = makeButton("pdflionToolsButton", "toolbarButton", "Drawing Tools");
+    const button = makeButton("pdflionToolsButton", "toolbarButton", t("drawingTools"));
     button.disabled = true;
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-haspopup", "true");
@@ -4131,7 +4140,7 @@
     const select = /** @type {HTMLSelectElement | null} */ (document.getElementById("scaleSelect"));
     const container = document.getElementById("scaleSelectContainer");
     if (!select || !container) return null;
-    const button = makeButton("pdflionZoomButton", "toolbarButton", "Zoom");
+    const button = makeButton("pdflionZoomButton", "toolbarButton", t("zoom"));
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-haspopup", "true");
     button.setAttribute("aria-controls", "pdflionZoomMenu");

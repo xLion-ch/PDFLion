@@ -27,6 +27,10 @@
   const api = window.pdflionTabs;
   const strip = /** @type {HTMLElement} */ (document.getElementById("tabs"));
 
+  /** PDFLion's texts (src/shared/texts.js), in the language pdf.js picks too. */
+  const t = /** @type {any} */ (globalThis).PDFLionTexts.translator(navigator.languages);
+  strip.setAttribute("aria-label", t("documents"));
+
   /** @typedef {{ id: string, name: string, home: boolean, edited: boolean, active: boolean }} TabState */
 
   /** @type {TabState[]} */
@@ -83,7 +87,7 @@
     const close = document.createElement("button");
     close.className = "close";
     close.tabIndex = -1;
-    close.title = "Close Tab";
+    close.title = t("closeTab");
     element.append(name, dot, close);
     return element;
   }
@@ -98,13 +102,13 @@
     element.classList.toggle("active", active);
     element.classList.toggle("edited", edited);
     element.setAttribute("aria-selected", String(active));
-    element.setAttribute("aria-label", edited ? `${name}, edited` : name);
+    element.setAttribute("aria-label", edited ? t("edited", { name }) : name);
     element.tabIndex = active ? 0 : -1;
     element.title = name;
     /** @type {HTMLElement} */ (element.querySelector(".name")).textContent = home ? "" : name;
     /** @type {HTMLElement} */ (element.querySelector(".close")).setAttribute(
       "aria-label",
-      `Close ${name}`,
+      t("closeNamed", { name }),
     );
   }
 

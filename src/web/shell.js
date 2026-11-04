@@ -24,7 +24,8 @@
  * service worker (updates.js).
  */
 import { blankPdf, paperSize } from "../shared/blank.js";
-import { CREDITS } from "../shared/credits.js";
+import { CREDITS, creditsHeading } from "../shared/credits.js";
+import { setLanguage, t } from "../shared/i18n.js";
 import { isThumbnail } from "../shared/thumbnail.js";
 import { TabList } from "../shared/tablist.js";
 import {
@@ -67,6 +68,10 @@ import { Library, cleanName, freeName, hasPdfHeader, isDocumentId, isNotInFiles 
 import { parseSession, parseView, viewHash } from "./session.js";
 import { checkForUpdates, followUpdates } from "./updates.js";
 import { PDFJS_VERSION, VERSION } from "./version.js";
+
+// PDFLion's texts in the browser's language, as pdf.js picks its own.
+setLanguage(navigator.languages);
+document.documentElement.lang = navigator.languages[0] ?? "en";
 
 /** @typedef {import("./library.js").DocumentRecord} DocumentRecord */
 /** @typedef {import("../shared/tools.js").ToolSettings} ToolSettings */
@@ -219,7 +224,7 @@ async function start() {
   followKeys();
   followDrops();
   stopPinching();
-  addTab("home", null, "Home", 0, { load: false });
+  addTab("home", null, t("home"), 0, { load: false });
   if (!(await restoreSession())) showHome();
   keepSession();
   followUpdates(registration, { version: VERSION, beforeRestart: saveEverything });
@@ -491,7 +496,7 @@ function render() {
       const home = tab.kind === "home";
       return {
         id,
-        name: home ? "Home" : tab.name,
+        name: home ? t("home") : tab.name,
         home,
         edited: tab.edited,
         active: tab === active,
@@ -583,7 +588,7 @@ function showTabMenu(tab, at) {
   /** @type {import("./dialogs.js").MenuItem[]} */
   const items = [
     {
-      label: "Close Other Tabs",
+      label: t("closeOtherTabs"),
       disabled: others.length === 0,
       action: () => {
         for (const other of others) closeTab(other);
@@ -591,7 +596,7 @@ function showTabMenu(tab, at) {
     },
   ];
   // Home closes only its documents, since it stays.
-  if (tab.kind !== "home") items.unshift({ label: "Close Tab", action: () => closeTab(tab) });
+  if (tab.kind !== "home") items.unshift({ label: t("closeTab"), action: () => closeTab(tab) });
   const { documentId } = tab;
   if (documentId) {
     items.push(
@@ -689,7 +694,7 @@ const VIEWER_MESSAGES = {
     if (!favourite) return;
     const remove = () =>
       updateToolSettings({ favourites: removeFavourite(toolSettings.favourites, favourite) });
-    dialogs.showMenu([{ label: "Remove Favourite", action: remove }], inFrame(tab, x, y));
+    dialogs.showMenu([{ label: t("removeFavourite"), action: remove }], inFrame(tab, x, y));
   },
   closeMenu: () => dialogs.closeMenus(),
   showHome: () => showHome(),
@@ -833,7 +838,7 @@ async function keepFile(file, source) {
   const existing = await library.findBySha256(sha256);
   if (existing) return existing.id;
   const record = await library.add({
-    name: cleanName(file.name) ?? "Untitled.pdf",
+    name: cleanName(file.name) ?? `${t("untitled")}.pdf`,
     blob: new Blob([buffer], { type: "application/pdf" }),
     source,
     sha256,
@@ -855,7 +860,7 @@ async function digest(buffer) {
  * the browser's region, and opens it.
  */
 async function newDocument() {
-  const name = freeName(await library.documents(), "Untitled.pdf");
+  const name = freeName(await library.documents(), `${t("untitled")}.pdf`);
   const record = await library.add({
     name,
     blob: new Blob([blankPdf(paperSize(regionOf(navigator.language)))], {
@@ -1105,11 +1110,11 @@ async function renameDocument(documentId) {
 function showDocumentMenu(documentId, at) {
   dialogs.showMenu(
     [
-      { label: "Open", action: () => openDocuments([documentId]) },
+      { label: t("open"), action: () => openDocuments([documentId]) },
       { label: SHARE, action: () => shareDocument(documentId, null) },
-      { label: "Rename…", action: () => renameDocument(documentId) },
+      { label: t("renameItem"), action: () => renameDocument(documentId) },
       { label: "", separator: true },
-      { label: "Delete…", action: () => deleteDocument(documentId) },
+      { label: t("deleteItem"), action: () => deleteDocument(documentId) },
     ],
     at,
   );
@@ -1125,14 +1130,14 @@ async function showInfoMenu(at) {
   const usage = (await navigator.storage?.estimate?.().catch(() => null))?.usage;
   /** @type {import("./dialogs.js").MenuItem[]} */
   const items = [
-    { label: "About PDFLion", action: showAbout },
-    { label: "Check for Updates…", action: checkForUpdates },
+    { label: t("aboutPdflion"), action: showAbout },
+    { label: t("checkForUpdates"), action: checkForUpdates },
     { label: "", separator: true },
-    { label: "Export…", action: () => exportBackup(backupHost()) },
-    { label: "Import…", action: pickBackup },
+    { label: t("exportItem"), action: () => exportBackup(backupHost()) },
+    { label: t("importItem"), action: pickBackup },
     { label: "", separator: true },
     {
-      label: "Draw Only with a Pen",
+      label: t("drawOnlyWithPen"),
       checked: toolSettings.penOnly,
       action: () => updateToolSettings({ penOnly: !toolSettings.penOnly }),
     },
@@ -1140,14 +1145,18 @@ async function showInfoMenu(at) {
   if (usage !== undefined) {
     items.push(
       { label: "", separator: true },
-      { label: `${formatSize(usage)} of storage used`, info: true },
+      { label: t("storageUsed", { size: formatSize(usage) }), info: true },
     );
   }
   dialogs.showMenu(items, at);
 }
 
 function showAbout() {
-  dialogs.showAbout({ version: VERSION, pdfjsVersion: PDFJS_VERSION, credits: CREDITS });
+  const credits = CREDITS.map(({ heading, components }) => ({
+    heading: creditsHeading(heading),
+    components,
+  }));
+  dialogs.showAbout({ version: VERSION, pdfjsVersion: PDFJS_VERSION, credits });
 }
 
 /**

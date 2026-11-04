@@ -19,6 +19,7 @@ import { isTabsUrl } from "./routes.js";
 import * as tabs from "./tabs.js";
 import { closeOtherTabs, closeTab } from "./unsaved.js";
 import { documentWindows, moveTabToNewWindow, openDocuments } from "./windows.js";
+import { t } from "../shared/i18n.js";
 
 /**
  * Wayland doesn't tell apps where the pointer is outside their windows, so a
@@ -127,7 +128,7 @@ function showContextMenu(tab) {
   const documents = documentCount(win);
   const others = documents - (tabs.isHome(tab) ? 0 : 1);
   const closeOthers = {
-    label: "Close Other Tabs",
+    label: t("closeOtherTabs"),
     enabled: others > 0,
     click: () => closeOtherTabs(tab),
   };
@@ -135,11 +136,11 @@ function showContextMenu(tab) {
   const template = tabs.isHome(tab)
     ? [closeOthers]
     : [
-        { label: "Close Tab", click: () => closeTab(tab) },
+        { label: t("closeTab"), click: () => closeTab(tab) },
         closeOthers,
         { type: "separator" },
         {
-          label: "Move Tab to New Window",
+          label: t("moveTabToNewWindow"),
           enabled: documents > 1,
           click: () => moveTabToNewWindow(tab),
         },

@@ -41,8 +41,21 @@
   const LONG_PRESS_TIME = 500;
   const LONG_PRESS_SLOP = 10;
 
-  /** English, like PDFLion's other own labels. */
-  const relativeTime = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  /** PDFLion's texts (src/shared/texts.js), in the language pdf.js picks too. */
+  const t = /** @type {any} */ (globalThis).PDFLionTexts.translator(navigator.languages);
+  document.documentElement.lang = t.locale;
+  document.title = t("home");
+  // The page's own texts, which home.html names by their ids.
+  for (const element of document.querySelectorAll("[data-text]")) {
+    element.textContent = t(/** @type {HTMLElement} */ (element).dataset.text);
+  }
+  for (const element of document.querySelectorAll("[data-label]")) {
+    const label = t(/** @type {HTMLElement} */ (element).dataset.label);
+    element.setAttribute("title", label);
+    element.setAttribute("aria-label", label);
+  }
+
+  const relativeTime = new Intl.RelativeTimeFormat(t.locale, { numeric: "auto" });
 
   /** The units sizes are given in, such as `1.2 MB`, each with its size in bytes. */
   const SIZE_UNITS = /** @type {[string, number][]} */ ([
@@ -132,8 +145,8 @@
     const opened = doc.openedAt === null ? "" : timeAgo(doc.openedAt);
     const time = element("span", "time", opened);
     const marks = element("span", "marks", "");
-    if (doc.open) marks.append(element("span", "mark", "Open"));
-    if (doc.missing) marks.append(element("span", "mark missing", "Missing"));
+    if (doc.open) marks.append(element("span", "mark", t("markOpen")));
+    if (doc.missing) marks.append(element("span", "mark missing", t("markMissing")));
     if (doc.status) marks.append(element("span", "mark status", doc.status));
 
     button.append(preview, name, folder, time, marks);
@@ -142,10 +155,10 @@
       "aria-label",
       [
         doc.name,
-        doc.folder === undefined ? where : `in ${doc.folder}`,
-        opened && `opened ${opened}`,
-        doc.open && "open in a tab",
-        doc.missing && "missing",
+        doc.folder === undefined ? where : t("inFolder", { folder: doc.folder }),
+        opened && t("openedAgo", { time: opened }),
+        doc.open && t("openInTab"),
+        doc.missing && t("missing"),
         doc.status,
       ]
         .filter(Boolean)
@@ -174,7 +187,7 @@
    */
   function formatSize(bytes) {
     const [unit, size] = SIZE_UNITS.find(([, size]) => bytes >= size) ?? SIZE_UNITS[2];
-    const format = new Intl.NumberFormat("en", {
+    const format = new Intl.NumberFormat(t.locale, {
       style: "unit",
       unit,
       unitDisplay: "short",
@@ -194,7 +207,7 @@
         return relativeTime.format(-Math.floor(elapsed / length), unit);
       }
     }
-    return "just now";
+    return t("justNow");
   }
 
   /**

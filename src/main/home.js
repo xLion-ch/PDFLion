@@ -32,16 +32,17 @@ import { isHomeUrl, thumbnailUrl } from "./routes.js";
 import * as tabs from "./tabs.js";
 import { saveThumbnail, thumbnailVersion } from "./thumbnails.js";
 import { newDocument, openDocuments, showOpenPanel } from "./windows.js";
+import { t } from "../shared/i18n.js";
 
 const isMac = process.platform === "darwin";
 const isLinux = process.platform === "linux";
 
-/** The context menu's item that shows the file where it is. */
+/** The id of the context menu's item that shows the file where it is. */
 const SHOW_IN_FOLDER = isMac
-  ? "Show in Finder"
+  ? "showInFinder"
   : process.platform === "win32"
-    ? "Show in Explorer"
-    : "Show in Files";
+    ? "showInExplorer"
+    : "showInFiles";
 
 /**
  * @typedef {object} HomeDocument what Home shows of a recent document
@@ -174,10 +175,10 @@ function showContextMenu(tab, entry) {
   const win = tabs.windowOf(tab);
   if (!win) return;
   Menu.buildFromTemplate([
-    { label: "Open", click: () => openRecent(tab, entry) },
-    { label: SHOW_IN_FOLDER, click: () => shell.showItemInFolder(entry.path) },
+    { label: t("open"), click: () => openRecent(tab, entry) },
+    { label: t(SHOW_IN_FOLDER), click: () => shell.showItemInFolder(entry.path) },
     { type: "separator" },
-    { label: "Remove from Recent", click: () => removeRecentDocument(entry.id) },
+    { label: t("removeFromRecent"), click: () => removeRecentDocument(entry.id) },
   ]).popup({ window: win });
 }
 

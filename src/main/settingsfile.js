@@ -31,10 +31,12 @@ import {
 import { writeFileAtomic } from "./documents.js";
 import { currentToolSettings, updateToolSettings } from "./toolsettings.js";
 import { automaticChecks, setAutomaticChecks } from "./updates.js";
+import { t } from "../shared/i18n.js";
 
 const isLinux = process.platform === "linux";
 
-const FILTERS = [{ name: "PDFLion Settings", extensions: ["json"] }];
+/** @returns {Electron.FileFilter[]} */
+const filters = () => [{ name: t("settingsFile"), extensions: ["json"] }];
 
 /**
  * Asks where to save the settings, and writes them there.
@@ -45,7 +47,7 @@ export async function exportSettings() {
   const win = BrowserWindow.getFocusedWindow();
   const options = {
     defaultPath: path.join(app.getPath("documents"), SETTINGS_FILE_NAME),
-    filters: FILTERS,
+    filters: filters(),
     properties: /** @type {const} */ (["createDirectory"]),
   };
   const { canceled, filePath } = await (win
@@ -75,7 +77,7 @@ export async function exportSettings() {
  */
 export async function importSettings() {
   const win = BrowserWindow.getFocusedWindow();
-  const options = { properties: /** @type {const} */ (["openFile"]), filters: FILTERS };
+  const options = { properties: /** @type {const} */ (["openFile"]), filters: filters() };
   const { canceled, filePaths } = await (win
     ? dialog.showOpenDialog(win, options)
     : dialog.showOpenDialog(options));

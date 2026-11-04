@@ -8,6 +8,7 @@ import {
   expect,
   homeFrame,
   openApp,
+  openAppExplained,
   openFromHome,
   readLibrary,
   stripTabs,
@@ -194,4 +195,17 @@ test("links in documents open only for http, https and mailto", async ({ page, d
   expect(opened).toBe(0);
   await page.waitForTimeout(500);
   expect(page.context().pages()).toHaveLength(2);
+});
+
+test.describe("in French", () => {
+  test.use({ locale: "fr-FR" });
+
+  test("PDFLion's own texts follow the browser's language, as pdf.js's do", async ({ page }) => {
+    const home = await openAppExplained(page);
+    await expect(home.locator("#empty .message")).toHaveText("Aucun document récent");
+    await expect(page.locator("#tabs")).toHaveAttribute("aria-label", "Documents");
+    await expect(page.locator("#tabs .tab.home")).toHaveAttribute("title", "Accueil");
+    await home.locator("#info").click();
+    await expect(page.getByRole("menuitem", { name: "À propos de PDFLion" })).toBeVisible();
+  });
 });

@@ -18,6 +18,7 @@ import * as documents from "./documents.js";
 import { homePreloadPath, preloadPath } from "./paths.js";
 import { addRecentDocument } from "./recent.js";
 import { HOME_URL, isHomeUrl, isViewerUrl, viewerUrl } from "./routes.js";
+import { t } from "../shared/i18n.js";
 
 const isMac = process.platform === "darwin";
 
@@ -28,7 +29,6 @@ const STRIP_HEIGHT = 36;
 const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 
 /** What the strip and the window's title call a home tab. */
-const HOME_NAME = "Home";
 
 /**
  * @typedef {object} Tab
@@ -357,7 +357,7 @@ export function isUntitled(tab) {
  *   file's, the untitled document's, or Home
  */
 export function documentName(tab) {
-  if (tab.token === null) return HOME_NAME;
+  if (tab.token === null) return t("home");
   const file = documentFile(tab);
   return file ? path.basename(file) : (documents.untitled(tab.token)?.name ?? "");
 }
@@ -415,7 +415,8 @@ export function onTabsChange(listener) {
 function untitledName() {
   const names = new Set([...tabs.values()].map(documentName));
   for (let number = 1; ; number++) {
-    const name = number === 1 ? "Untitled.pdf" : `Untitled ${number}.pdf`;
+    const untitled = t("untitled");
+    const name = number === 1 ? `${untitled}.pdf` : `${untitled} ${number}.pdf`;
     if (!names.has(name)) return name;
   }
 }

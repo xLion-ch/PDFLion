@@ -6,6 +6,7 @@
  * window, and a single process shows every document.
  */
 import { app, BrowserWindow } from "electron";
+import { setLanguage } from "../shared/i18n.js";
 import { commandLineFiles, secondInstanceFiles } from "./arguments.js";
 import { handleHome } from "./home.js";
 import { handleIpc } from "./ipc.js";
@@ -84,6 +85,9 @@ function start() {
   });
 
   app.whenReady().then(() => {
+    // The pages pick theirs from navigator.languages, which is this one, as
+    // pdf.js does for the viewer.
+    setLanguage([app.getLocale()]);
     handlePermissions();
     handleProtocol();
     handleIpc();

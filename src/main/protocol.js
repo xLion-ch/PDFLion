@@ -15,7 +15,7 @@ import { net, protocol } from "electron";
 import { PAGE_CSP, VIEWER_CSP } from "../shared/csp.js";
 import { answerRange } from "../shared/ranges.js";
 import * as documents from "./documents.js";
-import { homeRoot, pdfLibRoot, pdflionRoot, tabsRoot, viewerRoot } from "./paths.js";
+import { homeRoot, pdfLibRoot, pdflionRoot, sharedRoot, tabsRoot, viewerRoot } from "./paths.js";
 import { SCHEME, docToken, resolveUrl, thumbnailId } from "./routes.js";
 import { thumbnailFile } from "./thumbnails.js";
 
@@ -30,6 +30,7 @@ const mounts = {
   pdflion: pdflionRoot,
   tabs: tabsRoot,
   home: homeRoot,
+  shared: sharedRoot,
   lib: pdfLibRoot,
 };
 const viewerHtml = path.join(viewerRoot, "web", "viewer.html");
@@ -39,11 +40,12 @@ const homeHtml = path.join(homeRoot, "home.html");
 /**
  * Added before `</head>` of viewer.html. The classic scripts run in order,
  * before the viewer's deferred module scripts, so bridge.js can use what
- * geometry.js defines. overrides.css comes after viewer.css.
+ * geometry.js and texts.js define. overrides.css comes after viewer.css.
  */
 const VIEWER_INJECTION = [
   '<link rel="stylesheet" href="/pdflion/overrides.css">',
   '<script src="/pdflion/geometry.js"></script>',
+  '<script src="/shared/texts.js"></script>',
   '<script src="/pdflion/bridge.js"></script>',
 ].join("");
 

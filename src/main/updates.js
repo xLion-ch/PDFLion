@@ -38,6 +38,7 @@ import {
   updateReady,
   upToDate,
 } from "../shared/wording.js";
+import { t } from "../shared/i18n.js";
 import { getState, setState } from "./state.js";
 import { reviewUnsavedChanges } from "./unsaved.js";
 
@@ -55,12 +56,23 @@ const STATE_KEY = "updates";
 /**
  * How this copy updates, for the texts about it: where Check for Updates… is,
  * in the app menu on macOS, and whether installing asks for a password.
- * @type {import("../shared/wording.js").UpdateHost}
+ * @returns {import("../shared/wording.js").UpdateHost}
  */
-const HOST = {
-  checkForUpdates: isMac ? "PDFLion > Check for Updates…" : "Help > Check for Updates…",
+const host = () => ({
+  checkForUpdates: t("menuPath", {
+    menu: isMac ? app.name : withoutAccessKeys(t("menuHelp")),
+    item: withoutAccessKeys(t("menuCheckForUpdates")),
+  }),
   needsPassword: isLinux,
-};
+});
+
+/**
+ * @param {string} label a menu item's
+ * @returns {string} it as macOS shows it, without access keys
+ */
+function withoutAccessKeys(label) {
+  return label.replace(/&(&?)/g, "$1");
+}
 
 /**
  * Squirrel.Mac's error for an app it can't replace: on a disk image, or in
@@ -72,11 +84,12 @@ const READ_ONLY_VOLUME = /read-only volume/i;
  * The ready prompt's buttons in each platform's order, as the save prompt's in
  * unsaved.js: Restart Now where Save goes, Later where Cancel goes.
  */
-const BUTTONS = isMac
-  ? [RESTART_NOW, LATER, RELEASE_NOTES]
-  : isWindows
-    ? [RESTART_NOW, RELEASE_NOTES, LATER]
-    : [RELEASE_NOTES, LATER, RESTART_NOW];
+const buttons = () =>
+  isMac
+    ? [RESTART_NOW, LATER, RELEASE_NOTES]
+    : isWindows
+      ? [RESTART_NOW, RELEASE_NOTES, LATER]
+      : [RELEASE_NOTES, LATER, RESTART_NOW];
 
 /** An app-update.yml for a local feed, which only the dev app reads. */
 const testConfig = app.isPackaged ? "" : app.commandLine.getSwitchValue("pdflion-update-config");
@@ -311,7 +324,7 @@ function whenSquirrelReady() {
  */
 function squirrelFailed(version, error) {
   if (READ_ONLY_VOLUME.test(String(error?.message))) {
-    return { type: "warning", ...updateOnReadOnlyVolume(version, HOST) };
+    return { type: "warning", ...updateOnReadOnlyVolume(version, host()) };
   }
   return { type: "warning", ...updateNotInstallable(version) };
 }
@@ -326,11 +339,12 @@ async function offer(version) {
   if (offering || restarting) return;
   offering = true;
   let choice;
+  const BUTTONS = buttons();
   try {
     do {
       const { response } = await showMessage({
         type: "info",
-        ...updateReady(version, HOST),
+        ...updateReady(version, host()),
         buttons: BUTTONS,
         defaultId: BUTTONS.indexOf(RESTART_NOW),
         cancelId: BUTTONS.indexOf(LATER),
@@ -368,7 +382,7 @@ async function restart(version) {
   }
   if (await install()) return;
   restarting = false;
-  await showMessage({ type: "warning", ...updateNotInstalled(version, HOST) });
+  await showMessage({ type: "warning", ...updateNotInstalled(version, host()) });
   // On Windows and Linux, the save prompts may have closed every window.
   if (!isMac && BrowserWindow.getAllWindows().length === 0) app.quit();
 }

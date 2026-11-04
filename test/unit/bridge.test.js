@@ -8,6 +8,7 @@ import vm from "node:vm";
 const SRC = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..", "src");
 const BRIDGE = fs.readFileSync(path.join(SRC, "viewer", "bridge.js"), "utf8");
 const GEOMETRY = fs.readFileSync(path.join(SRC, "viewer", "geometry.js"), "utf8");
+const TEXTS = fs.readFileSync(path.join(SRC, "shared", "texts.js"), "utf8");
 
 /** Lets pending promises and stream reads settle. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -980,7 +981,9 @@ function loadBridge({
     },
   };
   page.parent = embedded ? embedder : page;
+  page.navigator ??= { languages: ["en-US"] };
   vm.runInNewContext(GEOMETRY, page, { filename: "geometry.js" });
+  vm.runInNewContext(TEXTS, page, { filename: "texts.js" });
   vm.runInNewContext(BRIDGE, page, { filename: "bridge.js" });
 
   return {
@@ -1169,7 +1172,7 @@ describe("bridge.js commands", () => {
 
   it("knows every command the menu sends", async () => {
     const menu = fs.readFileSync(path.join(SRC, "main", "menu.js"), "utf8");
-    const commands = [...menu.matchAll(/commandItem\(\s*"[^"]*",\s*"(\w+)"/g)].map(([, c]) => c);
+    const commands = [...menu.matchAll(/commandItem\(\s*t\("[^"]*"\),\s*"(\w+)"/g)].map(([, c]) => c);
     assert.ok(commands.length >= 10, `found only ${commands}`);
     const bridge = loadBridge();
     await bridge.load();
@@ -2900,7 +2903,7 @@ describe("bridge.js Save as Favourite", () => {
     const refused = loadBridge();
     refused.pdflion.getToolSettings = async () => null;
     await refused.load();
-    assert.equal(await save(refused, "Ink"), "Couldn't Save");
+    assert.equal(await save(refused, "Ink"), "Couldn’t Save");
     assert.deepEqual(refused.pdflion.storedToolSettings, []);
   });
 
