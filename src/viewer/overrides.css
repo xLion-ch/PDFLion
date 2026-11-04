@@ -227,6 +227,77 @@
   }
 }
 
+/*
+ * The zoom button, in place of pdf.js's zoom select (bridge.js), and its
+ * menu's items: a named zoom's icon, or the percentage as text.
+ */
+#scaleSelectContainer {
+  display: none !important;
+}
+
+:is(#pdflionZoomButton, .pdflionZoomItem) {
+  &[data-zoom="auto"]::before {
+    mask-image: url(/pdflion/icons/fit_screen.svg);
+  }
+
+  &[data-zoom="page-actual"]::before {
+    mask-image: url(/pdflion/icons/crop_free.svg);
+  }
+
+  &[data-zoom="page-fit"]::before {
+    mask-image: url(/pdflion/icons/fit_page_height.svg);
+  }
+
+  &[data-zoom="page-width"]::before {
+    mask-image: url(/pdflion/icons/fit_page_width.svg);
+  }
+}
+
+#pdflionZoom:has(> .pdflionZoomPercent) {
+  aspect-ratio: auto;
+}
+
+#pdflionZoomButton.pdflionZoomPercent {
+  aspect-ratio: auto;
+  min-width: 40px;
+  padding-inline: 6px;
+
+  &::before {
+    display: none;
+  }
+
+  > span {
+    width: auto;
+    height: auto;
+    overflow: visible;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* The percentages keep the named zooms' text aligned, without an icon. */
+.pdflionZoomItem:not([data-zoom="auto"], [data-zoom="page-actual"], [data-zoom="page-fit"], [data-zoom="page-width"])::before {
+  visibility: hidden;
+}
+
+.pdflionZoomItem[aria-checked="true"] {
+  background-color: var(--toggled-btn-bg-color);
+}
+
+#pdflionZoomMenu {
+  z-index: 30001;
+}
+
+#pdflionZoomMenu .menuContainer {
+  min-width: 180px;
+}
+
+@media all and (max-width: 560px) {
+  #pdflionZoom {
+    display: none;
+  }
+}
+
 /* What the narrowest steps move into the ⋮ menu and the tools' menu. */
 #pdflionSecondaryHome::before {
   mask-image: url(/pdflion/icons/home.svg);
@@ -772,7 +843,7 @@
 }
 
 /* From viewer.css's 560px step: the zoom menu goes, and the zoom buttons stay. */
-:where(#toolbarContainer.pdflionToolbarNarrow) #scaleSelectContainer {
+:where(#toolbarContainer.pdflionToolbarNarrow) #pdflionZoom {
   display: none;
 }
 

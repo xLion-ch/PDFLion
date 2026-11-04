@@ -550,6 +550,20 @@
   let toolsMenu = null;
 
   /**
+   * @typedef {object} ZoomMenu what addZoomMenu() adds in place of pdf.js's
+   *   zoom select: a narrow button, which shows the zoom's icon or its
+   *   percentage, with a menu of the select's choices
+   * @property {HTMLButtonElement} button
+   * @property {HTMLElement} items the menu's items' container
+   */
+
+  /** @type {ZoomMenu | null} */
+  let zoomMenu = null;
+
+  /** The zoom select's named choices, which the zoom button shows as icons. */
+  const ZOOM_NAMES = ["auto", "page-actual", "page-fit", "page-width"];
+
+  /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
    * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
@@ -660,6 +674,7 @@
     favouritesBar = addFavouritesBar();
     undoButtons = addUndoButtons(app);
     toolsMenu = addToolsMenu(app);
+    zoomMenu = addZoomMenu(app);
     addShareButtons(app);
     addSaveStatus(app);
     addAppMenuItems(app);
@@ -678,6 +693,7 @@
       followPen(app);
       followFavourites(app);
       followToolsMenu(app);
+      followZoomMenu(app);
       followEditorChanges(app);
       app.eventBus.on("documentloaded", () => {
         trackEdits(app);
@@ -3969,6 +3985,109 @@
     button.addEventListener("click", () => fillToolsMenu(app));
     button.addEventListener("keydown", () => fillToolsMenu(app));
     return { button, items, closeMenu: followMenu(button, menu, items) };
+  }
+
+  /**
+   * Adds a narrow button in place of pdf.js's zoom select, #scaleSelect,
+   * which overrides.css hides. The button shows an icon for a named zoom,
+   * such as Page Width, and the percentage for any other. Its menu lists the
+   * select's choices, in pdf.js's words, the named ones with their icons, and
+   * choosing one picks it in the select, whose change pdf.js follows.
+   *
+   * @param {any} app
+   * @returns {ZoomMenu | null}
+   */
+  function addZoomMenu(app) {
+    const select = /** @type {HTMLSelectElement | null} */ (document.getElementById("scaleSelect"));
+    const container = document.getElementById("scaleSelectContainer");
+    if (!select || !container) return null;
+    const button = makeButton("pdflionZoomButton", "toolbarButton", "Zoom");
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-haspopup", "true");
+    button.setAttribute("aria-controls", "pdflionZoomMenu");
+    const items = createElement("div", { className: "menuContainer", role: "menu" });
+    const menu = createElement(
+      "div",
+      { id: "pdflionZoomMenu", className: "editorParamsToolbar hidden doorHanger menu" },
+      items,
+    );
+    container.after(
+      createElement(
+        "div",
+        { id: "pdflionZoom", className: "toolbarButtonWithContainer" },
+        button,
+        menu,
+      ),
+    );
+    // Before followMenu()'s own listeners, which open it.
+    button.addEventListener("click", () => fillZoomMenu(app));
+    button.addEventListener("keydown", () => fillZoomMenu(app));
+    followMenu(button, menu, items);
+    return { button, items };
+  }
+
+  /**
+   * Fills the zoom menu with the zoom select's choices, the chosen one
+   * checked. pdf.js translates their labels, so they're read each time.
+   *
+   * @param {any} app
+   */
+  function fillZoomMenu(app) {
+    const select = /** @type {HTMLSelectElement | null} */ (document.getElementById("scaleSelect"));
+    if (!zoomMenu || !select) return;
+    const entries = [...select.options]
+      .filter((option) => !option.hidden && !option.disabled)
+      .map((option) => {
+        const label = option.textContent?.trim() || option.value;
+        const item = makeButton(
+          `pdflionZoom-${option.value}`,
+          "toolbarButton labeled pdflionZoomItem",
+          label,
+        );
+        item.setAttribute("role", "menuitemradio");
+        item.setAttribute("aria-checked", String(option.selected));
+        item.setAttribute("data-zoom", option.value);
+        item.tabIndex = -1;
+        item.addEventListener("click", () => {
+          select.value = option.value;
+          select.dispatchEvent(new Event("change"));
+          app.pdfViewer?.focus();
+        });
+        return item;
+      });
+    zoomMenu.items.replaceChildren(...entries);
+  }
+
+  /**
+   * Keeps the zoom button showing the zoom: a named zoom's icon, and else
+   * the percentage, as pdf.js shows it in its select.
+   *
+   * @param {any} app
+   */
+  function followZoomMenu(app) {
+    const show = () => {
+      if (!zoomMenu) return;
+      const { button } = zoomMenu;
+      const value = app.pdfViewer?.currentScaleValue;
+      const scale = app.pdfViewer?.currentScale;
+      const named = typeof value === "string" && ZOOM_NAMES.includes(value);
+      const percent = `${Math.round((scale || 1) * 100)}%`;
+      const select = /** @type {HTMLSelectElement | null} */ (
+        document.getElementById("scaleSelect")
+      );
+      const label = named
+        ? select?.selectedOptions[0]?.textContent?.trim() || value
+        : percent;
+      if (named) button.setAttribute("data-zoom", value);
+      else button.removeAttribute("data-zoom");
+      button.classList.toggle("pdflionZoomPercent", !named);
+      const text = /** @type {HTMLElement} */ (button.firstElementChild);
+      text.textContent = named ? label : percent;
+      button.title = named ? `${label} (${percent})` : percent;
+    };
+    app.eventBus.on("scalechanging", () => show());
+    app.eventBus.on("pagesinit", () => show());
+    show();
   }
 
   /**
