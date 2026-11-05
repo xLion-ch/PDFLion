@@ -198,6 +198,15 @@ let sessionTimer = null;
 /** When the session is next stored, in ms. */
 let sessionDue = 0;
 
+/**
+ * How long registering the service worker may take: fetching sw.js and the
+ * modules it imports, before it installs, in ms.
+ */
+const REGISTER_TIMEOUT = 15_000;
+
+/** Marks, for this tab, the reload after registering stalled. */
+const RELOADED_KEY = "pdflion-reloaded-for-service-worker";
+
 const frames = /** @type {HTMLElement} */ (document.getElementById("frames"));
 
 // The shell runs only as the page itself, never in another's frame, since a
@@ -260,11 +269,7 @@ async function controlledByServiceWorker() {
   const controlled = new Promise((resolve) =>
     serviceWorker.addEventListener("controllerchange", resolve, { once: true }),
   );
-  const registration = await serviceWorker.register(new URL("sw.js", BASE), {
-    type: "module",
-    scope: BASE.pathname,
-    updateViaCache: "none",
-  });
+  const registration = await registered(serviceWorker);
   if (serviceWorker.controller) return registration;
   // Without an active worker, the first install, which may fail.
   const { installing } = registration;
@@ -287,6 +292,40 @@ async function controlledByServiceWorker() {
     failed,
   ]);
   return registration;
+}
+
+/**
+ * Registers the service worker. WebKit has been seen to leave register()
+ * unsettled on a first visit, with nothing fetched after sw.js, so a
+ * registration that stalls reloads the page once, and then fails.
+ *
+ * @param {ServiceWorkerContainer} serviceWorker
+ * @returns {Promise<ServiceWorkerRegistration>}
+ * @throws {DownloadError} if it stalls after the reload too
+ */
+async function registered(serviceWorker) {
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer;
+  const stalled = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), REGISTER_TIMEOUT);
+  });
+  const registration = await Promise.race([
+    serviceWorker.register(new URL("sw.js", BASE), {
+      type: "module",
+      scope: BASE.pathname,
+      updateViaCache: "none",
+    }),
+    stalled,
+  ]).finally(() => clearTimeout(timer));
+  const reloaded = sessionStorage.getItem(RELOADED_KEY) !== null;
+  sessionStorage.removeItem(RELOADED_KEY);
+  if (registration) return /** @type {ServiceWorkerRegistration} */ (registration);
+  if (reloaded) throw new DownloadError("Registering the service worker stalled.");
+  console.warn("Registering the service worker stalled, so PDFLion reloads.");
+  sessionStorage.setItem(RELOADED_KEY, "");
+  location.reload();
+  // The page goes.
+  return new Promise(() => {});
 }
 
 // ---------------------------------------------------------------------------
