@@ -8,6 +8,7 @@ import vm from "node:vm";
 const SRC = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..", "src");
 const BRIDGE = fs.readFileSync(path.join(SRC, "viewer", "bridge.js"), "utf8");
 const GEOMETRY = fs.readFileSync(path.join(SRC, "viewer", "geometry.js"), "utf8");
+const TEXTS = fs.readFileSync(path.join(SRC, "shared", "texts.js"), "utf8");
 
 /** Lets pending promises and stream reads settle. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -448,6 +449,8 @@ function loadBridge({
     },
   };
   const viewerContainer = Object.assign(new Element("div"), { id: "viewerContainer" });
+  /** The thumbnails' container, whose clicks pdf.js stops. */
+  const thumbnailsView = Object.assign(new Element("div"), { id: "thumbnailsView" });
   /**
    * pdf.js's drawing tools' group, which the stand-in toolbar shows as
    * coming before them, rather than holding them.
@@ -559,6 +562,7 @@ function loadBridge({
       if (selector === CHECKED_THUMBNAIL && this.checked) return {};
       if (selector === DRAGGING_PAGES && this.dragging) return {};
       if (selector === CURRENT_THUMBNAIL) return currentThumbnail;
+      if (selector === THUMBNAILS) return thumbnailsView;
       if (selector === HIGHLIGHT_SWATCH && this.highlightColor) {
         const color = this.highlightColor;
         return { getAttribute: (/** @type {string} */ name) => (name === "data-color" ? color : null) };
@@ -977,7 +981,9 @@ function loadBridge({
     },
   };
   page.parent = embedded ? embedder : page;
+  page.navigator ??= { languages: ["en-US"] };
   vm.runInNewContext(GEOMETRY, page, { filename: "geometry.js" });
+  vm.runInNewContext(TEXTS, page, { filename: "texts.js" });
   vm.runInNewContext(BRIDGE, page, { filename: "bridge.js" });
 
   return {
@@ -1099,6 +1105,7 @@ function loadBridge({
     pencilButton,
     uiManager,
     viewerContainer,
+    thumbnailsView,
     optionBoxes,
     params,
     document,
@@ -1165,7 +1172,7 @@ describe("bridge.js commands", () => {
 
   it("knows every command the menu sends", async () => {
     const menu = fs.readFileSync(path.join(SRC, "main", "menu.js"), "utf8");
-    const commands = [...menu.matchAll(/commandItem\(\s*"[^"]*",\s*"(\w+)"/g)].map(([, c]) => c);
+    const commands = [...menu.matchAll(/commandItem\(\s*t\("[^"]*"\),\s*"(\w+)"/g)].map(([, c]) => c);
     assert.ok(commands.length >= 10, `found only ${commands}`);
     const bridge = loadBridge();
     await bridge.load();
@@ -1941,17 +1948,21 @@ describe("bridge.js page overview", () => {
     assert.ok(!isOpen(bridge));
   });
 
-  it("closes with a double-click on a page, which went to the page", async () => {
+  it("closes with a click on a page, once pdf.js went to the page", async () => {
     const bridge = loadBridge();
     await bridge.load();
     bridge.run("pageOverview");
-    bridge.fire("dblclick", { target: element(THUMBNAILS) });
+    const click = (/** @type {any} */ target) => {
+      bridge.thumbnailsView.dispatchEvent({ type: "click", target });
+      return new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    await click(element(THUMBNAILS));
     assert.ok(isOpen(bridge));
-    bridge.fire("dblclick", { target: element(THUMBNAIL_IMAGE) });
+    await click(element(THUMBNAIL_IMAGE));
     assert.ok(!isOpen(bridge));
-    // Closed, a double-click on a thumbnail in the sidebar leaves it open.
+    // Closed, a click on a thumbnail in the sidebar leaves it open.
     bridge.app.viewsManager.visibleView = 1;
-    bridge.fire("dblclick", { target: element(THUMBNAIL_IMAGE) });
+    await click(element(THUMBNAIL_IMAGE));
     assert.equal(bridge.app.viewsManager.visibleView, 1);
   });
 
@@ -2412,7 +2423,25 @@ describe("bridge.js eraser", () => {
       added: true,
       data,
       serialize: (/** @type {boolean} */ isForCopying) =>
-        isForCopying && editorType !== "highlight" ? data : null,
+        isForCopying && !editorType.endsWith("highlight") ? data : null,
+      // A highlight's place, as pdf.js's outlines give it: a free highlight's
+      // line, or a text highlight's boxes, of four corners each.
+      ...(editorType === "highlight" && {
+        _drawOutlines: {
+          isFree: true,
+          serialize: () => ({ points: data.paths.points }),
+        },
+        _drawingOptions: { thickness: data.thickness },
+        getPDFRect: () => data.rect,
+      }),
+      ...(editorType === "texthighlight" && {
+        editorType: "highlight",
+        _drawOutlines: {
+          isFree: false,
+          serializeQuadPoints: () =>
+            data.paths.points.flatMap(([x1, y1, x2, y2]) => [x1, y2, x2, y2, x1, y1, x2, y1]),
+        },
+      }),
       remove() {
         calls.push(["remove", id]);
         editors.splice(editors.indexOf(this), 1);
@@ -2521,18 +2550,21 @@ describe("bridge.js eraser", () => {
   /** @param {any[]} calls @returns {any[]} the data each editor was built from */
   const built = (calls) => named(calls, "deserialize").map(([, data]) => data);
 
-  it("erases the drawings it touches, whole, only Pencil's, as one step to undo", async () => {
+  it("erases the drawings and highlights it touches, whole, but no signature, as one step to undo", async () => {
     const bridge = loadBridge();
     const page = await erasing(bridge, [
       { id: "crossed", editorType: "ink", strokes: [[100, 700, 300, 700]] },
       { id: "missed", editorType: "ink", strokes: [[100, 500, 300, 500]] },
       { id: "signature", editorType: "signature", strokes: [[100, 700, 300, 700]] },
       { id: "highlight", editorType: "highlight", strokes: [[100, 700, 300, 700]] },
+      // A box from x 190 to 210, y 640 to 660, which the drag passes through.
+      { id: "text", editorType: "texthighlight", strokes: [[190, 640, 210, 660]] },
+      { id: "far text", editorType: "texthighlight", strokes: [[400, 640, 420, 660]] },
     ]);
     // Down from above the strokes at y 700, then on across them.
     const down = await page.drag([[200, 50], [200, 150]], false);
     assert.ok(down.stopped && down.prevented, "pdf.js gets no press to draw with");
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text"]);
     assert.deepEqual(page.commands, [], "not before the drag ends");
     // Another pointer's events are left alone.
     assert.ok(!bridge.fire("pointerup", { target: down.target, pointerId: 8 }).stopped);
@@ -2542,21 +2574,21 @@ describe("bridge.js eraser", () => {
     const [{ cmd, undo, mustExec }] = page.commands;
     assert.equal(mustExec, false);
     undo();
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight", "crossed"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text", "crossed", "highlight", "text"]);
     cmd();
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text"]);
     assert.deepEqual(built(bridge.calls), []);
     // The drag is over.
     bridge.fire("pointermove", { target: down.target, pointerId: 7, clientX: 200, clientY: 300 });
     await settleAll();
-    assert.deepEqual(page.ids(), ["missed", "signature", "highlight"]);
+    assert.deepEqual(page.ids(), ["missed", "signature", "far text"]);
 
     // A drag that erases nothing is no step to undo.
     await page.drag([[200, 400], [200, 450]]);
     assert.equal(page.commands.length, 1);
   });
 
-  it("cuts strokes in Line mode, and shows what's left, as one step to undo", async () => {
+  it("cuts strokes in Line mode, and shows each stroke left as a drawing, as one step to undo", async () => {
     const bridge = loadBridge();
     const page = await erasing(
       bridge,
@@ -2567,36 +2599,39 @@ describe("bridge.js eraser", () => {
     // every 5, passes 2 points off at the closest. It reaches its radius, 10,
     // and half the stroke's thickness, 1, from there.
     await page.drag([[200, 50], [200, 150]], false);
-    const [first] = built(bridge.calls);
+    const first = built(bridge.calls);
     const across = Math.sqrt(11 ** 2 - 2 ** 2);
     const round = (/** @type {number} */ value) => Math.round(value * 100) / 100;
     assert.deepEqual(
-      first.paths.points.map((/** @type {Float32Array} */ points) => [...points].map(round)),
+      first.map((drawing) => [
+        ...drawing.paths.points.map((/** @type {Float32Array} */ points) => [...points].map(round)),
+      ]),
       [
-        [100, 700, round(200 - across), 700],
-        [round(200 + across), 700, 300, 700],
-        [100, 500, 300, 500],
+        [[100, 700, round(200 - across), 700]],
+        [[round(200 + across), 700, 300, 700]],
+        [[100, 500, 300, 500]],
       ],
     );
-    assert.ok(first.paths.points.every((/** @type {any} */ points) => points.constructor.name === "Float32Array"));
-    assert.deepEqual(
-      { ...first, paths: undefined },
-      { annotationType: 15, color: [255, 0, 0], thickness: 2, opacity: 0.5, paths: undefined, rect: [1, 2, 3, 4], rotation: 0 },
-    );
-    assert.deepEqual(page.ids(), ["built 1"]);
+    for (const drawing of first) {
+      assert.ok(drawing.paths.points.every((/** @type {any} */ points) => points.constructor.name === "Float32Array"));
+      assert.deepEqual(
+        { ...drawing, paths: undefined },
+        { annotationType: 15, color: [255, 0, 0], thickness: 2, opacity: 0.5, paths: undefined, rect: [1, 2, 3, 4], rotation: 0 },
+      );
+    }
+    assert.deepEqual(page.ids(), ["built 1", "built 2", "built 3"]);
 
     // On to the right, across the first stroke again, in a later frame.
     await page.drag([[260, 150], [260, 50]]);
-    assert.equal(built(bridge.calls).length, 2);
-    assert.equal(built(bridge.calls)[1].paths.points.length, 4);
-    assert.deepEqual(page.ids(), ["built 2"]);
+    assert.equal(built(bridge.calls).length, 7);
+    assert.deepEqual(page.ids(), ["built 4", "built 5", "built 6", "built 7"]);
     // pdf.js would make each new drawing a step to undo.
     assert.equal(page.commands.length, 1);
     const [{ cmd, undo }] = page.commands;
     undo();
     assert.deepEqual(page.ids(), ["long"]);
     cmd();
-    assert.deepEqual(page.ids(), ["built 2"]);
+    assert.deepEqual(page.ids(), ["built 4", "built 5", "built 6", "built 7"]);
   });
 
   it("removes a drawing in Line mode once nothing is left of it", async () => {
@@ -2829,7 +2864,26 @@ describe("bridge.js Save as Favourite", () => {
     // In the slider's steps, from its least.
     assert.deepEqual(opacities, [0.5, 1, 0.05, 0.95]);
 
-    bridge.params.editorInkColor = { value: "rgb(30, 102, 245)" };
+    // Safari's and Firefox's alpha inputs give CSS Color 4 values instead.
+    for (const [value, opacity] of [
+      ["color(srgb 0.117647 0.4 0.960784 / 0.35)", 0.35],
+      ["color(srgb 0.117647 0.4 0.960784 / 70%)", 0.7],
+      ["rgba(30, 102, 245, 0.6)", 0.6],
+    ]) {
+      bridge.params.editorInkColor = { value };
+      await save(bridge, "Ink");
+      assert.deepEqual(
+        { ...bridge.pdflion.storedToolSettings.at(-1).favourites.at(-1) },
+        { tool: "ink", color: "#1e66f5", thickness: 1, opacity },
+        value,
+      );
+    }
+
+    // Without alpha, as the opaque one saved before.
+    bridge.params.editorInkColor = { value: "color(srgb 0.117647 0.4 0.960784)" };
+    assert.equal(await save(bridge, "Ink"), "Already a Favourite");
+
+    bridge.params.editorInkColor = { value: "blue" };
     assert.equal(await save(bridge, "Ink"), "Choose a Colour First");
   });
 
@@ -2868,7 +2922,7 @@ describe("bridge.js Save as Favourite", () => {
     const refused = loadBridge();
     refused.pdflion.getToolSettings = async () => null;
     await refused.load();
-    assert.equal(await save(refused, "Ink"), "Couldn't Save");
+    assert.equal(await save(refused, "Ink"), "Couldn’t Save");
     assert.deepEqual(refused.pdflion.storedToolSettings, []);
   });
 
@@ -4065,6 +4119,9 @@ describe("bridge.js without a native menu", () => {
       // What the toolbar's narrowest steps move there.
       "pdflionVisibleTiny",
       "horizontalToolbarSeparator pdflionVisibleWithoutHome",
+      // Pen-only drawing, a setting for every tool.
+      "pdflionSecondaryPenOnly",
+      "horizontalToolbarSeparator",
       "pdflionSecondaryOpen",
       "pdflionSecondaryNew",
       "horizontalToolbarSeparator",
@@ -4427,36 +4484,23 @@ describe("bridge.js pen-only drawing", () => {
   const switchTool = (bridge, mode) =>
     bridge.app.eventBus.dispatch("switchannotationeditormode", { mode });
 
-  /**
-   * @param {any} container an option box's container
-   * @returns {any} pen-only drawing's switch at its end
-   */
-  const switchIn = (container) => {
-    const setter = container.children.at(-1);
-    assert.equal(setter.className, "pdflionPenOnlySetter");
-    const [divider, toggler] = setter.children;
-    assert.equal(divider.className, "divider");
-    const [label, button] = toggler.children;
-    assert.equal(label.textContent, "Draw Only with a Pen");
-    assert.equal(label.htmlFor, button.id);
-    assert.equal(button.className, "toggle-button");
-    return button;
+  /** @param {ReturnType<typeof loadBridge>} bridge @returns {any} pen-only drawing's ⋮ menu item */
+  const penOnlyItem = (bridge) => {
+    const item = bridge.menuContainer.children.find(
+      (/** @type {any} */ element) => element.id === "pdflionSecondaryPenOnly",
+    );
+    assert.ok(item, "in the ⋮ menu");
+    assert.equal(item.children[0].textContent, "Draw Only with a Pen");
+    assert.equal(item.attributes.role, "menuitemcheckbox");
+    return item;
   };
 
-  /** @param {ReturnType<typeof loadBridge>} bridge */
-  const switches = (bridge) => {
-    const eraser = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser");
-    const [, box] = eraser.children;
-    return [switchIn(bridge.optionBoxes.Ink), switchIn(box.children[0])];
-  };
-
-  it("adds a switch to Pencil's and the eraser's option boxes, which shows main's setting and changes it", async () => {
+  it("adds an item to the ⋮ menu, not to the tools' option boxes, which shows main's setting and changes it", async () => {
     const bridge = await withPenOnly();
-    const [ink, eraser] = switches(bridge);
-    assert.deepEqual([ink.id, eraser.id], ["pdflionInkPenOnly", "pdflionEraserPenOnly"]);
-    assert.deepEqual(
-      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
-      ["false", "false"],
+    const item = penOnlyItem(bridge);
+    assert.equal(item.attributes["aria-checked"], "false");
+    assert.ok(
+      !bridge.optionBoxes.Ink.children.some((/** @type {any} */ child) => child.className === "pdflionPenOnlySetter"),
     );
 
     bridge.pdflion.toolSettingsListener?.({
@@ -4464,18 +4508,13 @@ describe("bridge.js pen-only drawing", () => {
       penOnly: true,
       favourites: [],
     });
-    assert.deepEqual(
-      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
-      ["true", "true"],
-    );
+    assert.equal(item.attributes["aria-checked"], "true");
+    assert.ok(item.classes.has("toggled"));
     assert.ok(bridge.outerContainer.classes.has("pdflionPenOnly"));
 
-    eraser.listeners.click();
+    item.listeners.click();
     assert.deepEqual(bridge.pdflion.storedToolSettings, [{ penOnly: false }]);
-    assert.deepEqual(
-      [ink.attributes["aria-pressed"], eraser.attributes["aria-pressed"]],
-      ["false", "false"],
-    );
+    assert.equal(item.attributes["aria-checked"], "false");
     assert.ok(!bridge.outerContainer.classes.has("pdflionPenOnly"));
   });
 

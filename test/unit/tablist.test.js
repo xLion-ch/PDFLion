@@ -212,3 +212,61 @@ describe("TabList queries", () => {
     assert.equal(list.activeTab(1), null);
   });
 });
+
+describe("TabList pinned tabs", () => {
+  /** @returns {TabList} window 1 with Home pinned, then a and b; window 2 with Home 2 and c */
+  function pinnedList() {
+    const list = new TabList();
+    list.add(1, "home", undefined, { pinned: true });
+    list.add(1, "a");
+    list.add(1, "b");
+    list.add(2, "home2", undefined, { pinned: true });
+    list.add(2, "c");
+    return list;
+  }
+
+  it("keeps the pinned tab first, and active if it came first", () => {
+    const list = pinnedList();
+    assert.deepEqual(list.tabsOf(1), ["home", "a", "b"]);
+    assert.equal(list.activeTab(1), "home");
+    assert.equal(list.isPinned("home"), true);
+    assert.equal(list.isPinned("a"), false);
+  });
+
+  it("adds tabs after the pinned one, whatever the index", () => {
+    const list = pinnedList();
+    list.add(1, "x", 0);
+    assert.deepEqual(list.tabsOf(1), ["home", "x", "a", "b"]);
+  });
+
+  it("puts a pinned tab first, and refuses a second one", () => {
+    const list = listOf({ 1: ["a", "b"] });
+    list.add(1, "home", 2, { pinned: true });
+    assert.deepEqual(list.tabsOf(1), ["home", "a", "b"]);
+    assert.throws(() => list.add(1, "other", undefined, { pinned: true }));
+  });
+
+  it("never moves the pinned tab", () => {
+    const list = pinnedList();
+    assert.equal(list.move("home", 1, 2), false);
+    assert.equal(list.move("home", 2, 1), false);
+    assert.deepEqual(list.tabsOf(1), ["home", "a", "b"]);
+  });
+
+  it("moves other tabs only after the pinned one", () => {
+    const list = pinnedList();
+    assert.equal(list.move("b", 1, 0), true);
+    assert.deepEqual(list.tabsOf(1), ["home", "b", "a"]);
+    assert.equal(list.move("a", 2, 0), true);
+    assert.deepEqual(list.tabsOf(2), ["home2", "a", "c"]);
+    assert.deepEqual(list.tabsOf(1), ["home", "b"]);
+  });
+
+  it("forgets a pinned tab once it's removed", () => {
+    const list = pinnedList();
+    list.remove("home");
+    assert.equal(list.isPinned("home"), false);
+    list.add(1, "x", 0);
+    assert.deepEqual(list.tabsOf(1), ["x", "a", "b"]);
+  });
+});

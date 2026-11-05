@@ -1,7 +1,8 @@
 /**
  * The web app's shell, its page: it does in the browser what the desktop's
  * main process does. It shows the tab strip (src/tabs/tabs.js, through
- * `window.pdflionTabs`) and each tab as a frame, the viewer's or Home's, and
+ * `window.pdflionTabs`) and each tab as a frame, the viewer's or Home's, which
+ * is always the leftmost tab, and
  * keeps the library (library.js), the tool settings, and the shortcuts. Each
  * frame's host (viewer-host.js, home-host.js) talks to it over a
  * MessagePort, in the shape of the desktop's IPC, and the shell checks what
@@ -23,7 +24,8 @@
  * service worker (updates.js).
  */
 import { blankPdf, paperSize } from "../shared/blank.js";
-import { CREDITS } from "../shared/credits.js";
+import { CREDITS, creditsHeading } from "../shared/credits.js";
+import { setLanguage, t } from "../shared/i18n.js";
 import { isThumbnail } from "../shared/thumbnail.js";
 import { TabList } from "../shared/tablist.js";
 import {
@@ -66,6 +68,22 @@ import { Library, cleanName, freeName, hasPdfHeader, isDocumentId, isNotInFiles 
 import { parseSession, parseView, viewHash } from "./session.js";
 import { checkForUpdates, followUpdates } from "./updates.js";
 import { PDFJS_VERSION, VERSION } from "./version.js";
+
+// PDFLion's texts in the browser's language, as pdf.js picks its own.
+setLanguage(navigator.languages);
+document.documentElement.lang = navigator.languages[0] ?? "en";
+
+// The Home Screen icon in the appearance shown: iPadOS takes it from this
+// link as the app is added, and keeps it.
+const touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
+const darkAppearance = matchMedia("(prefers-color-scheme: dark)");
+const showTouchIcon = () =>
+  touchIcon?.setAttribute(
+    "href",
+    darkAppearance.matches ? "web/icons/apple-touch-icon-dark.png" : "web/icons/apple-touch-icon.png",
+  );
+darkAppearance.addEventListener("change", showTouchIcon);
+showTouchIcon();
 
 /** @typedef {import("./library.js").DocumentRecord} DocumentRecord */
 /** @typedef {import("../shared/tools.js").ToolSettings} ToolSettings */
@@ -218,6 +236,7 @@ async function start() {
   followKeys();
   followDrops();
   stopPinching();
+  addTab("home", null, t("home"), 0, { load: false });
   if (!(await restoreSession())) showHome();
   keepSession();
   followUpdates(registration, { version: VERSION, beforeRestart: saveEverything });
@@ -355,7 +374,7 @@ function addTab(kind, documentId, name, index, { load = true, view = null } = {}
     saveFailed: false,
   };
   tabs.set(tab.id, tab);
-  tabList.add(WINDOW, tab.id, index);
+  tabList.add(WINDOW, tab.id, index, { pinned: kind === "home" });
   if (load) loadFrame(tab);
   return tab;
 }
@@ -394,15 +413,20 @@ function unloadFrame(tab) {
 }
 
 /**
- * Takes a tab away at once, without saving.
+ * Takes a document's tab away at once, without saving. If it was shown, the
+ * tab that takes its place shows, loading if it has to.
  *
  * @param {Tab} tab
  */
 function removeTab(tab) {
-  if (!tabs.delete(tab.id)) return;
+  if (tab.kind === "home" || !tabs.has(tab.id)) return;
+  const shown = tab === activeTab();
+  tabs.delete(tab.id);
   tabList.remove(tab.id);
   unloadFrame(tab);
-  render();
+  const next = activeTab();
+  if (shown && next) activate(next);
+  else render();
 }
 
 /**
@@ -467,7 +491,7 @@ function tabOf(documentId) {
   return [...tabs.values()].find((tab) => tab.documentId === documentId) ?? null;
 }
 
-/** Shows the active tab, and the strip, unless there's only one. */
+/** Shows the active tab, and tells the strip. */
 function render() {
   const ids = tabList.tabsOf(WINDOW);
   const active = activeTab();
@@ -477,7 +501,6 @@ function render() {
     tab.frame.classList.toggle("active", shown);
     tab.frame.inert = !shown;
   }
-  document.body.classList.toggle("oneTab", ids.length <= 1);
   document.title = active?.kind === "document" ? `${active.name} – PDFLion` : "PDFLion";
   stripListener?.(
     ids.map((id) => {
@@ -485,7 +508,7 @@ function render() {
       const home = tab.kind === "home";
       return {
         id,
-        name: home ? "Home" : tab.name,
+        name: home ? t("home") : tab.name,
         home,
         edited: tab.edited,
         active: tab === active,
@@ -514,27 +537,25 @@ function activate(tab, { focus = true } = {}) {
   sleepTabs();
 }
 
-/** Shows Home: the home tab, or a new one after the active tab. */
+/** @returns {Tab} the home tab, the leftmost, which never closes */
+function homeTab() {
+  return /** @type {Tab} */ (tabs.get(/** @type {string} */ (tabList.tabsOf(WINDOW)[0])));
+}
+
+/** Shows Home. */
 function showHome() {
-  const home = [...tabs.values()].find((tab) => tab.kind === "home");
-  if (home) {
-    activate(home);
-    return;
-  }
-  const active = activeTab();
-  const index = active ? tabList.tabsOf(WINDOW).indexOf(active.id) + 1 : 0;
-  activate(addTab("home", null, "Home", index));
+  activate(homeTab());
 }
 
 /**
- * Closes a tab, once its document has saved, and says if the document isn't
- * in Files. A document made with New and never changed goes, as TextEdit
- * does it. Without tabs, Home shows.
+ * Closes a document's tab, once its document has saved, and says if the
+ * document isn't in Files. A document made with New and never changed goes,
+ * as TextEdit does it. Home doesn't close.
  *
  * @param {Tab} tab
  */
 async function closeTab(tab) {
-  if (tab.closing || !tabs.has(tab.id)) return;
+  if (tab.kind === "home" || tab.closing || !tabs.has(tab.id)) return;
   tab.closing = true;
   if (tab.kind === "document") {
     const saved = await runCommand(tab, "saveNow", CLOSE_SAVE_TIMEOUT);
@@ -549,7 +570,6 @@ async function closeTab(tab) {
     }
   }
   removeTab(tab);
-  if (tabs.size === 0) showHome();
   if (tab.documentId) await afterClosing(tab.documentId);
 }
 
@@ -576,17 +596,19 @@ async function afterClosing(documentId) {
  * @param {{ x: number, y: number }} at
  */
 function showTabMenu(tab, at) {
+  const others = [...tabs.values()].filter((other) => other !== tab && other.kind !== "home");
   /** @type {import("./dialogs.js").MenuItem[]} */
   const items = [
-    { label: "Close Tab", action: () => closeTab(tab) },
     {
-      label: "Close Other Tabs",
-      disabled: tabs.size < 2,
+      label: t("closeOtherTabs"),
+      disabled: others.length === 0,
       action: () => {
-        for (const other of [...tabs.values()]) if (other !== tab) closeTab(other);
+        for (const other of others) closeTab(other);
       },
     },
   ];
+  // Home closes only its documents, since it stays.
+  if (tab.kind !== "home") items.unshift({ label: t("closeTab"), action: () => closeTab(tab) });
   const { documentId } = tab;
   if (documentId) {
     items.push(
@@ -684,7 +706,7 @@ const VIEWER_MESSAGES = {
     if (!favourite) return;
     const remove = () =>
       updateToolSettings({ favourites: removeFavourite(toolSettings.favourites, favourite) });
-    dialogs.showMenu([{ label: "Remove Favourite", action: remove }], inFrame(tab, x, y));
+    dialogs.showMenu([{ label: t("removeFavourite"), action: remove }], inFrame(tab, x, y));
   },
   closeMenu: () => dialogs.closeMenus(),
   showHome: () => showHome(),
@@ -783,8 +805,7 @@ async function showPageDialog(tab, reason, items) {
 // The library
 
 /**
- * Keeps PDFs from the file picker or a drop, and opens them as tabs, the
- * first in place of Home if it's showing. A file the library has already,
+ * Keeps PDFs from the file picker or a drop, and opens them as tabs. A file the library has already,
  * byte for byte, opens that document.
  *
  * @param {File[]} files
@@ -829,7 +850,7 @@ async function keepFile(file, source) {
   const existing = await library.findBySha256(sha256);
   if (existing) return existing.id;
   const record = await library.add({
-    name: cleanName(file.name) ?? "Untitled.pdf",
+    name: cleanName(file.name) ?? `${t("untitled")}.pdf`,
     blob: new Blob([buffer], { type: "application/pdf" }),
     source,
     sha256,
@@ -851,7 +872,7 @@ async function digest(buffer) {
  * the browser's region, and opens it.
  */
 async function newDocument() {
-  const name = freeName(await library.documents(), "Untitled.pdf");
+  const name = freeName(await library.documents(), `${t("untitled")}.pdf`);
   const record = await library.add({
     name,
     blob: new Blob([blankPdf(paperSize(regionOf(navigator.language)))], {
@@ -876,31 +897,23 @@ function regionOf(language) {
 }
 
 /**
- * Opens documents of the library as tabs after the active one, the first in
- * place of Home if it's showing, and shows the last. One that's open
- * already shows its tab.
+ * Opens documents of the library as tabs after the active one, or at the end
+ * from Home, and shows the last. One that's open already shows its tab.
  *
  * @param {string[]} ids
  */
 async function openDocuments(ids) {
   const active = activeTab();
-  const home = active?.kind === "home" ? active : null;
   const order = tabList.tabsOf(WINDOW);
-  let index = active ? order.indexOf(active.id) + (home ? 0 : 1) : order.length;
+  let index = active?.kind === "document" ? order.indexOf(active.id) + 1 : order.length;
   /** @type {Tab | null} */
   let last = null;
-  let added = false;
   for (const id of ids) {
     const record = await library.update(id, { openedAt: Date.now() });
     if (!record) continue;
-    last = tabOf(id);
-    if (!last) {
-      last = addTab("document", id, record.name, index++);
-      added = true;
-    }
+    last = tabOf(id) ?? addTab("document", id, record.name, index++);
   }
   if (last) activate(last);
-  if (home && added) removeTab(home);
   updateHomes();
 }
 
@@ -1074,10 +1087,7 @@ async function deleteDocument(documentId) {
   });
   if (!(await dialogs.confirm(prompt, DELETE, { destructive: true }))) return;
   const tab = tabOf(documentId);
-  if (tab) {
-    removeTab(tab);
-    if (tabs.size === 0) showHome();
-  }
+  if (tab) removeTab(tab);
   await library.remove(documentId);
   thumbnailVersions.delete(documentId);
   updateHomes();
@@ -1112,11 +1122,11 @@ async function renameDocument(documentId) {
 function showDocumentMenu(documentId, at) {
   dialogs.showMenu(
     [
-      { label: "Open", action: () => openDocuments([documentId]) },
+      { label: t("open"), action: () => openDocuments([documentId]) },
       { label: SHARE, action: () => shareDocument(documentId, null) },
-      { label: "Rename…", action: () => renameDocument(documentId) },
+      { label: t("renameItem"), action: () => renameDocument(documentId) },
       { label: "", separator: true },
-      { label: "Delete…", action: () => deleteDocument(documentId) },
+      { label: t("deleteItem"), action: () => deleteDocument(documentId) },
     ],
     at,
   );
@@ -1132,14 +1142,14 @@ async function showInfoMenu(at) {
   const usage = (await navigator.storage?.estimate?.().catch(() => null))?.usage;
   /** @type {import("./dialogs.js").MenuItem[]} */
   const items = [
-    { label: "About PDFLion", action: showAbout },
-    { label: "Check for Updates…", action: checkForUpdates },
+    { label: t("aboutPdflion"), action: showAbout },
+    { label: t("checkForUpdates"), action: checkForUpdates },
     { label: "", separator: true },
-    { label: "Export…", action: () => exportBackup(backupHost()) },
-    { label: "Import…", action: pickBackup },
+    { label: t("exportItem"), action: () => exportBackup(backupHost()) },
+    { label: t("importItem"), action: pickBackup },
     { label: "", separator: true },
     {
-      label: "Draw Only with a Pen",
+      label: t("drawOnlyWithPen"),
       checked: toolSettings.penOnly,
       action: () => updateToolSettings({ penOnly: !toolSettings.penOnly }),
     },
@@ -1147,14 +1157,18 @@ async function showInfoMenu(at) {
   if (usage !== undefined) {
     items.push(
       { label: "", separator: true },
-      { label: `${formatSize(usage)} of storage used`, info: true },
+      { label: t("storageUsed", { size: formatSize(usage) }), info: true },
     );
   }
   dialogs.showMenu(items, at);
 }
 
 function showAbout() {
-  dialogs.showAbout({ version: VERSION, pdfjsVersion: PDFJS_VERSION, credits: CREDITS });
+  const credits = CREDITS.map(({ heading, components }) => ({
+    heading: creditsHeading(heading),
+    components,
+  }));
+  dialogs.showAbout({ version: VERSION, pdfjsVersion: PDFJS_VERSION, credits });
 }
 
 /**
@@ -1227,10 +1241,11 @@ async function homeState() {
 // The session
 
 /**
- * Opens the tabs the session kept, each loading once it's shown, but for
- * the active one, which shows. Documents deleted meanwhile are left out.
+ * Opens the documents the session kept as tabs after Home, each loading once
+ * it's shown, but for the active one, which shows. Documents deleted
+ * meanwhile are left out.
  *
- * @returns {Promise<boolean>} whether any tab opened
+ * @returns {Promise<boolean>} whether a tab showed
  */
 async function restoreSession() {
   const session = parseSession(await library.session());
@@ -1240,11 +1255,13 @@ async function restoreSession() {
   /** @type {Tab | null} */
   let last = null;
   for (const [index, kept] of session.tabs.entries()) {
-    const record = kept.kind === "document" ? records.get(kept.documentId) : null;
-    if (kept.kind === "document" && !record) continue;
-    last = record
-      ? addTab("document", record.id, record.name, tabs.size, { load: false, view: kept.view })
-      : addTab("home", null, "Home", tabs.size, { load: false });
+    if (kept.kind === "home") {
+      if (index === session.active) active = homeTab();
+      continue;
+    }
+    const record = records.get(kept.documentId);
+    if (!record) continue;
+    last = addTab("document", record.id, record.name, tabs.size, { load: false, view: kept.view });
     if (index === session.active) active = last;
   }
   const shown = active ?? last;

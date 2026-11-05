@@ -105,6 +105,13 @@ async function showThumbnails(page) {
 }
 
 /**
+ * Where a drag of a thumbnail ends on the one it goes after, as a share of
+ * its height: past its middle, which is all pdf.js needs, with a margin, and
+ * as little as that, so that the drag fits in WINDOW_SIZE below the strip.
+ */
+const DROP_HEIGHT = 0.6;
+
+/**
  * Drags a page's thumbnail with the mouse, and drops it after another's.
  *
  * pdf.js scrolls the thumbnails while the dragged one nears their edge, which
@@ -127,7 +134,7 @@ async function dragThumbnail(page, from, after, { grid = false } = {}) {
   // The sidebar may still be sliding in.
   await settled(page);
   const fits = await page.evaluate(
-    async ([from, after]) => {
+    async ([from, after, dropHeight]) => {
       /** @param {number} number */
       const image = (number) =>
         /** @type {Element} */ (
@@ -138,13 +145,13 @@ async function dragThumbnail(page, from, after, { grid = false } = {}) {
       const container = /** @type {HTMLElement} */ (document.getElementById("viewsManagerContent"));
       const [start, end] = [image(from), image(after)];
       const top = start.top;
-      const bottom = end.top + end.height * 0.75 + start.height / 2;
+      const bottom = end.top + end.height * dropHeight + start.height / 2;
       const middle = container.getBoundingClientRect().top + container.clientHeight / 2;
       container.scrollTop += (top + bottom) / 2 - middle;
       await new Promise((resolve) => requestAnimationFrame(resolve));
       return bottom - top <= container.clientHeight;
     },
-    [from, after],
+    [from, after, DROP_HEIGHT],
   );
   if (!fits) throw new Error(`Dragging thumbnail ${from} after ${after} doesn't fit in the window`);
   const start = await thumbnail(page, from).locator(".thumbnailImageContainer").boundingBox();
@@ -152,7 +159,7 @@ async function dragThumbnail(page, from, after, { grid = false } = {}) {
   if (!start || !end) throw new Error("No thumbnail to drag");
   await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
   await page.mouse.down();
-  await page.mouse.move(end.x + end.width * x, end.y + end.height * 0.75, { steps: 20 });
+  await page.mouse.move(end.x + end.width * x, end.y + end.height * DROP_HEIGHT, { steps: 20 });
   await page.mouse.up();
 }
 
@@ -332,7 +339,7 @@ test("a new document with an inserted page asks about saving when it closes", as
   await clickMenu(app, untitled, "insertBlankPage");
   await expect.poll(() => pagesCount(untitled)).toBe(2);
   const strip = await stripOf(app, page);
-  await expect.poll(async () => (await stripTabs(strip))[1]).toMatchObject({
+  await expect.poll(async () => (await stripTabs(strip))[2]).toMatchObject({
     name: "Untitled.pdf",
     edited: true,
   });
@@ -481,7 +488,7 @@ test("a typed form value survives moving pages and saving", async ({ pdflion }) 
   await expect(page.locator(".annotationLayer input")).toHaveValue("Ada Lovelace");
 });
 
-test("the page overview opens and closes with its button, the menu, Esc and a double-click", async ({
+test("the page overview opens and closes with its button, the menu, Esc and a click on a page", async ({
   pdflion,
 }) => {
   const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
@@ -521,10 +528,10 @@ test("the page overview opens and closes with its button, the menu, Esc and a do
     expect(await sidebarOpen(page)).toBe(false);
   });
 
-  await test.step("a double-click on a page, which shows that page", async () => {
+  await test.step("a click on a page, which shows that page", async () => {
     await clickMenu(app, page, "pageOverview");
     await expect.poll(() => overviewOpen(page)).toBe(true);
-    await thumbnail(page, 5).locator(".thumbnailImageContainer").dblclick();
+    await thumbnail(page, 5).locator(".thumbnailImageContainer").click();
     await expect.poll(() => overviewOpen(page)).toBe(false);
     expect(await currentPage(page)).toBe(5);
     expect(await sidebarOpen(page)).toBe(false);
@@ -653,6 +660,29 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
   expect(await overviewOpen(page)).toBe(true);
 });
 
+test("the sidebar's thumbnails have the page tools too, which act on the checked pages", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const { page } = await pdflion([file]);
+  const tools = page.locator("#pdflionPageTools");
+  await expect(tools).toBeHidden();
+  await sidebarButton(page).click();
+  await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(3);
+  await expect(tools).toBeVisible();
+  expect(await overviewOpen(page)).toBe(false);
+
+  await thumbnail(page, 2).locator("input").check();
+  await page.locator("#pdflionRotatePagesLeft").click();
+  await expect.poll(() => pageRotations(page)).toEqual([0, 270, 0]);
+  await pageChangeEnded(page);
+  await page.locator("#pdflionOverviewInsertBlankPage").click();
+  await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "", "Page 3"]);
+  await pageChangeEnded(page);
+  expect(await overviewOpen(page)).toBe(false);
+});
+
 test("checked pages rotated in the page overview stay checked, and are saved", async ({
   pdflion,
 }) => {
@@ -770,9 +800,9 @@ test("a document with a password shows its pages, but no page tools", async ({ p
   await expect.poll(() => overviewOpen(page)).toBe(true);
   await expect(thumbnail(page, 1).locator(".thumbnailImageContainer")).toBeVisible();
   await expect(page.locator("#pdflionPageTools")).toBeHidden();
-  await thumbnail(page, 1).locator(".thumbnailImageContainer").dblclick();
+  await thumbnail(page, 1).locator(".thumbnailImageContainer").click();
   await expect.poll(() => currentPage(page)).toBe(1);
-  expect(await overviewOpen(page)).toBe(false);
+  await expect.poll(() => overviewOpen(page)).toBe(false);
 });
 
 test("a signed document asks before its first drag of pages only", async ({ pdflion }) => {

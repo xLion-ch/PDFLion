@@ -47,7 +47,8 @@ body {
   overflow: hidden;
 }
 
-/* The strip and the frames, inside the safe area, as below iPadOS's status bar. */
+/* The strip and the frames, inside the safe area, where there is one: index.html
+   keeps the app below iPadOS's status bar. */
 body {
   display: flex;
   flex-direction: column;
@@ -62,11 +63,6 @@ body {
 
 #tabs {
   flex: none;
-}
-
-/* As on the desktop, the strip shows only for two tabs or more. */
-body.oneTab #tabs {
-  display: none;
 }
 
 #frames {
@@ -315,6 +311,31 @@ body.oneTab #tabs {
       background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
     }
   }
+
+  & .close {
+    flex: none;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: var(--md-shape-full);
+    background-color: transparent;
+    color: inherit;
+
+    &::before {
+      display: block;
+      width: 20px;
+      height: 20px;
+      margin: auto;
+      background-color: currentColor;
+      mask: url(/pdflion/icons/close.svg) center / contain no-repeat;
+      content: "";
+    }
+
+    &:hover {
+      background-color: color-mix(in srgb, currentColor var(--md-hover), transparent);
+    }
+  }
 }
 
 @media (forced-colors: active) {
@@ -349,13 +370,15 @@ body {
 }
 
 /*
- * With a finger, touch targets are at least 44px, as Apple asks: the tabs and
- * their close buttons, buttons, menu items and the snackbar's action.
+ * With a finger, touch targets are at least 44px, as Apple asks: the tabs,
+ * Home's among them, and their close buttons, buttons, menu items and the snackbar's
+ * action and close button.
  */
 @media (pointer: coarse) {
   #tabs {
     --strip-height: 48px;
     --tab-min-width: 120px;
+    --home-tab-width: 56px;
   }
 
   .tab {
@@ -378,6 +401,11 @@ body {
 
   .button,
   .snackbar .action {
+    height: 44px;
+  }
+
+  .snackbar .close {
+    width: 44px;
     height: 44px;
   }
 

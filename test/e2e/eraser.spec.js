@@ -32,6 +32,26 @@ async function toWindow(page, x, y) {
 }
 
 /**
+ * Scrolls the document so that a height of the first page, in PDF
+ * coordinates, is in the middle of the view, for points the window's height
+ * doesn't show at first.
+ *
+ * @param {Page} page
+ * @param {number} y
+ */
+async function scrollToHeight(page, y) {
+  await page.evaluate(async (y) => {
+    const view = PDFViewerApplication.pdfViewer.getPageView(0);
+    const [, vy] = view.viewport.convertToViewportPoint(0, y);
+    const container = /** @type {HTMLElement} */ (document.getElementById("viewerContainer"));
+    const shown = container.getBoundingClientRect();
+    const top = view.div.getBoundingClientRect().top + view.div.clientTop + vy;
+    container.scrollTop += top - (shown.top + container.clientHeight / 2);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }, y);
+}
+
+/**
  * Drags the mouse along points of the first page, in PDF coordinates.
  *
  * @param {Page} page
@@ -196,6 +216,7 @@ test("erases an ink annotation from the file, which Save deletes", async ({ pdfl
   await expect.poll(() => drawings(page)).toEqual(["ink of 2"]);
   // Across the second stroke, away from the first.
   const [x, y] = INK_STROKES[1].slice(20, 22);
+  await scrollToHeight(page, y);
   await drag(page, [[x, y - 30], [x, y + 30]]);
   await expect.poll(() => drawings(page)).toEqual([]);
 
@@ -216,9 +237,10 @@ test("a pen's eraser end erases with Pencil on, which stays on", async ({ pdflio
   await drag(page, [[100, 650], [300, 660]]);
   await page.keyboard.press("Escape");
   await drag(page, [[100, 550], [300, 560]]);
-  expect(await drawings(page)).toHaveLength(1);
+  // Pencil ends each stroke's drawing a task after it.
+  await expect.poll(() => drawings(page)).toHaveLength(2);
 
-  // Across both, the second still Pencil's open drawing.
+  // Across both.
   await eraseWithPen(page, [[200, 700], [200, 500]]);
   await expect.poll(() => drawings(page)).toEqual([]);
   expect(await isErasing(page)).toBe(false);
@@ -243,6 +265,7 @@ test("a pen's eraser end with no tool on turns the eraser on, and erases the fil
 
   // Across the second stroke, which pdf.js has as a drawing only in a tool.
   const [x, y] = INK_STROKES[1].slice(20, 22);
+  await scrollToHeight(page, y);
   await eraseWithPen(page, [[x, y - 30], [x, y + 30]]);
   await expect.poll(() => isErasing(page)).toBe(true);
   await expect(page.locator("#pdflionEditorEraserButton")).toHaveClass(/toggled/);
@@ -255,21 +278,37 @@ test("a pen's eraser end with no tool on turns the eraser on, and erases the fil
   expect(await annotations(page)).toEqual([]);
 });
 
-test("leaves free highlights alone", async ({ pdflion }) => {
+test("erases highlights whole, in either mode, which Undo brings back", async ({ pdflion }) => {
   const file = path.join(await tempDir(), "pages.pdf");
   await writeLabelled(file, 1);
   const { page } = await pdflion([file]);
   await page.locator("#editorHighlightButton").click();
   await drag(page, [[100, 500], [400, 500]]);
+  await drag(page, [[100, 600], [400, 600]]);
   await page.locator("#editorInkButton").click();
   await drag(page, [[250, 450], [250, 550]]);
   await page.keyboard.press("Escape");
-  await expect.poll(async () => (await drawings(page)).sort()).toEqual(["highlight", "ink of 1"]);
+  await expect
+    .poll(async () => (await drawings(page)).sort())
+    .toEqual(["highlight", "highlight", "ink of 1"]);
 
   await page.locator("#pdflionEditorEraserButton").click();
-  // Across both.
+  // Across the first highlight and the drawing.
   await drag(page, [[150, 520], [350, 480]]);
   await expect.poll(() => drawings(page)).toEqual(["highlight"]);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect
+    .poll(async () => (await drawings(page)).sort())
+    .toEqual(["highlight", "highlight", "ink of 1"]);
+
+  // Line mode takes a highlight whole too, rather than cutting it.
+  await page.keyboard.press("Escape");
+  await expect.poll(() => isErasing(page)).toBe(false);
+  await eraseLines(page);
+  await drag(page, [[300, 580], [300, 620]]);
+  await expect
+    .poll(async () => (await drawings(page)).sort())
+    .toEqual(["highlight", "ink of 1"]);
 });
 
 test("Pencil, another tool or Esc turns the eraser off, and its circle follows the pointer", async ({
@@ -354,7 +393,7 @@ async function eraseLines(page) {
   await expect(page.locator('input[name="pdflionEraserMode"][value="line"]')).toBeChecked();
 }
 
-test("Line erasing cuts a stroke in two, which keeps its look, as one step to undo", async ({
+test("Line erasing cuts a stroke into two drawings, which keep its look, as one step to undo", async ({
   pdflion,
 }) => {
   const file = path.join(await tempDir(), "pages.pdf");
@@ -371,11 +410,13 @@ test("Line erasing cuts a stroke in two, which keeps its look, as one step to un
 
   await eraseLines(page);
   await drag(page, [[200, 700], [200, 600]]);
-  await expect.poll(async () => (await inkDrawings(page)).map((drawing) => drawing.strokes.length)).toEqual([2]);
-  const [cut] = await inkDrawings(page);
-  expect(cut).toMatchObject({ color: [30, 102, 245], thickness: 5, opacity: 0.5 });
+  await expect.poll(async () => (await inkDrawings(page)).map((drawing) => drawing.strokes.length)).toEqual([1, 1]);
+  const pieces = (await inkDrawings(page)).sort((a, b) => a.strokes[0][0] - b.strokes[0][0]);
+  for (const piece of pieces) {
+    expect(piece).toMatchObject({ color: [30, 102, 245], thickness: 5, opacity: 0.5 });
+  }
   // The eraser, 10 points wide, and the stroke's round ends, 2.5 points, either side of x 200.
-  const [left, right] = cut.strokes;
+  const [[left], [right]] = pieces.map((piece) => piece.strokes);
   expect(left[0]).toBeCloseTo(drawn.strokes[0][0], 0);
   expect(left.at(-2)).toBeLessThan(193);
   expect(right[0]).toBeGreaterThan(207);
@@ -391,14 +432,61 @@ test("Line erasing cuts a stroke in two, which keeps its look, as one step to un
   await page.keyboard.press("ControlOrMeta+Shift+z");
   await expect.poll(strokeCounts).toEqual([1]);
   await clickMenu(app, page, "redo");
-  await expect.poll(strokeCounts).toEqual([2]);
+  await expect.poll(strokeCounts).toEqual([1, 1]);
 
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
   await app.close();
 
   ({ page } = await pdflion([file]));
-  expect(await annotations(page)).toEqual([{ subtype: "Ink", strokes: 2 }]);
+  expect(await annotations(page)).toEqual([
+    { subtype: "Ink", strokes: 1 },
+    { subtype: "Ink", strokes: 1 },
+  ]);
+});
+
+test("each of Pencil's strokes is a drawing of its own, unselected, which Undo takes back alone", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  const { page } = await pdflion([file]);
+  await page.locator("#editorInkButton").click();
+  await drag(page, [[100, 650], [300, 650]]);
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1"]);
+  // Across the first, starting over it.
+  await drag(page, [[200, 650], [250, 600]]);
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1", "ink of 1"]);
+  await expect(page.locator(".inkEditor.selectedEditor")).toHaveCount(0);
+  for (const toolbar of await page.locator(".inkEditor .editToolbar").all()) await expect(toolbar).toBeHidden();
+
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1"]);
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1", "ink of 1"]);
+
+  // Object erasing takes one.
+  await page.locator("#pdflionEditorEraserButton").click();
+  await drag(page, [[120, 700], [120, 600]]);
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1"]);
+});
+
+test("Object erasing removes one piece of a line that Line erasing cut", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  const { page } = await pdflion([file]);
+  await page.locator("#editorInkButton").click();
+  await drag(page, [[100, 650], [300, 650]]);
+  await page.keyboard.press("Escape");
+  await eraseLines(page);
+  await drag(page, [[200, 700], [200, 600]]);
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1", "ink of 1"]);
+
+  await page.locator(".pdflionEraserMode", { hasText: "Object" }).click();
+  await drag(page, [[120, 700], [120, 600]]);
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1"]);
+  const [[right]] = (await inkDrawings(page)).map((drawing) => drawing.strokes);
+  expect(right[0]).toBeGreaterThan(200);
 });
 
 test("Line erasing removes a drawing it leaves nothing of, which Undo brings back", async ({
@@ -429,14 +517,19 @@ test("Line erasing cuts an ink annotation from the file, which Save replaces", a
   await expect.poll(() => drawings(page)).toEqual(["ink of 2"]);
   // Across the first stroke, away from the second.
   await drag(page, [[200, 630], [200, 570]]);
-  await expect.poll(() => drawings(page)).toEqual(["ink of 3"]);
-  const [cut] = await inkDrawings(page);
-  expect(cut).toMatchObject({ color: [255, 0, 0], thickness: 4 });
+  await expect.poll(() => drawings(page)).toEqual(["ink of 1", "ink of 1", "ink of 1"]);
+  for (const cut of await inkDrawings(page)) {
+    expect(cut).toMatchObject({ color: [255, 0, 0], thickness: 4 });
+  }
 
   await clickMenu(app, page, "save");
   await expect.poll(() => isEdited(app, page)).toBe(false);
   await app.close();
 
   ({ page } = await pdflion([file]));
-  expect(await annotations(page)).toEqual([{ subtype: "Ink", strokes: 3 }]);
+  expect(await annotations(page)).toEqual([
+    { subtype: "Ink", strokes: 1 },
+    { subtype: "Ink", strokes: 1 },
+    { subtype: "Ink", strokes: 1 },
+  ]);
 });

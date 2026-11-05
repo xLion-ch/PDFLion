@@ -18,16 +18,18 @@
 }
 
 /*
- * Without Open, the separator below it would top the menu whenever the Print
- * and Save group above it is hidden. That group only shows in pdf.js's medium
- * view: its own at 750px and below (viewer.css), or the toolbar's step that
- * bridge.js takes earlier when the toolbar needs it.
+ * Print, and the web app's Share, are in the ⋮ menu at every width, as pdf.js
+ * puts them in its medium view, rather than in the toolbar: File > Print and
+ * ⌘P stay on the desktop, and the toolbar keeps its room for the tools.
+ * The toolbar's group of them, Save among them, which PDFLion hides anyway,
+ * goes with its divider.
  */
-#toolbarContainer:not(.pdflionToolbarMedium)
-  #secondaryToolbarButtonContainer
-  > .visibleMediumView
-  + .horizontalToolbarSeparator {
-  display: none;
+#toolbarViewerRight > .hiddenMediumView:is(:has(> #printButton), .verticalToolbarSeparator) {
+  display: none !important;
+}
+
+#secondaryToolbarButtonContainer > .visibleMediumView:not(.hidden, [hidden]) {
+  display: inline-block !important;
 }
 
 /* ---------------------------------------------------------------------------
@@ -227,6 +229,77 @@
   }
 }
 
+/*
+ * The zoom button, in place of pdf.js's zoom select (bridge.js), and its
+ * menu's items: a named zoom's icon, or the percentage as text.
+ */
+#scaleSelectContainer {
+  display: none !important;
+}
+
+:is(#pdflionZoomButton, .pdflionZoomItem) {
+  &[data-zoom="auto"]::before {
+    mask-image: url(/pdflion/icons/fit_screen.svg);
+  }
+
+  &[data-zoom="page-actual"]::before {
+    mask-image: url(/pdflion/icons/crop_free.svg);
+  }
+
+  &[data-zoom="page-fit"]::before {
+    mask-image: url(/pdflion/icons/fit_page_height.svg);
+  }
+
+  &[data-zoom="page-width"]::before {
+    mask-image: url(/pdflion/icons/fit_page_width.svg);
+  }
+}
+
+#pdflionZoom:has(> .pdflionZoomPercent) {
+  aspect-ratio: auto;
+}
+
+#pdflionZoomButton.pdflionZoomPercent {
+  aspect-ratio: auto;
+  min-width: 40px;
+  padding-inline: 6px;
+
+  &::before {
+    display: none;
+  }
+
+  > span {
+    width: auto;
+    height: auto;
+    overflow: visible;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* The percentages keep the named zooms' text aligned, without an icon. */
+.pdflionZoomItem:not([data-zoom="auto"], [data-zoom="page-actual"], [data-zoom="page-fit"], [data-zoom="page-width"])::before {
+  visibility: hidden;
+}
+
+.pdflionZoomItem[aria-checked="true"] {
+  background-color: var(--toggled-btn-bg-color);
+}
+
+#pdflionZoomMenu {
+  z-index: 30001;
+}
+
+#pdflionZoomMenu .menuContainer {
+  min-width: 180px;
+}
+
+@media all and (max-width: 560px) {
+  #pdflionZoom {
+    display: none;
+  }
+}
+
 /* What the narrowest steps move into the ⋮ menu and the tools' menu. */
 #pdflionSecondaryHome::before {
   mask-image: url(/pdflion/icons/home.svg);
@@ -392,32 +465,11 @@
 }
 
 /*
- * Pen-only drawing's switch (bridge.js), at the end of Pencil's and the
- * eraser's option boxes, as pdf.js lays out Highlight's Show All
- * (#editorHighlightVisibility in web/annotation_editor_layer_builder.css).
+ * Pen-only drawing's item at the top of the ⋮ menu (bridge.js), a setting
+ * for every tool, shown on as pdf.js shows the scroll mode chosen.
  */
-.pdflionPenOnlySetter {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  align-self: stretch;
-  margin-block-start: 8px;
-
-  .divider {
-    width: 100%;
-    height: 1px;
-    margin-block: 4px;
-    background-color: var(--md-sys-color-outline-variant, CanvasText);
-  }
-
-  .toggler {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    align-self: stretch;
-    gap: 16px;
-  }
+#pdflionSecondaryPenOnly::before {
+  mask-image: url(/pdflion/icons/stylus.svg);
 }
 
 /* The eraser's circle, centred on the pointer. bridge.js sizes and places it. */
@@ -579,6 +631,32 @@
 /* A long press on a favourite opens its menu, not iPadOS's callout. */
 .toolbarButton.pdflionFavourite {
   -webkit-touch-callout: none;
+}
+
+/*
+ * While Pencil is on, its drawings show no box, handles or toolbar, and let
+ * presses through to the layer, where pdf.js starts a stroke only: each
+ * stroke is a drawing of its own (bridge.js), and a stroke that starts over
+ * another draws, rather than selecting or moving it. The border stays,
+ * transparent, since pdf.js places an editor by its width.
+ */
+.annotationEditorLayer.inkEditing .inkEditor {
+  pointer-events: none;
+
+  &,
+  &.selectedEditor,
+  &:hover:not(.selectedEditor) {
+    border-color: transparent;
+    outline: none;
+
+    &::before {
+      content: none;
+    }
+  }
+
+  > :is(.resizers, .editToolbar) {
+    display: none;
+  }
 }
 
 /* viewer.css sets this on a selector three classes deep, hence !important. */
@@ -772,7 +850,7 @@
 }
 
 /* From viewer.css's 560px step: the zoom menu goes, and the zoom buttons stay. */
-:where(#toolbarContainer.pdflionToolbarNarrow) #scaleSelectContainer {
+:where(#toolbarContainer.pdflionToolbarNarrow) #pdflionZoom {
   display: none;
 }
 
@@ -1045,11 +1123,13 @@
   }
 }
 
+/* PDFLion's page tools show with pdf.js's Add file: in the sidebar's
+   thumbnails and in the page overview. */
 #pdflionPageTools {
   display: none;
   gap: 4px;
 
-  #outerContainer.pdflionPageOverview & {
+  &:has(~ #viewsManagerAddFileButton:not([hidden])) {
     display: flex;
   }
 
@@ -1439,8 +1519,7 @@ dialog .buttonRow {
     --toolbar-vertical-padding: 4px;
   }
 
-  .pdflionEraserMode,
-  .pdflionPenOnlySetter .toggler {
+  .pdflionEraserMode {
     min-height: 44px;
   }
 }

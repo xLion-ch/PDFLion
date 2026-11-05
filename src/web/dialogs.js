@@ -4,6 +4,7 @@
  * src/shared/wording.js. Buttons go as on Apple's platforms, the default one
  * rightmost, and web.css styles them all in Material Design 3.
  */
+import { t } from "../shared/i18n.js";
 import { CANCEL, OK } from "../shared/wording.js";
 
 /** @typedef {import("../shared/wording.js").Text} Text */
@@ -171,6 +172,13 @@ export function snackbar(message, { action, onAction } = {}) {
     });
     bar.append(button);
   }
+  // Material's close icon, for those who'd rather not wait for it to go.
+  const close = element("button", "close", "");
+  close.type = "button";
+  close.title = t("dismiss");
+  close.setAttribute("aria-label", t("dismiss"));
+  close.addEventListener("click", dismiss);
+  bar.append(close);
   const timer = setTimeout(dismiss, action ? SNACKBAR_ACTION_TIME : SNACKBAR_TIME);
   const shown = { dismiss };
   shownSnackbar = shown;
@@ -323,7 +331,7 @@ export function showAbout({ version, pdfjsVersion, credits }) {
   const title = element("h2", "message", "PDFLion");
   title.id = `dialogMessage${++lastId}`;
   dialog.setAttribute("aria-labelledby", title.id);
-  const versions = [`Version ${version}`, pdfjsVersion && `pdf.js ${pdfjsVersion}`];
+  const versions = [t("aboutVersion", { version }), pdfjsVersion && `pdf.js ${pdfjsVersion}`];
   form.append(title, element("p", "detail", versions.filter(Boolean).join(" · ")));
   const list = element("div", "credits", "");
   for (const { heading, components } of credits) {
@@ -335,7 +343,9 @@ export function showAbout({ version, pdfjsVersion, credits }) {
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       const item = document.createElement("li");
-      item.append(link, [by && ` by ${by}`, license && ` (${license})`].filter(Boolean).join(""));
+      // The name's link, then what comes after it, such as " by Mozilla".
+      const [before, after] = by ? t("creditsBy", { name: "\u0000", by }).split("\u0000") : ["", ""];
+      item.append(before, link, [after, license && ` (${license})`].filter(Boolean).join(""));
       items.append(item);
     }
     list.append(items);

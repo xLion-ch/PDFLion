@@ -28,8 +28,8 @@ test("a PDF from Files is kept, shows on Home, and opens the same document again
   await openApp(page);
   await openFromHome(page, [TRACEMONKEY]);
   const viewer = await documentFrame(page, "compressed.tracemonkey-pldi-09.pdf");
-  // It took Home's place.
-  expect(await stripTabs(page)).toHaveLength(1);
+  // After Home.
+  expect(await stripTabs(page)).toMatchObject([{ home: true, active: false }, { home: false, active: true }]);
   const [record] = await readLibrary(page);
   expect(record).toMatchObject({
     name: "compressed.tracemonkey-pldi-09.pdf",
@@ -162,20 +162,20 @@ test("after the explanation, each document's first save says so once a session",
   await expect.poll(async () => (await readLibrary(page))[0].revision, { timeout: 10_000 }).toBe(2);
   await expect(page.locator(".snackbar:not([data-seen])")).toHaveCount(0);
   await expect(page.locator("dialog")).toHaveCount(0);
+
+  // Its close button dismisses it.
+  await snackbar.getByRole("button", { name: "Dismiss" }).click();
+  await expect(snackbar).toHaveCount(0);
 });
 
 /**
- * Shares the document from the toolbar, or from the ⋮ menu, where Share goes
- * once the toolbar has no room for it.
+ * Shares the document from the ⋮ menu, where Share is, rather than the
+ * toolbar, which has no room for it.
  *
  * @param {import("./pdflion.js").Frame} viewer
  */
 async function share(viewer) {
-  const button = viewer.locator("#pdflionShareButton");
-  if (await button.isVisible()) {
-    await button.click();
-    return;
-  }
+  await expect(viewer.locator("#pdflionShareButton")).toBeHidden();
   await viewer.locator("#secondaryToolbarToggleButton").click();
   await viewer.locator("#pdflionSecondaryShare").click();
 }

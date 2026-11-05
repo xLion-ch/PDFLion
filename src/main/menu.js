@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, Menu, shell } from "electron";
 import { creditsText } from "../shared/credits.js";
+import { t } from "../shared/i18n.js";
 import { runCommand } from "./ipc.js";
 import { aboutIconPath, pdfjsVersionPath } from "./paths.js";
 import { clearRecentDocuments, menuDocuments, onRecentDocumentsChange } from "./recent.js";
@@ -52,6 +53,17 @@ const tabItems = new Map();
 /** @param {BrowserWindow | null} win */
 const hasSeveralTabs = (win) => win !== null && tabs.tabsOf(win).length > 1;
 
+/**
+ * Whether the focused window's active tab is a document that has another
+ * with it, to move to a window of its own.
+ *
+ * @param {BrowserWindow | null} win
+ */
+const canMoveToNewWindow = (win) =>
+  activeDocument(win) !== undefined &&
+  win !== null &&
+  tabs.tabsOf(win).filter((tab) => !tabs.isHome(tab)).length > 1;
+
 export function installMenu() {
   setAboutPanel();
   setMenu();
@@ -81,7 +93,7 @@ function setAboutPanel() {
   app.setAboutPanelOptions({
     applicationName: app.name,
     // macOS adds "Version" itself, and GTK shows the version on its own line.
-    applicationVersion: isMac || isLinux ? version : `Version ${version}`,
+    applicationVersion: isMac || isLinux ? version : t("aboutVersion", { version }),
     // GTK's dialog has no credits, so they go below the version.
     ...(isLinux ? { copyright: credits } : { credits }),
     ...(isMac
@@ -113,35 +125,41 @@ function template() {
   return [
     ...onMac(appMenu()),
     {
-      label: "&File",
+      label: t("menuFile"),
       submenu: [
         // pdf.js binds a plain N (next page), but not ⌘N or Ctrl+N. On macOS
         // it works without a window, like Open.
         {
           id: "newDocument",
-          label: "&New",
+          label: t("menuNew"),
           accelerator: "CmdOrCtrl+N",
           click: () => newDocument(),
         },
-        { label: "&Open…", accelerator: "CmdOrCtrl+O", click: () => showOpenPanel() },
+        { label: t("menuOpen"), accelerator: "CmdOrCtrl+O", click: () => showOpenPanel() },
         // The role is macOS only.
         isMac
-          ? { role: "recentDocuments", submenu: [{ role: "clearRecentDocuments" }] }
+          ? {
+              role: "recentDocuments",
+              label: t("menuOpenRecent"),
+              submenu: [{ role: "clearRecentDocuments", label: t("menuClearMenu") }],
+            }
           : recentDocumentsItem(),
         // Selects the window's home tab, or adds one. pdf.js binds a plain H
         // (the hand tool), but not ⇧⌘H or Ctrl+Shift+H. Like New, it works on
         // macOS without a window.
         {
           id: "home",
-          label: "&Home",
+          label: t("menuHome"),
           accelerator: "Shift+CmdOrCtrl+H",
           click: (_item, win) => showHome(win instanceof BrowserWindow ? win : undefined),
         },
         { type: "separator" },
         {
           id: "closeTab",
-          label: "&Close Tab",
+          label: t("menuCloseTab"),
           accelerator: "CmdOrCtrl+W",
+          // On Home, which stays, it closes the window, as a browser's
+          // last tab does.
           click: (_item, win) => {
             const tab = win instanceof BrowserWindow ? tabs.activeTab(win) : undefined;
             if (tab) closeTab(tab);
@@ -150,25 +168,25 @@ function template() {
         },
         {
           id: "closeWindow",
-          label: "Close &Window",
+          label: t("menuCloseWindow"),
           accelerator: "Shift+CmdOrCtrl+W",
           click: (_item, win) => closeWindow(win),
         },
-        commandItem("&Save", "save", "CmdOrCtrl+S"),
-        commandItem("Save &As…", "saveAs", "Shift+CmdOrCtrl+S"),
+        commandItem(t("menuSave"), "save", "CmdOrCtrl+S"),
+        commandItem(t("menuSaveAs"), "saveAs", "Shift+CmdOrCtrl+S"),
         { type: "separator" },
-        commandItem("&Print…", "print", "CmdOrCtrl+P"),
+        commandItem(t("menuPrint"), "print", "CmdOrCtrl+P"),
         { type: "separator" },
         // The tool settings and favourites, to take to another computer. They
         // work without a window, like New.
-        { id: "exportSettings", label: "&Export Settings…", click: () => exportSettings() },
-        { id: "importSettings", label: "&Import Settings…", click: () => importSettings() },
+        { id: "exportSettings", label: t("menuExportSettings"), click: () => exportSettings() },
+        { id: "importSettings", label: t("menuImportSettings"), click: () => importSettings() },
         // Exit, which has no shortcut on Windows: Alt+F4 closes the window,
         // and closing the last one quits. Linux apps have Quit, with the
         // role's Ctrl+Q.
         ...onWindowsAndLinux(
           { type: "separator" },
-          { role: "quit", label: isLinux ? "&Quit" : "E&xit" },
+          { role: "quit", label: isLinux ? t("menuQuit") : t("menuExit") },
         ),
       ],
     },
@@ -176,58 +194,61 @@ function template() {
       // Electron's editMenu role for each platform, plus Find, with Undo and
       // Redo reaching pdf.js's annotations too. Copy and Select All act on the
       // text layer, or on form fields and annotations while one has focus.
-      label: "&Edit",
+      label: t("menuEdit"),
       submenu: [
-        undoItem("&Undo", "undo", "CmdOrCtrl+Z"),
+        undoItem(t("menuUndo"), "undo", "CmdOrCtrl+Z"),
         // The redo role's shortcuts.
-        undoItem("&Redo", "redo", process.platform === "win32" ? "Ctrl+Y" : "Shift+CmdOrCtrl+Z"),
+        undoItem(t("menuRedo"), "redo", process.platform === "win32" ? "Ctrl+Y" : "Shift+CmdOrCtrl+Z"),
         { type: "separator" },
-        { role: "cut", label: "Cu&t" },
-        { role: "copy", label: "&Copy" },
-        { role: "paste", label: "&Paste" },
-        ...onMac({ role: "pasteAndMatchStyle" }),
-        { role: "delete", label: "De&lete" },
+        { role: "cut", label: t("menuCut") },
+        { role: "copy", label: t("menuCopy") },
+        { role: "paste", label: t("menuPaste") },
+        ...onMac({ role: "pasteAndMatchStyle", label: t("menuPasteAndMatchStyle") }),
+        { role: "delete", label: t("menuDelete") },
         ...onWindowsAndLinux({ type: "separator" }),
-        { role: "selectAll", label: "Select &All" },
+        { role: "selectAll", label: t("menuSelectAll") },
         { type: "separator" },
-        commandItem("&Find…", "find", "CmdOrCtrl+F"),
+        commandItem(t("menuFind"), "find", "CmdOrCtrl+F"),
         { type: "separator" },
         // A new page, as ⌘N is a new document. Preview's has no shortcut.
-        commandItem("Insert &Blank Page", "insertBlankPage", "Shift+CmdOrCtrl+N"),
+        commandItem(t("menuInsertBlankPage"), "insertBlankPage", "Shift+CmdOrCtrl+N"),
         // Turns the eraser on and off, as its button does.
-        commandItem("&Eraser", "eraser", "Shift+CmdOrCtrl+E"),
+        commandItem(t("menuEraser"), "eraser", "Shift+CmdOrCtrl+E"),
         ...onMac(
           { type: "separator" },
           {
-            label: "Speech",
-            submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }],
+            label: t("menuSpeech"),
+            submenu: [
+              { role: "startSpeaking", label: t("menuStartSpeaking") },
+              { role: "stopSpeaking", label: t("menuStopSpeaking") },
+            ],
           },
         ),
       ],
     },
     {
       // Not the zoomIn and resetZoom roles: they scale the whole UI, not the page.
-      label: "&View",
+      label: t("menuView"),
       submenu: [
         // Not Ctrl+Alt+S on Windows, which is AltGr+S, a character on many
         // keyboards. F4 is pdf.js's own shortcut for it, and Acrobat's.
-        commandItem("Toggle &Sidebar", "toggleSidebar", isMac ? "Alt+Cmd+S" : "F4"),
+        commandItem(t("menuToggleSidebar"), "toggleSidebar", isMac ? "Alt+Cmd+S" : "F4"),
         // ⌥⌘6 is Preview's Contact Sheet. Not Ctrl+Alt+6 on Windows, which is
         // AltGr+6, a character on many keyboards, so O for Overview there.
-        commandItem("Pag&e Overview", "pageOverview", isMac ? "Alt+Cmd+6" : "Shift+Ctrl+O"),
+        commandItem(t("menuPageOverview"), "pageOverview", isMac ? "Alt+Cmd+6" : "Shift+Ctrl+O"),
         { type: "separator" },
-        commandItem("&Actual Size", "actualSize", "CmdOrCtrl+0"),
-        commandItem("Zoom &In", "zoomIn", "CmdOrCtrl+Plus"),
+        commandItem(t("menuActualSize"), "actualSize", "CmdOrCtrl+0"),
+        commandItem(t("menuZoomIn"), "zoomIn", "CmdOrCtrl+Plus"),
         // ⌘= as well, since + needs Shift on many keyboards.
-        { ...commandItem("Zoom In", "zoomIn", "CmdOrCtrl+=", "zoomInEquals"), visible: false },
-        commandItem("Zoom &Out", "zoomOut", "CmdOrCtrl+-"),
+        { ...commandItem(t("menuZoomIn"), "zoomIn", "CmdOrCtrl+=", "zoomInEquals"), visible: false },
+        commandItem(t("menuZoomOut"), "zoomOut", "CmdOrCtrl+-"),
         { type: "separator" },
-        commandItem("Rotate &Left", "rotateLeft", "CmdOrCtrl+L"),
-        commandItem("Rotate &Right", "rotateRight", "CmdOrCtrl+R"),
+        commandItem(t("menuRotateLeft"), "rotateLeft", "CmdOrCtrl+L"),
+        commandItem(t("menuRotateRight"), "rotateRight", "CmdOrCtrl+R"),
         { type: "separator" },
-        commandItem("&Presentation Mode", "presentation", "Shift+CmdOrCtrl+F"),
+        commandItem(t("menuPresentation"), "presentation", "Shift+CmdOrCtrl+F"),
         // ⌃⌘F on macOS, F11 on Windows and Linux.
-        { role: "togglefullscreen", label: "Toggle &Full Screen" },
+        { role: "togglefullscreen", label: t("menuFullScreen") },
         // Windows and Linux apps have no Window menu.
         ...onWindowsAndLinux({ type: "separator" }, ...tabMenuItems()),
         ...(app.isPackaged
@@ -244,50 +265,49 @@ function template() {
     // closes. On macOS it's the windowMenu role's, with the tab items.
     ...onMac({
       role: "window",
-      label: "Window",
+      label: t("menuWindow"),
       submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
+        { role: "minimize", label: t("menuMinimize") },
+        { role: "zoom", label: t("menuZoom") },
         { type: "separator" },
         ...tabMenuItems(),
         { type: "separator" },
-        { role: "front" },
+        { role: "front", label: t("menuBringAllToFront") },
       ],
     }),
     {
       role: "help",
-      label: "&Help",
+      label: t("menuHelp"),
       submenu: [
-        { label: "PDFLion on &GitHub", click: () => shell.openExternal(REPOSITORY_URL) },
+        { label: t("menuGitHub"), click: () => shell.openExternal(REPOSITORY_URL) },
         // On macOS, they and About are in the app menu.
         ...onWindowsAndLinux(...updateMenuItems()),
-        ...onWindowsAndLinux({ type: "separator" }, { role: "about", label: `&About ${app.name}` }),
+        ...onWindowsAndLinux({ type: "separator" }, { role: "about", label: t("menuAbout", { app: app.name }) }),
       ],
     },
   ];
 }
 
 /**
- * macOS's app menu: the appMenu role's own items, and where PDFLion updates
- * itself, Check for Updates… after About.
+ * macOS's app menu: the appMenu role's own items, in PDFLion's language, and
+ * where PDFLion updates itself, Check for Updates… after About.
  *
  * @returns {Electron.MenuItemConstructorOptions}
  */
 function appMenu() {
-  if (!hasUpdater) return { role: "appMenu" };
   return {
     role: "appMenu",
     submenu: [
-      { role: "about" },
+      { role: "about", label: t("menuAbout", { app: app.name }) },
       ...updateMenuItems(),
       { type: "separator" },
-      { role: "services" },
+      { role: "services", label: t("menuServices") },
       { type: "separator" },
-      { role: "hide" },
-      { role: "hideOthers" },
-      { role: "unhide" },
+      { role: "hide", label: t("menuHide", { app: app.name }) },
+      { role: "hideOthers", label: t("menuHideOthers") },
+      { role: "unhide", label: t("menuShowAll") },
       { type: "separator" },
-      { role: "quit" },
+      { role: "quit", label: t("menuQuitApp", { app: app.name }) },
     ],
   };
 }
@@ -303,10 +323,10 @@ function updateMenuItems() {
   if (!hasUpdater) return [];
   return [
     { type: "separator" },
-    { id: "checkForUpdates", label: "Check for &Updates…", click: () => checkForUpdates() },
+    { id: "checkForUpdates", label: t("menuCheckForUpdates"), click: () => checkForUpdates() },
     {
       id: "automaticUpdates",
-      label: "Check for Updates Au&tomatically",
+      label: t("menuAutomaticUpdates"),
       type: "checkbox",
       checked: automaticChecks(),
       // Electron has flipped `checked` by then.
@@ -335,11 +355,11 @@ function tabMenuItems() {
     if (tab) tabs.selectTab(tab);
   };
   return [
-    tabItem("Show Pre&vious Tab", "previousTab", "Ctrl+Shift+Tab", hasSeveralTabs, showPrevious),
-    tabItem("Show &Next Tab", "nextTab", "Ctrl+Tab", hasSeveralTabs, showNext),
+    tabItem(t("menuPreviousTab"), "previousTab", "Ctrl+Shift+Tab", hasSeveralTabs, showPrevious),
+    tabItem(t("menuNextTab"), "nextTab", "Ctrl+Tab", hasSeveralTabs, showNext),
     {
       ...tabItem(
-        "Show Previous Tab",
+        t("menuPreviousTab"),
         "previousTabAlternate",
         isMac ? "Shift+Cmd+[" : "Ctrl+PageUp",
         hasSeveralTabs,
@@ -349,7 +369,7 @@ function tabMenuItems() {
     },
     {
       ...tabItem(
-        "Show Next Tab",
+        t("menuNextTab"),
         "nextTabAlternate",
         isMac ? "Shift+Cmd+]" : "Ctrl+PageDown",
         hasSeveralTabs,
@@ -357,12 +377,12 @@ function tabMenuItems() {
       ),
       visible: false,
     },
-    tabItem("&Move Tab to New Window", "moveTabToNewWindow", undefined, hasSeveralTabs, (win) => {
+    tabItem(t("menuMoveTab"), "moveTabToNewWindow", undefined, canMoveToNewWindow, (win) => {
       const tab = tabs.activeTab(win);
       if (tab) moveTabToNewWindow(tab);
     }),
     tabItem(
-      "Mer&ge All Windows",
+      t("menuMergeWindows"),
       "mergeAllWindows",
       undefined,
       () => documentWindows().length > 1,
@@ -448,7 +468,7 @@ function recentDocumentsItem() {
   // The full path only where the name alone is ambiguous.
   const isUnique = (/** @type {string} */ name) => names.indexOf(name) === names.lastIndexOf(name);
   return {
-    label: "Open &Recent",
+    label: t("menuOpenRecent"),
     enabled: files.length > 0,
     submenu: [
       ...files.map((file, index) => ({
@@ -456,7 +476,7 @@ function recentDocumentsItem() {
         click: () => openDocument(file),
       })),
       { type: "separator" },
-      { label: "&Clear Recently Opened", click: () => clearRecentDocuments() },
+      { label: t("menuClearRecent"), click: () => clearRecentDocuments() },
     ],
   };
 }

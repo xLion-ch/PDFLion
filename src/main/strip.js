@@ -19,6 +19,7 @@ import { isTabsUrl } from "./routes.js";
 import * as tabs from "./tabs.js";
 import { closeOtherTabs, closeTab } from "./unsaved.js";
 import { documentWindows, moveTabToNewWindow, openDocuments } from "./windows.js";
+import { t } from "../shared/i18n.js";
 
 /**
  * Wayland doesn't tell apps where the pointer is outside their windows, so a
@@ -54,9 +55,10 @@ export function handleStrip() {
     if (tab && typeof focus === "boolean") tabs.selectTab(tab, { focus });
   });
 
+  // Home has no close button, and closes with its window only.
   ipcMain.on("pdflion-tabs:close", (event, id) => {
     const tab = stripTab(event, id);
-    if (tab) closeTab(tab);
+    if (tab && !tabs.isHome(tab)) closeTab(tab);
   });
 
   ipcMain.on("pdflion-tabs:context-menu", (event, id) => {
@@ -64,7 +66,7 @@ export function handleStrip() {
     if (tab) showContextMenu(tab);
   });
 
-  // Reordering within one strip.
+  // Reordering within one strip. Home stays first.
   ipcMain.on("pdflion-tabs:move", (event, id, index) => {
     const tab = stripTab(event, id);
     const win = tab && tabs.windowOf(tab);
@@ -79,7 +81,7 @@ export function handleStrip() {
   ipcMain.on("pdflion-tabs:drag-started", (event, id) => {
     const tab = stripTab(event, id);
     const from = tab && tabs.windowOf(tab);
-    if (!tab || !from) return;
+    if (!tab || !from || tabs.isHome(tab)) return;
     clearTimeout(dragTimer);
     drag = { tab, from };
   });
@@ -92,7 +94,7 @@ export function handleStrip() {
   });
 
   // A tab dropped on a document or Home, which adds it as the last tab of
-  // that window. Windows with one tab show no strip to drop on.
+  // that window.
   ipcMain.on("pdflion:drop-tab", (event, id) => {
     const target = tabs.fromWebContents(event.sender);
     const win = target && fromViewer(event) ? tabs.windowOf(target) : null;
@@ -115,24 +117,43 @@ export function handleStrip() {
 }
 
 /**
- * The native context menu of a tab in the strip.
+ * The native context menu of a tab in the strip. Home's only closes the
+ * documents, since it stays.
  *
  * @param {tabs.Tab} tab
  */
 function showContextMenu(tab) {
   const win = tabs.windowOf(tab);
   if (!win) return;
-  const several = tabs.tabsOf(win).length > 1;
-  Menu.buildFromTemplate([
-    { label: "Close Tab", click: () => closeTab(tab) },
-    { label: "Close Other Tabs", enabled: several, click: () => closeOtherTabs(tab) },
-    { type: "separator" },
-    {
-      label: "Move Tab to New Window",
-      enabled: several,
-      click: () => moveTabToNewWindow(tab),
-    },
-  ]).popup({ window: win });
+  const documents = documentCount(win);
+  const others = documents - (tabs.isHome(tab) ? 0 : 1);
+  const closeOthers = {
+    label: t("closeOtherTabs"),
+    enabled: others > 0,
+    click: () => closeOtherTabs(tab),
+  };
+  /** @type {Electron.MenuItemConstructorOptions[]} */
+  const template = tabs.isHome(tab)
+    ? [closeOthers]
+    : [
+        { label: t("closeTab"), click: () => closeTab(tab) },
+        closeOthers,
+        { type: "separator" },
+        {
+          label: t("moveTabToNewWindow"),
+          enabled: documents > 1,
+          click: () => moveTabToNewWindow(tab),
+        },
+      ];
+  Menu.buildFromTemplate(template).popup({ window: win });
+}
+
+/**
+ * @param {BrowserWindow} win
+ * @returns {number} how many documents `win` has open
+ */
+function documentCount(win) {
+  return tabs.tabsOf(win).filter((tab) => !tabs.isHome(tab)).length;
 }
 
 /**
@@ -177,7 +198,7 @@ function dragEnded(tab, from, dropEffect) {
  * @param {Electron.Point | null} point where the pointer is, if known
  */
 function tearOff(tab, from, point) {
-  if (tabs.tabsOf(from).length < 2) return;
+  if (documentCount(from) < 2) return;
   const { width, height } = from.getNormalBounds();
   moveTabToNewWindow(
     tab,

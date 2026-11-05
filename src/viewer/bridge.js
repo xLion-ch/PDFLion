@@ -61,6 +61,12 @@
 "use strict";
 
 (() => {
+  /**
+   * PDFLion's texts (src/shared/texts.js, which the host page loads first),
+   * in the language pdf.js picks for the viewer too.
+   */
+  const t = /** @type {any} */ (globalThis).PDFLionTexts.translator(navigator.languages);
+
   /** `LinkTarget.BLANK` in web/pdf_link_service.js. */
   const LINK_TARGET_BLANK = 2;
 
@@ -81,6 +87,16 @@
   const EDITOR_DISABLE = -1;
   const EDITOR_NONE = 0;
   const EDITOR_INK = 15;
+
+  /** `ScrollMode.PAGE` in web/ui_utils.js: one page at a time. */
+  const SCROLL_MODE_PAGE = 3;
+
+  /**
+   * A finger's swipe that turns a page in Page Scrolling: at least this far
+   * across, in CSS pixels, and at most this long, in ms.
+   */
+  const SWIPE_DISTANCE = 50;
+  const SWIPE_TIME = 800;
 
   /** `AnnotationEditorType.HIGHLIGHT` in src/shared/util.js. */
   const EDITOR_HIGHLIGHT = 9;
@@ -177,7 +193,7 @@
    * @typedef {object} FavouriteTool a drawing tool that has favourites
    * @property {string} name in the ids of its button and option box in
    *   web/viewer.html, such as `#editor<name>ParamsToolbar`
-   * @property {string} label in English, like the native menus
+   * @property {string} label in PDFLion's language
    * @property {number} mode its `AnnotationEditorType` in src/shared/util.js
    * @property {Record<string, number>} params the `AnnotationEditorParamsType`
    *   there of each of its settings
@@ -187,14 +203,14 @@
   const FAVOURITE_TOOLS = {
     highlight: {
       name: "Highlight",
-      label: "Highlight",
+      label: t("highlight"),
       mode: EDITOR_HIGHLIGHT,
       params: { color: 31, thickness: 32 },
     },
-    freetext: { name: "FreeText", label: "Text", mode: 3, params: { color: 12, size: 11 } },
+    freetext: { name: "FreeText", label: t("text"), mode: 3, params: { color: 12, size: 11 } },
     ink: {
       name: "Ink",
-      label: "Pencil",
+      label: t("pencil"),
       mode: EDITOR_INK,
       params: { color: 21, thickness: 22, opacity: 23 },
     },
@@ -259,7 +275,7 @@
   const HIGHLIGHT_SWATCH = '#editorHighlightColorPicker [role="option"][aria-selected="true"]';
 
   /** Save as Favourite's label, and for how long it says what a click did instead, in ms. */
-  const SAVE_FAVOURITE = "Save as Favourite";
+  const SAVE_FAVOURITE = t("saveAsFavourite");
   const FAVOURITE_NOTE_TIME = 2000;
 
   /**
@@ -408,9 +424,13 @@
   let eraserTool = null;
 
   /**
-   * @typedef {object} Drawing a Pencil drawing a drag of the eraser came to,
-   *   read once
-   * @property {any} editor the ink editor it was
+   * @typedef {object} Drawing a Pencil drawing or a highlight a drag of the
+   *   eraser came to, read once
+   * @property {any} editor the editor it was
+   * @property {boolean} highlight whether it's a highlight, which the eraser
+   *   erases whole, also in Line mode
+   * @property {ArrayLike<number>[]} quads a text highlight's boxes, as x1, y1,
+   *   x2, y2 in PDF coordinates, and none for a drawing
    * @property {any} data what `editor.serialize(true)` gave: its colour,
    *   opacity, rotation and place, for what replaces it
    * @property {ArrayLike<number>[]} strokes as the eraser has left them, x, y
@@ -418,8 +438,9 @@
    * @property {number} thickness
    * @property {[number, number, number, number]} box around the strokes'
    *   points as they were
-   * @property {any} shown the editor on the page for it: the drawing's own,
-   *   one built from what's left of its strokes, or null once it's erased
+   * @property {any[]} shown the editors on the page for it: the drawing's
+   *   own, or one for each stroke left of it, which is a drawing of its own
+   *   from then on, or none once it's erased
    * @property {boolean} cut whether its strokes changed since `shown` was built
    */
 
@@ -525,11 +546,8 @@
   let penOnly = false;
   let penOnlyChosen = false;
 
-  /**
-   * @type {HTMLButtonElement[]} pen-only drawing's switches, in Pencil's and
-   *   the eraser's option boxes
-   */
-  let penOnlySwitches = [];
+  /** @type {HTMLButtonElement | null} pen-only drawing's item in the ⋮ menu */
+  let penOnlyItem = null;
 
   /**
    * The pointer of the pen that's down on a page with one of PEN_TOOLS on,
@@ -548,6 +566,20 @@
 
   /** @type {ToolsMenu | null} */
   let toolsMenu = null;
+
+  /**
+   * @typedef {object} ZoomMenu what addZoomMenu() adds in place of pdf.js's
+   *   zoom select: a narrow button, which shows the zoom's icon or its
+   *   percentage, with a menu of the select's choices
+   * @property {HTMLButtonElement} button
+   * @property {HTMLElement} items the menu's items' container
+   */
+
+  /** @type {ZoomMenu | null} */
+  let zoomMenu = null;
+
+  /** The zoom select's named choices, which the zoom button shows as icons. */
+  const ZOOM_NAMES = ["auto", "page-actual", "page-fit", "page-width"];
 
   /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
@@ -656,13 +688,15 @@
     pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
     eraserTool = addEraserTool(app);
     addSaveFavouriteButtons();
-    penOnlySwitches = addPenOnlySwitches();
     favouritesBar = addFavouritesBar();
     undoButtons = addUndoButtons(app);
     toolsMenu = addToolsMenu(app);
+    zoomMenu = addZoomMenu(app);
     addShareButtons(app);
     addSaveStatus(app);
     addAppMenuItems(app);
+    // At the top, before Open… and New, below what the narrowest steps add.
+    penOnlyItem = addPenOnlyItem(app);
     pageButtons.push(...addNarrowMenuItems(app));
     toolSettingsLoaded = followToolSettings(app);
     followToolbarWidth();
@@ -676,9 +710,12 @@
       // After the overview's, whose Esc comes first.
       followEraser(app);
       followPen(app);
+      followPageTurns(app);
       followFavourites(app);
       followToolsMenu(app);
+      followZoomMenu(app);
       followEditorChanges(app);
+      followPencilStrokes(app);
       app.eventBus.on("documentloaded", () => {
         trackEdits(app);
         checkLocked(app);
@@ -1036,6 +1073,31 @@
   }
 
   /**
+   * Makes each of Pencil's strokes a drawing of its own as it ends, rather
+   * than a stroke of an open drawing that joins the annotations only once
+   * another tool is chosen. So the eraser's Object mode erases a stroke
+   * alone, and Undo and Redo take a stroke at a time, as pdf.js's own steps
+   * of adding a drawing. pdf.js ends a stroke on a pointerup it listens for
+   * on window from the stroke's start, after this listener, so the drawing
+   * ends a task later, unless another stroke has started meanwhile, and
+   * is left unselected, as overrides.css shows Pencil's drawings meanwhile.
+   *
+   * @param {any} app
+   */
+  function followPencilStrokes(app) {
+    window.addEventListener("pointerup", () => {
+      if (app.pdfViewer?.annotationEditorMode !== EDITOR_INK || erasing) return;
+      setTimeout(() => {
+        if (app.pdfViewer?.annotationEditorMode === EDITOR_INK && !isDrawing()) {
+          endPencilDrawing(app);
+          // pdf.js selects the new drawing, with its box and toolbar.
+          uiManager(app)?.unselectAll();
+        }
+      }, 0);
+    });
+  }
+
+  /**
    * Ends Pencil's open drawing, whose strokes join the annotations only
    * then, as unselectAll() does first, but without unselecting anything
    * (commitOrRemove() in src/display/editor/annotation_editor_layer.js).
@@ -1385,17 +1447,18 @@
 
   /**
    * Inserts an empty page after the current one, of the size that page is
-   * shown at, and goes to it. In the page overview, it goes after the last
-   * checked page, if any. The page is added after the document's bytes, as
+   * shown at, and goes to it. From the thumbnails' header, in the sidebar or
+   * the page overview, it goes after the last checked page, if any. The page is added after the document's bytes, as
    * an incremental update, so everything the file holds stays as it was.
    *
    * @param {any} app
+   * @param {boolean} [fromThumbnails] whether the thumbnails' header asked
    * @returns {Promise<boolean>} whether the page was inserted
    */
-  function insertBlankPage(app) {
+  function insertBlankPage(app, fromThumbnails = false) {
     return runPageChange(app, () => {
       // The page to insert after, which is also the new page's index.
-      const index = (overview && checkedPages().at(-1)) || app.page;
+      const index = ((overview || fromThumbnails) && checkedPages().at(-1)) || app.page;
       const { view, rotate } = app.pdfViewer.getPageView(index - 1).pdfPage;
       const [width, height] = [view[2] - view[0], view[3] - view[1]];
       // A page shown on its side, by its /Rotate, is as wide as it's tall.
@@ -1993,7 +2056,7 @@
   function addInsertButton(app) {
     const separator = document.getElementById("editorModeSeparator");
     if (!separator) return null;
-    const button = makeButton("pdflionInsertBlankPage", "toolbarButton", "Insert Blank Page");
+    const button = makeButton("pdflionInsertBlankPage", "toolbarButton", t("insertBlankPage"));
     button.disabled = true;
     button.addEventListener("click", () => insertBlankPage(app));
     separator.before(button);
@@ -2009,7 +2072,7 @@
   function addHomeButton() {
     const sidebarButton = document.getElementById("viewsManagerToggleButton");
     if (!sidebarButton || typeof window.pdflion.showHome !== "function") return null;
-    const button = makeButton("pdflionHomeButton", "toolbarButton", "Home");
+    const button = makeButton("pdflionHomeButton", "toolbarButton", t("home"));
     button.addEventListener("click", () => window.pdflion.showHome());
     sidebarButton.before(button);
     return button;
@@ -2026,13 +2089,13 @@
     if (typeof window.pdflion.share !== "function") return;
     const download = document.getElementById("downloadButton");
     if (download) {
-      const button = makeButton("pdflionShareButton", "toolbarButton", "Share");
+      const button = makeButton("pdflionShareButton", "toolbarButton", t("shareButton"));
       button.addEventListener("click", () => share(app));
       download.before(button);
     }
     const secondaryDownload = document.getElementById("secondaryDownload");
     if (secondaryDownload) {
-      const item = makeButton("pdflionSecondaryShare", "toolbarButton labeled", "Share…");
+      const item = makeButton("pdflionSecondaryShare", "toolbarButton labeled", t("share"));
       item.addEventListener("click", () => {
         app.secondaryToolbar?.close();
         share(app);
@@ -2059,7 +2122,7 @@
     window.pdflion.onSaveStatus((/** @type {string | null} */ status) => {
       button.hidden = !status;
       /** @type {HTMLElement} */ (button.firstElementChild).textContent = status ?? "";
-      button.title = status ? `${status}. Share…` : "";
+      button.title = status ? t("saveStatus", { status }) : "";
       layoutToolbar();
     });
   }
@@ -2075,8 +2138,8 @@
   function addUndoButtons(app) {
     const tools = document.getElementById("editorModeButtons");
     if (hasNativeMenu || !tools) return [];
-    const undo = makeButton("pdflionUndo", "toolbarButton", "Undo");
-    const redo = makeButton("pdflionRedo", "toolbarButton", "Redo");
+    const undo = makeButton("pdflionUndo", "toolbarButton", t("undo"));
+    const redo = makeButton("pdflionRedo", "toolbarButton", t("redo"));
     undo.addEventListener("click", () => editingAction(app, "undo"));
     redo.addEventListener("click", () => editingAction(app, "redo"));
     const group = createElement(
@@ -2132,10 +2195,10 @@
     const { showOpenPanel, newDocument, showAbout } = window.pdflion;
     const top = [];
     if (typeof showOpenPanel === "function") {
-      top.push(item("pdflionSecondaryOpen", "Open…", () => window.pdflion.showOpenPanel()));
+      top.push(item("pdflionSecondaryOpen", t("openFile"), () => window.pdflion.showOpenPanel()));
     }
     if (typeof newDocument === "function") {
-      top.push(item("pdflionSecondaryNew", "New", () => window.pdflion.newDocument()));
+      top.push(item("pdflionSecondaryNew", t("new"), () => window.pdflion.newDocument()));
     }
     if (top.length > 0) {
       container.prepend(...top, createElement("div", { className: "horizontalToolbarSeparator" }));
@@ -2143,7 +2206,7 @@
     if (typeof showAbout === "function") {
       container.append(
         createElement("div", { className: "horizontalToolbarSeparator" }),
-        item("pdflionSecondaryAbout", "About PDFLion", () => window.pdflion.showAbout()),
+        item("pdflionSecondaryAbout", t("aboutPdflion"), () => window.pdflion.showAbout()),
       );
     }
   }
@@ -2172,20 +2235,20 @@
       });
       return button;
     };
-    const insert = item("pdflionSecondaryInsertBlankPage", "Insert Blank Page", () =>
+    const insert = item("pdflionSecondaryInsertBlankPage", t("insertBlankPage"), () =>
       insertBlankPage(app),
     );
     insert.disabled = true;
     const tiny = createElement(
       "div",
       { className: "pdflionVisibleTiny" },
-      item("pdflionSecondaryFind", "Find…", () => app.findBar?.open()),
-      item("pdflionSecondaryPageOverview", "Page Overview", () => toggleOverview(app)),
+      item("pdflionSecondaryFind", t("find"), () => app.findBar?.open()),
+      item("pdflionSecondaryPageOverview", t("pageOverview"), () => toggleOverview(app)),
       insert,
     );
     const items = [tiny];
     if (typeof window.pdflion.showHome === "function") {
-      items.unshift(item("pdflionSecondaryHome", "Home", () => window.pdflion.showHome()));
+      items.unshift(item("pdflionSecondaryHome", t("home"), () => window.pdflion.showHome()));
     }
     container.prepend(
       ...items,
@@ -2203,7 +2266,7 @@
   function addOverviewButton(app) {
     const sidebarButton = document.getElementById("viewsManagerToggleButton");
     if (!sidebarButton) return null;
-    const button = makeButton("pdflionPageOverview", "toolbarButton", "Page Overview");
+    const button = makeButton("pdflionPageOverview", "toolbarButton", t("pageOverview"));
     button.setAttribute("aria-pressed", "false");
     button.addEventListener("click", () => toggleOverview(app));
     sidebarButton.after(button);
@@ -2211,10 +2274,10 @@
   }
 
   /**
-   * Adds the overview's own page tools to the views manager's header, before
+   * Adds PDFLion's own page tools to the views manager's header, before
    * pdf.js's Add file: Rotate Pages Left and Right, and Insert Blank Page.
-   * overrides.css shows them in the overview only, and not for a locked
-   * document.
+   * overrides.css shows them with Add file, in the sidebar's thumbnails and
+   * the overview, and not for a locked document.
    *
    * @param {any} app
    * @returns {HTMLButtonElement[]} the buttons
@@ -2225,12 +2288,12 @@
     const tools = document.createElement("div");
     tools.id = "pdflionPageTools";
     const className = "toolbarButton viewsManagerButton";
-    const rotateLeft = makeButton("pdflionRotatePagesLeft", className, "Rotate Pages Left");
+    const rotateLeft = makeButton("pdflionRotatePagesLeft", className, t("rotatePagesLeft"));
     rotateLeft.addEventListener("click", () => rotatePages(app, -90));
-    const rotateRight = makeButton("pdflionRotatePagesRight", className, "Rotate Pages Right");
+    const rotateRight = makeButton("pdflionRotatePagesRight", className, t("rotatePagesRight"));
     rotateRight.addEventListener("click", () => rotatePages(app, 90));
-    const insert = makeButton("pdflionOverviewInsertBlankPage", className, "Insert Blank Page");
-    insert.addEventListener("click", () => insertBlankPage(app));
+    const insert = makeButton("pdflionOverviewInsertBlankPage", className, t("insertBlankPage"));
+    insert.addEventListener("click", () => insertBlankPage(app, true));
     const buttons = [rotateLeft, rotateRight, insert];
     for (const button of buttons) button.disabled = true;
     tools.append(...buttons);
@@ -2239,8 +2302,7 @@
   }
 
   /**
-   * A button built like pdf.js's own. overrides.css draws its icon. Its label
-   * is English, like the native menus.
+   * A button built like pdf.js's own. overrides.css draws its icon.
    *
    * @param {string} id
    * @param {string} className
@@ -2404,10 +2466,19 @@
       closeOverview(app);
       event.preventDefault();
     });
-    window.addEventListener("dblclick", (event) => {
-      // The first click went to the page.
-      if (overview && targetIn(event, THUMBNAIL_IMAGE)) closeOverview(app);
-    });
+    // A click on a page opens it, once pdf.js has gone to it from the
+    // thumbnails' own listener, which stops the click. pdf.js stops the click
+    // that ends a drag of pages on window, before it reaches the thumbnails.
+    document.querySelector(THUMBNAILS)?.addEventListener(
+      "click",
+      (event) => {
+        if (!overview || !targetIn(event, THUMBNAIL_IMAGE)) return;
+        setTimeout(() => {
+          if (overview) closeOverview(app);
+        }, 0);
+      },
+      true,
+    );
     window.addEventListener("resize", () => {
       if (overview) relayoutThumbnails(app);
     });
@@ -2467,7 +2538,7 @@
     const pencil = document.getElementById("editorInk");
     const outerContainer = document.getElementById("outerContainer");
     if (!pencil || !outerContainer) return null;
-    const button = makeButton("pdflionEditorEraserButton", "toolbarButton", "Eraser");
+    const button = makeButton("pdflionEditorEraserButton", "toolbarButton", t("eraser"));
     button.disabled = true;
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-haspopup", "true");
@@ -2484,8 +2555,8 @@
       input.addEventListener("change", () => storeEraser({ ...eraser, mode }));
       return { input, label: createElement("label", { className: "pdflionEraserMode", title }, input, text) };
     };
-    const line = modeChoice("line", "Line", "Erases the parts of lines under it");
-    const object = modeChoice("object", "Object", "Erases whole drawings");
+    const line = modeChoice("line", t("eraseLine"), t("eraseLineTitle"));
+    const object = modeChoice("object", t("eraseObject"), t("eraseObjectTitle"));
     const size = createElement("input", {
       type: "range",
       id: "pdflionEraserSize",
@@ -2510,7 +2581,7 @@
         { className: "editorParamsToolbarContainer" },
         createElement(
           "div",
-          { className: "editorParamsSetter", role: "radiogroup", ariaLabel: "Erase" },
+          { className: "editorParamsSetter", role: "radiogroup", ariaLabel: t("erase") },
           line.label,
           object.label,
         ),
@@ -2520,7 +2591,7 @@
           createElement("label", {
             className: "editorParamsLabel",
             htmlFor: "pdflionEraserSize",
-            textContent: "Size",
+            textContent: t("size"),
           }),
           size,
         ),
@@ -2792,19 +2863,20 @@
       await redraw(app, ended);
       const ui = uiManager(app);
       const changed = [...ended.drawings.values()].filter(
-        (drawing) => drawing !== null && drawing.shown !== drawing.editor,
+        (drawing) =>
+          drawing !== null && !(drawing.shown.length === 1 && drawing.shown[0] === drawing.editor),
       );
       if (!ui || changed.length === 0) return;
       ui.addCommands({
         cmd: () => {
           for (const { editor, shown } of changed) {
             editor.remove();
-            if (shown) restoreEditor(ui, shown);
+            for (const piece of shown) restoreEditor(ui, piece);
           }
         },
         undo: () => {
           for (const { editor, shown } of changed) {
-            shown?.remove();
+            for (const piece of shown) piece.remove();
             restoreEditor(ui, editor);
           }
         },
@@ -2863,9 +2935,9 @@
     for (const editor of [...ui.getEditors(pageIndex)]) {
       const drawing = drag.replacements.get(editor) ?? drawingOf(drag, editor);
       if (!drawing || !touches(drawing, center, radius)) continue;
-      if (drag.mode === "object") {
+      if (drag.mode === "object" || drawing.highlight) {
         editor.remove();
-        drawing.shown = null;
+        drawing.shown = drawing.shown.filter((piece) => piece !== editor);
         continue;
       }
       // A stroke's round ends reach half its thickness past its points.
@@ -2897,9 +2969,10 @@
   }
 
   /**
-   * Replaces each drawing the drag cut since it last showed with one of what's
-   * left of its strokes, with the same colour, thickness and opacity, or
-   * removes it when nothing is left.
+   * Replaces each drawing the drag cut since it last showed with a drawing
+   * for each stroke left of it, with the same colour, thickness and opacity,
+   * so that each piece of a cut line is a drawing of its own, which the
+   * eraser's Object mode erases alone. A drawing with nothing left goes.
    *
    * @param {any} app
    * @param {Gesture} drag
@@ -2912,25 +2985,27 @@
       drawing.cut = false;
       const { editor, data, strokes } = drawing;
       const layer = ui.getLayer(editor.pageIndex);
-      const next =
-        layer && strokes.length > 0
-          ? await layer.deserialize({
-              annotationType: EDITOR_INK,
-              color: data.color,
-              thickness: data.thickness,
-              opacity: data.opacity,
-              paths: { points: strokes.map((stroke) => Float32Array.from(stroke)) },
-              // pdf.js replaces it with the box around the strokes.
-              rect: data.rect,
-              rotation: data.rotation,
-            })
-          : null;
-      drawing.shown?.remove();
-      if (next) {
-        addWithoutUndo(layer, next);
-        drag.replacements.set(next, drawing);
+      /** @type {any[]} */
+      const pieces = [];
+      for (const stroke of layer ? strokes : []) {
+        const piece = await layer.deserialize({
+          annotationType: EDITOR_INK,
+          color: data.color,
+          thickness: data.thickness,
+          opacity: data.opacity,
+          paths: { points: [Float32Array.from(stroke)] },
+          // pdf.js replaces it with the box around the stroke.
+          rect: data.rect,
+          rotation: data.rotation,
+        });
+        if (piece) pieces.push(piece);
       }
-      drawing.shown = next;
+      for (const piece of drawing.shown) piece.remove();
+      for (const piece of pieces) {
+        addWithoutUndo(layer, piece);
+        drag.replacements.set(piece, drawing);
+      }
+      drawing.shown = pieces;
     }
   }
 
@@ -2955,41 +3030,103 @@
   /**
    * @param {Gesture} drag
    * @param {any} editor
-   * @returns {Drawing | null} its drawing, if it's Pencil's: not a free
-   *   highlight, nor a signature, which are drawings too
+   * @returns {Drawing | null} its drawing, if it's Pencil's or a highlight:
+   *   not a signature, which is a drawing too
    */
   function drawingOf(drag, editor) {
     const { drawings } = drag;
     if (!drawings.has(editor)) {
-      const data = editor.editorType === "ink" ? editor.serialize(true) : null;
-      drawings.set(
-        editor,
-        data && {
-          editor,
-          data,
-          strokes: data.paths.points,
-          thickness: data.thickness,
-          box: boxAround(data.paths.points),
-          shown: editor,
-          cut: false,
-        },
-      );
+      drawings.set(editor, editor.editorType === "highlight" ? highlightOf(editor) : inkOf(editor));
     }
     return drawings.get(editor) ?? null;
+  }
+
+  /**
+   * @param {any} editor
+   * @returns {Drawing | null} a Pencil drawing's strokes and look
+   */
+  function inkOf(editor) {
+    const data = editor.editorType === "ink" ? editor.serialize(true) : null;
+    if (!data) return null;
+    const strokes = data.paths.points;
+    return {
+      editor,
+      data,
+      highlight: false,
+      quads: [],
+      strokes,
+      thickness: data.thickness,
+      box: boxAround(strokes),
+      shown: [editor],
+      cut: false,
+    };
+  }
+
+  /**
+   * A highlight's place, which pdf.js serializes only to save it: a free
+   * highlight's line, and a text highlight's boxes, in PDF coordinates, as
+   * `serialize()` in src/display/editor/highlight.js works them out.
+   *
+   * @param {any} editor
+   * @returns {Drawing | null}
+   */
+  function highlightOf(editor) {
+    const outlines = editor._drawOutlines;
+    if (!outlines || editor.isEmpty?.()) return null;
+    /** @type {ArrayLike<number>[]} */
+    let strokes = [];
+    /** @type {ArrayLike<number>[]} */
+    const quads = [];
+    let thickness = 0;
+    if (outlines.isFree) {
+      // Its line, as a list of strokes of x, y pairs.
+      strokes = [...outlines.serialize(editor.getPDFRect(), editor._drawRotation).points];
+      thickness = editor._drawingOptions?.thickness ?? 0;
+    } else {
+      const points = outlines.serializeQuadPoints(editor.pageTranslation, editor.pageDimensions);
+      // Each box's corners: top left, top right, bottom left, bottom right.
+      for (let i = 0; i + 7 < points.length; i += 8) {
+        quads.push([
+          Math.min(points[i], points[i + 2]),
+          Math.min(points[i + 1], points[i + 5]),
+          Math.max(points[i], points[i + 2]),
+          Math.max(points[i + 1], points[i + 5]),
+        ]);
+      }
+    }
+    const box = boxAround([...strokes, ...quads]);
+    return {
+      editor,
+      data: null,
+      highlight: true,
+      quads,
+      strokes,
+      thickness,
+      box,
+      shown: [editor],
+      cut: false,
+    };
   }
 
   /**
    * @param {Drawing} drawing
    * @param {number[]} center
    * @param {number} radius
-   * @returns {boolean} whether an eraser there touches the drawing's ink
+   * @returns {boolean} whether an eraser there touches the drawing's ink, or
+   *   a text highlight's boxes
    */
-  function touches({ strokes, thickness, box: [x1, y1, x2, y2] }, center, radius) {
+  function touches({ strokes, quads, thickness, box: [x1, y1, x2, y2] }, center, radius) {
     const reach = radius + thickness / 2;
     const [x, y] = center;
     if (x < x1 - reach || x > x2 + reach || y < y1 - reach || y > y2 + reach) return false;
-    return strokes.some((stroke) =>
-      window.PDFLionGeometry.hitsStroke(stroke, center, radius, thickness),
+    const inQuad = quads.some(([left, bottom, right, top]) => {
+      const dx = Math.max(left - x, 0, x - right);
+      const dy = Math.max(bottom - y, 0, y - top);
+      return dx * dx + dy * dy <= radius * radius;
+    });
+    return (
+      inQuad ||
+      strokes.some((stroke) => window.PDFLionGeometry.hitsStroke(stroke, center, radius, thickness))
     );
   }
 
@@ -3090,44 +3227,31 @@
   }
 
   /**
-   * Adds pen-only drawing's switch to the end of Pencil's and the eraser's
-   * option boxes, built like Highlight's Show All (#editorHighlightVisibility
-   * in web/viewer.html), which overrides.css repeats the styles of. Its label
-   * is English, like the native menus.
+   * Adds pen-only drawing's item to the top of the ⋮ menu, as a setting
+   * of its own that applies to every tool, rather than a switch in some
+   * tools' option boxes, which looked as if it applied to that tool alone.
+   * Choosing it turns it on or off, and the web app's Home has it too.
    *
-   * @returns {HTMLButtonElement[]} the switches
+   * @param {any} app
+   * @returns {HTMLButtonElement | null}
    */
-  function addPenOnlySwitches() {
-    /** @type {[string, string][]} each option box's id, and its switch's */
-    const boxes = [
-      ["editorInkParamsToolbar", "pdflionInkPenOnly"],
-      ["pdflionEditorEraserParamsToolbar", "pdflionEraserPenOnly"],
-    ];
-    return boxes.flatMap(([box, id]) => {
-      const container = document.querySelector(`#${box} > .editorParamsToolbarContainer`);
-      if (!container) return [];
-      const button = createElement("button", { type: "button", id, className: "toggle-button" });
-      button.setAttribute("aria-pressed", String(penOnly));
-      button.addEventListener("click", () => storePenOnly(!penOnly));
-      const label = createElement("label", {
-        className: "editorParamsLabel",
-        htmlFor: id,
-        textContent: "Draw Only with a Pen",
-      });
-      container.append(
-        createElement(
-          "div",
-          { className: "pdflionPenOnlySetter" },
-          createElement("div", { className: "divider" }),
-          createElement("div", { className: "toggler" }, label, button),
-        ),
-      );
-      return [button];
+  function addPenOnlyItem(app) {
+    const container = document.getElementById("secondaryToolbarButtonContainer");
+    if (!container) return null;
+    const button = makeButton("pdflionSecondaryPenOnly", "toolbarButton labeled", t("drawOnlyWithPen"));
+    button.setAttribute("role", "menuitemcheckbox");
+    button.setAttribute("aria-checked", String(penOnly));
+    button.classList.toggle("toggled", penOnly);
+    button.addEventListener("click", () => {
+      storePenOnly(!penOnly);
+      app.secondaryToolbar?.close();
     });
+    container.prepend(button, createElement("div", { className: "horizontalToolbarSeparator" }));
+    return button;
   }
 
   /**
-   * Shows whether only a pen draws, as main sends it: on its switches, and on
+   * Shows whether only a pen draws, as main sends it: on its ⋮ menu item, and on
    * #outerContainer, where overrides.css lets fingers scroll the pages under
    * the eraser and Highlight.
    *
@@ -3137,7 +3261,9 @@
     penOnly = settings.penOnly === true;
     penOnlyChosen = settings.penOnlyChosen === true;
     document.getElementById("outerContainer")?.classList.toggle("pdflionPenOnly", penOnly);
-    for (const button of penOnlySwitches) button.setAttribute("aria-pressed", String(penOnly));
+    penOnlyItem?.setAttribute("aria-checked", String(penOnly));
+    // As pdf.js shows the scroll mode chosen, for one.
+    penOnlyItem?.classList.toggle("toggled", penOnly);
   }
 
   /**
@@ -3154,7 +3280,7 @@
   /**
    * Pen-only drawing, as iPadOS's "Only Draw with Apple Pencil": the first
    * pen to press on a page turns it on, unless it was ever turned on or off
-   * before, and its switches turn it off. While it's on and Pencil, Highlight
+   * before, and its item in the ⋮ menu turns it off. While it's on and Pencil, Highlight
    * or the eraser is on, a finger's press on a page never reaches pdf.js's
    * layers, which would draw, select or erase with it. Its default stays, so
    * the browser scrolls, and pdf.js's TouchManager, which follows touch
@@ -3236,10 +3362,88 @@
   }
 
   /**
+   * In Page Scrolling, where pdf.js shows one page at a time, turns pages as
+   * a book app does: a tap or click beside the page, on the viewer's dark
+   * background, goes to the previous page on the left and the next on the
+   * right, and so does a finger's swipe to the right or left. A swipe is
+   * left alone where it would draw, with a drawing tool on that fingers draw
+   * with, and where the page is wider than the view, which it scrolls.
+   *
+   * @param {any} app
+   */
+  function followPageTurns(app) {
+    const container = document.getElementById("viewerContainer");
+    if (!container) return;
+    const isPageMode = () => app.pdfViewer?.scrollMode === SCROLL_MODE_PAGE;
+    /** @param {number} delta 1 for the next page, -1 for the previous */
+    const turn = (delta) => {
+      if (delta > 0) app.pdfViewer.nextPage();
+      else app.pdfViewer.previousPage();
+    };
+
+    container.addEventListener("click", (event) => {
+      const target = /** @type {Element | null} */ (event.target);
+      if (!isPageMode() || !target || target.closest(".page")) return;
+      const page = app.pdfViewer.getPageView(app.page - 1)?.div;
+      if (!page) return;
+      const { left, right } = page.getBoundingClientRect();
+      if (event.clientX < left) turn(-1);
+      else if (event.clientX > right) turn(1);
+    });
+
+    // Touch events, which go on while the browser pans, where it cancels
+    // the pointer's events. A pen's own touches, as Safari marks them, are
+    // left out.
+    /** @type {{ x: number, y: number, time: number } | null} */
+    let swipe = null;
+    container.addEventListener(
+      "touchstart",
+      (event) => {
+        const [touch] = event.touches;
+        const mode = app.pdfViewer?.annotationEditorMode;
+        const drawsWithFingers =
+          mode !== EDITOR_NONE &&
+          mode !== EDITOR_DISABLE &&
+          !isFingerKeptOff(app, /** @type {any} */ ({ pointerType: "touch" }));
+        swipe =
+          event.touches.length === 1 &&
+          /** @type {any} */ (touch).touchType !== "stylus" &&
+          isPageMode() &&
+          !drawsWithFingers &&
+          !erasing
+            ? { x: touch.clientX, y: touch.clientY, time: event.timeStamp }
+            : null;
+      },
+      { capture: true, passive: true },
+    );
+    container.addEventListener(
+      "touchend",
+      (event) => {
+        const start = swipe;
+        swipe = null;
+        const [touch] = event.changedTouches;
+        if (!start || !touch || event.touches.length > 0) return;
+        const dx = touch.clientX - start.x;
+        const dy = touch.clientY - start.y;
+        const wider = container.scrollWidth > container.clientWidth + 1;
+        if (
+          !wider &&
+          Math.abs(dx) >= SWIPE_DISTANCE &&
+          Math.abs(dx) > 2 * Math.abs(dy) &&
+          event.timeStamp - start.time <= SWIPE_TIME
+        ) {
+          turn(dx < 0 ? 1 : -1);
+        }
+      },
+      { capture: true, passive: true },
+    );
+    container.addEventListener("touchcancel", () => (swipe = null), { capture: true, passive: true });
+  }
+
+  /**
    * Adds Save as Favourite to the end of the option boxes of Highlight, Text
    * and Pencil, as an outlined button. A click has main keep the tool's
    * settings for every tab, and the button says for a moment what it did.
-   * Its label is English, like the native menus.
    */
   function addSaveFavouriteButtons() {
     for (const [tool, { name }] of Object.entries(FAVOURITE_TOOLS)) {
@@ -3278,13 +3482,13 @@
    */
   async function saveFavourite(tool) {
     const favourite = readFavourite(tool);
-    if (!favourite) return "Choose a Colour First";
+    if (!favourite) return t("chooseColourFirst");
     await toolSettingsLoaded;
-    if (!favourites) return "Couldn't Save";
-    if (favourites.some((other) => sameFavourite(other, favourite))) return "Already a Favourite";
+    if (!favourites) return t("couldntSave");
+    if (favourites.some((other) => sameFavourite(other, favourite))) return t("alreadyFavourite");
     favourites = [...favourites, favourite];
     window.pdflion.setToolSettings({ favourites });
-    return "Saved";
+    return t("saved");
   }
 
   /**
@@ -3328,19 +3532,65 @@
 
   /**
    * Pencil's colour and opacity. pdf.js shows the opacity in a slider of its
-   * own, or where the colour input takes an alpha channel, in the colour, as
-   * `#rrggbbaa`, and removes the slider (web/annotation_editor_params.js).
+   * own, or where the colour input takes an alpha channel, in the colour, and
+   * removes the slider (web/annotation_editor_params.js). The colour's value
+   * then comes in the browser's own format: `#rrggbbaa`, or Safari's and
+   * Firefox's `color(srgb r g b / a)`, which pdf.js reads with getRGBA() in
+   * src/display/display_utils.js, as this does.
    *
    * @param {string} value the colour input's
    * @param {HTMLInputElement | null} slider the opacity's, if there is one
    * @returns {{ color: string, opacity: number } | null}
    */
   function inkColor(value, slider) {
-    const [, color, alpha = "ff"] = /^(#[0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value) ?? [];
-    if (!color) return null;
+    const rgba = colorValues(value.trim());
+    if (!rgba) return null;
+    const [r, g, b, alpha] = rgba;
+    const color = `#${[r, g, b].map((part) => part.toString(16).padStart(2, "0")).join("")}`;
     // As the slider would have it: in steps of 0.05, from 0.05.
-    const steps = Math.max(1, Math.round((parseInt(alpha, 16) / 255) * 20));
-    return { color: color.toLowerCase(), opacity: slider?.valueAsNumber ?? steps / 20 };
+    const steps = Math.max(1, Math.round(alpha * 20));
+    return { color, opacity: slider?.valueAsNumber ?? steps / 20 };
+  }
+
+  /**
+   * @param {string} value a colour input's
+   * @returns {[number, number, number, number] | null} its red, green and
+   *   blue, from 0 to 255, and its alpha, from 0 to 1
+   */
+  function colorValues(value) {
+    const clamp = (/** @type {number} */ part) => Math.min(255, Math.max(0, Math.round(part)));
+    const hex = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(value);
+    if (hex) {
+      const [, rgb, alpha = "ff"] = hex;
+      return [0, 2, 4]
+        .map((at) => parseInt(rgb.slice(at, at + 2), 16))
+        .concat(parseInt(alpha, 16) / 255);
+    }
+    const number = String.raw`(-?[\d.]+(?:e-?\d+)?)`;
+    const srgb = new RegExp(
+      String.raw`^color\(srgb\s+${number}\s+${number}\s+${number}(?:\s*\/\s*(${number.slice(1, -1)}%?|none))?\)$`,
+      "i",
+    ).exec(value);
+    if (srgb) {
+      const [, r, g, b, alpha] = srgb;
+      const opacity =
+        alpha === undefined || alpha === "none"
+          ? 1
+          : alpha.endsWith("%")
+            ? parseFloat(alpha) / 100
+            : parseFloat(alpha);
+      return [
+        ...[r, g, b].map((part) => clamp(parseFloat(part) * 255)),
+        Math.min(1, Math.max(0, opacity)),
+      ];
+    }
+    const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i.exec(value);
+    if (rgb) {
+      const [, r, g, b, alpha = "1"] = rgb;
+      const opacity = alpha.endsWith("%") ? parseFloat(alpha) / 100 : parseFloat(alpha);
+      return [...[r, g, b].map((part) => clamp(parseFloat(part))), Math.min(1, opacity)];
+    }
+    return null;
   }
 
   /**
@@ -3368,7 +3618,7 @@
     const moreButton = makeButton(
       "pdflionFavouritesMoreButton",
       "toolbarButton",
-      "More Favourites",
+      t("moreFavourites"),
     );
     moreButton.disabled = true;
     moreButton.setAttribute("aria-expanded", "false");
@@ -3721,8 +3971,12 @@
    * @returns {string} what it is, such as "Pencil, #1E66F5, 1 pt, 100 %"
    */
   function describeFavourite({ tool, color, thickness, size, opacity }) {
-    const parts = [FAVOURITE_TOOLS[tool].label, color.toUpperCase(), `${size ?? thickness} pt`];
-    if (opacity !== undefined) parts.push(`${Math.round(opacity * 100)} %`);
+    const parts = [
+      FAVOURITE_TOOLS[tool].label,
+      color.toUpperCase(),
+      t("points", { size: size ?? thickness }),
+    ];
+    if (opacity !== undefined) parts.push(t("percent", { percent: Math.round(opacity * 100) }));
     return parts.join(", ");
   }
 
@@ -3746,6 +4000,11 @@
     if (!ui) return;
     const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
     commitDrawing(ui);
+    // The favourite that's on turns its tool off, as the tool's own button does.
+    if (isFavouriteOn(app, favourite)) {
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
+      return;
+    }
     if (erasing && mode === EDITOR_INK) stopErasing(app, EDITOR_INK);
     if (app.pdfViewer.annotationEditorMode !== mode) {
       favouriteMode = mode;
@@ -3764,6 +4023,27 @@
   }
 
   /**
+   * @param {any} app
+   * @returns {Favourite | null} the tool that's on with its settings, as its
+   *   option box shows them, and none while the eraser is on
+   */
+  function currentFavourite(app) {
+    const mode = app.pdfViewer?.annotationEditorMode;
+    const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
+    return tool && !erasing ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
+  }
+
+  /**
+   * @param {any} app
+   * @param {Favourite} favourite
+   * @returns {boolean} whether its tool is on with its settings
+   */
+  function isFavouriteOn(app, favourite) {
+    const current = currentFavourite(app);
+    return !!current && sameFavourite(favourite, current);
+  }
+
+  /**
    * Shows as pressed the favourites whose tool is on with their settings,
    * as its option box shows them, and none while the eraser is on. It reads
    * them once pdf.js has shown a change: Highlight's colour picker marks the
@@ -3773,10 +4053,7 @@
    */
   function updateFavouritesPressed(app) {
     Promise.resolve().then(() => {
-      const mode = app.pdfViewer?.annotationEditorMode;
-      const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
-      const current =
-        tool && !erasing ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
+      const current = currentFavourite(app);
       for (const { favourite, button, item } of favouriteButtons) {
         const on = !!current && sameFavourite(favourite, current);
         button.classList.toggle("toggled", on);
@@ -3946,7 +4223,7 @@
   function addToolsMenu(app) {
     const tools = document.getElementById("editorModeButtons");
     if (!tools) return null;
-    const button = makeButton("pdflionToolsButton", "toolbarButton", "Drawing Tools");
+    const button = makeButton("pdflionToolsButton", "toolbarButton", t("drawingTools"));
     button.disabled = true;
     button.setAttribute("aria-expanded", "false");
     button.setAttribute("aria-haspopup", "true");
@@ -3969,6 +4246,109 @@
     button.addEventListener("click", () => fillToolsMenu(app));
     button.addEventListener("keydown", () => fillToolsMenu(app));
     return { button, items, closeMenu: followMenu(button, menu, items) };
+  }
+
+  /**
+   * Adds a narrow button in place of pdf.js's zoom select, #scaleSelect,
+   * which overrides.css hides. The button shows an icon for a named zoom,
+   * such as Page Width, and the percentage for any other. Its menu lists the
+   * select's choices, in pdf.js's words, the named ones with their icons, and
+   * choosing one picks it in the select, whose change pdf.js follows.
+   *
+   * @param {any} app
+   * @returns {ZoomMenu | null}
+   */
+  function addZoomMenu(app) {
+    const select = /** @type {HTMLSelectElement | null} */ (document.getElementById("scaleSelect"));
+    const container = document.getElementById("scaleSelectContainer");
+    if (!select || !container) return null;
+    const button = makeButton("pdflionZoomButton", "toolbarButton", t("zoom"));
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-haspopup", "true");
+    button.setAttribute("aria-controls", "pdflionZoomMenu");
+    const items = createElement("div", { className: "menuContainer", role: "menu" });
+    const menu = createElement(
+      "div",
+      { id: "pdflionZoomMenu", className: "editorParamsToolbar hidden doorHanger menu" },
+      items,
+    );
+    container.after(
+      createElement(
+        "div",
+        { id: "pdflionZoom", className: "toolbarButtonWithContainer" },
+        button,
+        menu,
+      ),
+    );
+    // Before followMenu()'s own listeners, which open it.
+    button.addEventListener("click", () => fillZoomMenu(app));
+    button.addEventListener("keydown", () => fillZoomMenu(app));
+    followMenu(button, menu, items);
+    return { button, items };
+  }
+
+  /**
+   * Fills the zoom menu with the zoom select's choices, the chosen one
+   * checked. pdf.js translates their labels, so they're read each time.
+   *
+   * @param {any} app
+   */
+  function fillZoomMenu(app) {
+    const select = /** @type {HTMLSelectElement | null} */ (document.getElementById("scaleSelect"));
+    if (!zoomMenu || !select) return;
+    const entries = [...select.options]
+      .filter((option) => !option.hidden && !option.disabled)
+      .map((option) => {
+        const label = option.textContent?.trim() || option.value;
+        const item = makeButton(
+          `pdflionZoom-${option.value}`,
+          "toolbarButton labeled pdflionZoomItem",
+          label,
+        );
+        item.setAttribute("role", "menuitemradio");
+        item.setAttribute("aria-checked", String(option.selected));
+        item.setAttribute("data-zoom", option.value);
+        item.tabIndex = -1;
+        item.addEventListener("click", () => {
+          select.value = option.value;
+          select.dispatchEvent(new Event("change"));
+          app.pdfViewer?.focus();
+        });
+        return item;
+      });
+    zoomMenu.items.replaceChildren(...entries);
+  }
+
+  /**
+   * Keeps the zoom button showing the zoom: a named zoom's icon, and else
+   * the percentage, as pdf.js shows it in its select.
+   *
+   * @param {any} app
+   */
+  function followZoomMenu(app) {
+    const show = () => {
+      if (!zoomMenu) return;
+      const { button } = zoomMenu;
+      const value = app.pdfViewer?.currentScaleValue;
+      const scale = app.pdfViewer?.currentScale;
+      const named = typeof value === "string" && ZOOM_NAMES.includes(value);
+      const percent = `${Math.round((scale || 1) * 100)}%`;
+      const select = /** @type {HTMLSelectElement | null} */ (
+        document.getElementById("scaleSelect")
+      );
+      const label = named
+        ? select?.selectedOptions[0]?.textContent?.trim() || value
+        : percent;
+      if (named) button.setAttribute("data-zoom", value);
+      else button.removeAttribute("data-zoom");
+      button.classList.toggle("pdflionZoomPercent", !named);
+      const text = /** @type {HTMLElement} */ (button.firstElementChild);
+      text.textContent = named ? label : percent;
+      button.title = named ? `${label} (${percent})` : percent;
+    };
+    app.eventBus.on("scalechanging", () => show());
+    app.eventBus.on("pagesinit", () => show());
+    show();
   }
 
   /**

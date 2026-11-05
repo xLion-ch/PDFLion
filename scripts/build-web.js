@@ -84,6 +84,7 @@ export function injectViewer(html) {
     '<script src="../../pdflion/geometry.js"></script>',
     '<script src="../../web/keys.js"></script>',
     '<script src="../../web/viewer-host.js"></script>',
+    '<script src="../../shared/texts.js"></script>',
     '<script src="../../pdflion/bridge.js"></script>',
   ].join("");
   return html.replace("</head>", `${injection}</head>`);

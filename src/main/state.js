@@ -53,7 +53,9 @@ function load() {
 /**
  * Writes the state synchronously, since `will-quit` doesn't wait. It's a few
  * hundred bytes, and some tens of kilobytes with hundreds of favourites. The
- * temporary file and rename keep a crash from leaving half a file.
+ * temporary file and rename keep a crash from leaving half a file. A save
+ * that fails is tried again a moment later, so that the file doesn't miss a
+ * change until the next one.
  */
 function save() {
   clearTimeout(saveTimer);
@@ -65,10 +67,41 @@ function save() {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
-    fs.renameSync(temp, file);
+    replace(temp, file);
   } catch (error) {
     fs.rmSync(temp, { force: true });
     console.error(`Couldn't save ${file}:`, error);
+    saveTimer = setTimeout(save, SAVE_DELAY_MS);
+    app.once("will-quit", save);
+  }
+}
+
+/** Errors of a rename on Windows while another process has the file open. */
+const BUSY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+const RENAME_ATTEMPTS = 10;
+const RENAME_PAUSE_MS = 20;
+
+/**
+ * Renames `from` over `to`. Windows refuses to replace a file another process
+ * has open, such as an antivirus or the search indexer reading it for a
+ * moment, so there it tries again for up to 200 ms. Synchronously, since
+ * `will-quit` doesn't wait.
+ *
+ * @param {string} from
+ * @param {string} to
+ */
+function replace(from, to) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (error) {
+      const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+      if (process.platform !== "win32" || !BUSY_CODES.has(code ?? "") || attempt >= RENAME_ATTEMPTS) {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RENAME_PAUSE_MS);
+    }
   }
 }
 

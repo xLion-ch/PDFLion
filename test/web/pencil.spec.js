@@ -80,16 +80,10 @@ const endDrawing = (frame) =>
 
 /**
  * @param {Frame} frame
- * @returns {Promise<string | null>} whether pen-only drawing's switches show it on
+ * @returns {Promise<string | null>} whether pen-only drawing's ⋮ menu item shows it on
  */
-const penOnlyShown = async (frame) => {
-  const [ink, eraser] = await Promise.all(
-    ["#pdflionInkPenOnly", "#pdflionEraserPenOnly"].map((id) =>
-      frame.locator(id).getAttribute("aria-pressed"),
-    ),
-  );
-  return ink === eraser ? ink : `${ink} and ${eraser}`;
-};
+const penOnlyShown = (frame) =>
+  frame.locator("#pdflionSecondaryPenOnly").getAttribute("aria-checked");
 
 /**
  * @param {Page} page
@@ -134,9 +128,16 @@ test("a pen draws with Pencil, turns pen-only drawing on the first time, and the
   await frame.locator("#editorInkButton").tap();
   await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.4]), { pressure: 0.8, tiltX: 30, tiltY: -10 });
   expect(await penOnlyShown(frame)).toBe("true");
+  // Each stroke is a drawing of its own, which ends a task after its lift,
+  // so the next stroke waits for it, as a person's would.
+  await expect.poll(() => drawings(frame)).toMatchObject([{ type: "ink", strokes: 1 }]);
   await pencilStroke(frame, line([0.2, 0.5], [0.6, 0.6]));
-  await endDrawing(frame);
-  expect(await drawings(frame)).toMatchObject([{ type: "ink", strokes: 2 }]);
+  await expect
+    .poll(() => drawings(frame))
+    .toMatchObject([
+      { type: "ink", strokes: 1 },
+      { type: "ink", strokes: 1 },
+    ]);
   await expect
     .poll(() => storedToolSettings(page))
     .toMatchObject({ penOnly: true, penOnlyChosen: true });
@@ -196,10 +197,15 @@ test("the eraser erases with the pen, whole drawings or parts of them, and Undo 
   await frame.locator("#pdflionRedo").tap();
   await expect.poll(() => types(frame)).toEqual(["ink"]);
 
-  // Line mode cuts the second drawing in two.
+  // Line mode cuts the second drawing into two.
   await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
   await pencilStroke(frame, line([0.4, 0.5], [0.4, 0.7]));
-  await expect.poll(() => drawings(frame)).toMatchObject([{ type: "ink", strokes: 2 }]);
+  await expect
+    .poll(() => drawings(frame))
+    .toMatchObject([
+      { type: "ink", strokes: 1 },
+      { type: "ink", strokes: 1 },
+    ]);
   await undo.tap();
   await expect.poll(() => drawings(frame)).toMatchObject([{ type: "ink", strokes: 1 }]);
 });
@@ -273,8 +279,9 @@ test("with pen-only drawing, fingers draw and erase nothing and reach none of pd
   await fingerDrag(frame, line([0.4, 0.2], [0.4, 0.4]));
   expect(await types(frame)).toEqual(["ink"]);
 
-  // Turned off in the eraser's option box, fingers erase, and draw with Pencil.
-  await frame.locator("#pdflionEraserPenOnly").tap();
+  // Turned off in the ⋮ menu, fingers erase, and draw with Pencil.
+  await frame.locator("#secondaryToolbarToggleButton").tap();
+  await frame.locator("#pdflionSecondaryPenOnly").tap();
   expect(await penOnlyShown(frame)).toBe("false");
   await expect
     .poll(() => storedToolSettings(page))
@@ -352,4 +359,48 @@ test("a pen draws nothing with no tool on", async ({ page }) => {
   expect(await types(frame)).toEqual([]);
   // A pen on a page turns pen-only drawing on all the same.
   expect(await penOnlyShown(frame)).toBe("true");
+});
+
+test("Pencil saves as a favourite, also where its colour takes an alpha channel", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorInkButton").tap();
+  await frame.locator("#pdflionSaveInkFavourite").tap();
+  await expect(frame.locator("#pdflionSaveInkFavourite")).toHaveText("Saved");
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const database = await new Promise((resolve, reject) => {
+          const open = indexedDB.open("pdflion");
+          open.onsuccess = () => resolve(open.result);
+          open.onerror = () => reject(open.error);
+        });
+        const favourites = await new Promise((resolve) => {
+          const get = database.transaction("settings").objectStore("settings").get("favourites");
+          get.onsuccess = () => resolve(get.result);
+        });
+        database.close();
+        return favourites;
+      }),
+    )
+    .toEqual([{ tool: "ink", color: "#000000", thickness: 1, opacity: 1 }]);
+  // Picked with a tap, it draws in its colour.
+  await frame.locator("#editorInkButton").tap();
+  const favourite = frame.locator("#pdflionFavourites > .pdflionFavourite");
+  await favourite.tap();
+  await expect(favourite).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the eraser erases a free highlight with the pen, in either mode", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorHighlightButton").tap();
+  // Across the margin, where there's no text to highlight.
+  await pencilStroke(frame, line([0.03, 0.3], [0.03, 0.6]));
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
+
+  await frame.locator("#pdflionEditorEraserButton").tap();
+  await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
+  await pencilStroke(frame, line([0.01, 0.45], [0.06, 0.45]));
+  await expect.poll(() => types(frame)).toEqual([]);
+  await frame.locator("#pdflionUndo").tap();
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
 });

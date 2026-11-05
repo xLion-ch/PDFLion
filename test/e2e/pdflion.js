@@ -79,24 +79,36 @@ export async function tracemonkey(dir, name = "tracemonkey.pdf") {
 }
 
 /**
+ * Outside CI, the app runs in the background (background.cjs), so the tests
+ * leave the computer usable meanwhile. PDFLION_E2E_FOREGROUND=1 shows the
+ * windows, and lets them take the focus, as on CI.
+ */
+const BACKGROUND_ARGS =
+  process.env.CI || process.env.PDFLION_E2E_FOREGROUND
+    ? []
+    : ["-r", path.join(path.dirname(fileURLToPath(import.meta.url)), "background.cjs")];
+
+/**
  * Starts PDFLion with `files` on its command line, sizes the window to
  * WINDOW_SIZE, and waits until the first of them shows its first page, or
  * without files until Home shows.
  *
  * @param {string[]} files
  * @param {{ userData?: string, lang?: string, args?: string[], env?: Record<string, string> }} [options]
- *   userData: reuse a folder. lang: the language, such as `de`, for pdf.js's
- *   labels, rather than the system's. args: more switches. env: variables to
+ *   userData: reuse a folder. lang: the language, such as `de`, for PDFLion's
+ *   and pdf.js's labels, rather than English: never the system's, so that
+ *   tests read the same everywhere. args: more switches. env: variables to
  *   set besides this process's
  * @returns {Promise<{ app: ElectronApplication, page: Page, userData: string }>}
  */
-export async function launch(files, { userData, lang, args = [], env = {} } = {}) {
+export async function launch(files, { userData, lang = "en-US", args = [], env = {} } = {}) {
   userData ??= await tempDir();
   const app = await electron.launch({
     args: [
+      ...BACKGROUND_ARGS,
       ROOT,
       `--user-data-dir=${userData}`,
-      ...(lang ? [`--lang=${lang}`] : []),
+      `--lang=${lang}`,
       ...args,
       ...files,
     ],
@@ -216,14 +228,16 @@ export async function stripOf(app, page) {
 
 /**
  * @param {Page} strip
- * @returns {Promise<{ id: string, name: string, active: boolean, edited: boolean, label: string }[]>}
- *   the tabs the strip shows, left to right
+ * @returns {Promise<{ id: string, name: string, home: boolean, active: boolean, edited: boolean, label: string }[]>}
+ *   the tabs the strip shows, left to right, Home first
  */
 export function stripTabs(strip) {
   return strip.evaluate(() =>
     [...document.querySelectorAll(".tab")].map((tab) => ({
       id: /** @type {HTMLElement} */ (tab).dataset.id ?? "",
-      name: tab.querySelector(".name")?.textContent ?? "",
+      // Home shows its icon alone, and its name as its title.
+      name: tab.getAttribute("title") ?? "",
+      home: tab.classList.contains("home"),
       active: tab.getAttribute("aria-selected") === "true",
       edited: tab.classList.contains("edited"),
       label: tab.getAttribute("aria-label") ?? "",

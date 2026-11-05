@@ -19,6 +19,7 @@ import {
   readToolSettings,
   removeFavourite,
 } from "../shared/tools.js";
+import { t } from "../shared/i18n.js";
 
 /** Must run once the app is ready, before any window loads. */
 export function handleToolSettings() {
@@ -41,7 +42,7 @@ export function handleToolSettings() {
     if (!win) return;
     Menu.buildFromTemplate([
       {
-        label: "Remove Favourite",
+        label: t("removeFavourite"),
         click: () =>
           updateToolSettings({
             favourites: removeFavourite(currentToolSettings().favourites, favourite),

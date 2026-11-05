@@ -82,3 +82,38 @@ for (const lang of ["en-US", "de"]) {
     }
   });
 }
+
+test("the zoom button shows a named zoom's icon or the percentage, and its menu picks a zoom", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const { page } = await pdflion([file]);
+  const button = page.locator("#pdflionZoomButton");
+  await expect(page.locator("#scaleSelectContainer")).toBeHidden();
+  await expect(button).toHaveAttribute("data-zoom", "auto");
+
+  await button.click();
+  const items = page.locator("#pdflionZoomMenu .pdflionZoomItem");
+  await expect(items.first()).toBeVisible();
+  await expect(page.locator('.pdflionZoomItem[data-zoom="auto"]')).toHaveAttribute("aria-checked", "true");
+  await page.locator('.pdflionZoomItem[data-zoom="page-width"]').click();
+  await expect(page.locator("#pdflionZoomMenu")).toBeHidden();
+  await expect(button).toHaveAttribute("data-zoom", "page-width");
+  expect(await page.evaluate(() => window.PDFViewerApplication.pdfViewer.currentScaleValue)).toBe("page-width");
+
+  await button.click();
+  await page.locator('.pdflionZoomItem[data-zoom="2"]').click();
+  await expect(button).not.toHaveAttribute("data-zoom");
+  await expect(button).toHaveText("200%");
+});
+
+test("Print is in the ⋮ menu, not the toolbar, at every width", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 3);
+  const { app, page } = await pdflion([file]);
+  await setWidth(app, page, 1400);
+  await expect(page.locator("#printButton")).toBeHidden();
+  await page.locator("#secondaryToolbarToggleButton").click();
+  await expect(page.locator("#secondaryPrint")).toBeVisible();
+});

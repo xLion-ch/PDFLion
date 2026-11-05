@@ -27,30 +27,30 @@ test("after a reload, the tabs come back in order with the active one, where eac
   await openApp(page);
   await openFromHome(page, [TRACEMONKEY, other]);
   await documentFrame(page, "Other.pdf");
-  await page.locator("#tabs .tab").first().click();
+  await page.locator("#tabs .tab").nth(1).click();
   const viewer = await documentFrame(page, PAPER);
   await viewer.evaluate(() => {
     window.PDFViewerApplication.pdfViewer.currentScaleValue = "1.5";
     window.PDFViewerApplication.page = 5;
   });
-  // Home, after the paper, which then shows again.
+  // Home, then the paper again.
   await viewer.locator("#pdflionHomeButton").click();
   await homeFrame(page);
-  await page.locator("#tabs .tab").first().click();
+  await page.locator("#tabs .tab").nth(1).click();
   await expect
     .poll(async () => {
       const session = await readSession(page);
-      return { kinds: session?.tabs.map((tab) => tab.kind), active: session?.active, page: session?.tabs[0].view?.page };
+      return { kinds: session?.tabs.map((tab) => tab.kind), active: session?.active, page: session?.tabs[1].view?.page };
     })
-    .toEqual({ kinds: ["document", "home", "document"], active: 0, page: 5 });
+    .toEqual({ kinds: ["home", "document", "document"], active: 1, page: 5 });
 
   // Not from pdf.js's own history, in localStorage, which iPadOS may lose.
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   const restored = await documentFrame(page, PAPER);
   expect(await stripTabs(page)).toMatchObject([
-    { name: PAPER, active: true },
     { home: true, active: false },
+    { name: PAPER, active: true },
     { name: "Other.pdf", active: false },
   ]);
   await expect.poll(() => restored.evaluate(() => window.PDFViewerApplication.page)).toBe(5);
@@ -59,15 +59,15 @@ test("after a reload, the tabs come back in order with the active one, where eac
   expect(loadedDocuments(page)).toEqual([PAPER]);
   await page.locator("#tabs .tab").nth(2).click();
   await documentFrame(page, "Other.pdf");
-  await page.locator("#tabs .tab").nth(1).click();
+  await page.locator("#tabs .tab").first().click();
   await homeFrame(page);
 });
 
-test("a deleted document's tab doesn't come back, and without tabs Home shows", async ({ page }) => {
+test("a deleted document's tab doesn't come back, and without documents Home shows", async ({ page }) => {
   await openApp(page);
   await openFromHome(page, [TRACEMONKEY]);
   await documentFrame(page, PAPER);
-  await expect.poll(async () => (await readSession(page))?.tabs.length).toBe(1);
+  await expect.poll(async () => (await readSession(page))?.tabs.length).toBe(2);
   await page.evaluate(
     () =>
       new Promise((resolve, reject) => {
@@ -96,6 +96,8 @@ test("a fifth document sends the one shown longest ago to sleep, saved, and it w
   await openFromHome(page, [path.join(dir, "A.pdf")]);
   let viewer = await documentFrame(page, "A.pdf");
   await drawStroke(page, viewer);
+  // The stroke becomes a drawing of its own, which takes the focus, first.
+  await viewer.locator(".inkEditor").waitFor({ state: "attached" });
   await viewer.evaluate(() => {
     window.PDFViewerApplication.page = 2;
   });
@@ -108,10 +110,10 @@ test("a fifth document sends the one shown longest ago to sleep, saved, and it w
   // A slept, once its drawing was stored.
   await expect.poll(() => loadedDocuments(page)).toEqual(["B.pdf", "C.pdf", "D.pdf", "E.pdf"]);
   expect((await readLibrary(page)).find((record) => record.name === "A.pdf")?.revision).toBe(1);
-  expect((await stripTabs(page)).map((tab) => tab.name)).toEqual(names);
+  expect((await stripTabs(page)).map((tab) => tab.name)).toEqual(["Home", ...names]);
 
   // Shown, it loads again, with its drawing, where it was, and B sleeps.
-  await page.locator("#tabs .tab").first().click();
+  await page.locator("#tabs .tab").nth(1).click();
   const woken = await documentFrame(page, "A.pdf");
   await expect.poll(() => woken.evaluate(() => window.PDFViewerApplication.page)).toBe(2);
   const annotations = await woken.evaluate(async () => {

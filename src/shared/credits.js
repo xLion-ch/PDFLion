@@ -6,6 +6,8 @@
  * too, and unit tests under plain Node.
  */
 
+import { t } from "./i18n.js";
+
 /**
  * @typedef {object} Component
  * @property {string} name
@@ -326,12 +328,24 @@ export const CREDITS = [
 export function creditsText(versions) {
   return CREDITS.map(({ heading, components }) =>
     [
-      `${heading}:`,
+      `${creditsHeading(heading)}:`,
       ...components.flatMap(({ name, by, license, url }) => {
         const version = versions[name];
-        const title = `${name}${version ? ` ${version}` : ""}${by ? ` by ${by}` : ""}`;
+        const named = `${name}${version ? ` ${version}` : ""}`;
+        const title = by ? t("creditsBy", { name: named, by }) : named;
         return [license ? `${title} (${license})` : title, url];
       }),
     ].join("\n"),
   ).join("\n\n");
+}
+
+/**
+ * @param {string} heading one of CREDITS's, in English
+ * @returns {string} it in the language set
+ */
+export function creditsHeading(heading) {
+  if (heading === "Built on") return t("creditsBuiltOn");
+  if (heading === "Built and tested with") return t("creditsBuiltWith");
+  const [, name] = /^(.+) includes$/.exec(heading) ?? [];
+  return name ? t("creditsIncludes", { name }) : heading;
 }

@@ -32,6 +32,9 @@ const BROWSERS = {
 /** The file the storage trial writes and reads, in MiB. */
 const STORAGE_SIZE = 200;
 
+/** Copies of the storage trial's file that the backup trial zips. */
+const BACKUP_COPIES = 2;
+
 /** Frames the memory trial opens. A Mac has memory for many more. */
 const MEMORY_FRAMES = 4;
 
@@ -81,6 +84,8 @@ async function trial(name) {
     };
     results.features = await runTrial("name=features", 120_000);
     results.storage = await runTrial(`name=storage&size=${STORAGE_SIZE}`, 600_000);
+    // Zips the file the storage trial just wrote.
+    results.backup = await runTrial(`name=backup&copies=${BACKUP_COPIES}`, 600_000);
     results.memory = await runTrial(
       `name=memory&frames=${MEMORY_FRAMES}&document=scans.pdf`,
       600_000,

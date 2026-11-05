@@ -3,6 +3,9 @@
  * reports them through `window.pdflionTabs` (src/preload/tabs.cjs), and
  * reports clicks, keys and drags back. Main decides what happens to the tabs.
  *
+ * Home is each window's leftmost tab, an icon alone: it can't be closed or
+ * dragged, and no tab goes before it.
+ *
  * Dragging uses HTML drag and drop, the operating system's, so a tab can be
  * dropped on another window, whose strip or document reports the drop to
  * main, or outside every window, which tears it off.
@@ -23,6 +26,10 @@
 
   const api = window.pdflionTabs;
   const strip = /** @type {HTMLElement} */ (document.getElementById("tabs"));
+
+  /** PDFLion's texts (src/shared/texts.js), in the language pdf.js picks too. */
+  const t = /** @type {any} */ (globalThis).PDFLionTexts.translator(navigator.languages);
+  strip.setAttribute("aria-label", t("documents"));
 
   /** @typedef {{ id: string, name: string, home: boolean, edited: boolean, active: boolean }} TabState */
 
@@ -80,7 +87,7 @@
     const close = document.createElement("button");
     close.className = "close";
     close.tabIndex = -1;
-    close.title = "Close Tab";
+    close.title = t("closeTab");
     element.append(name, dot, close);
     return element;
   }
@@ -91,16 +98,17 @@
    */
   function update(element, { name, home, edited, active }) {
     element.classList.toggle("home", home);
+    element.draggable = !home;
     element.classList.toggle("active", active);
     element.classList.toggle("edited", edited);
     element.setAttribute("aria-selected", String(active));
-    element.setAttribute("aria-label", edited ? `${name}, edited` : name);
+    element.setAttribute("aria-label", edited ? t("edited", { name }) : name);
     element.tabIndex = active ? 0 : -1;
     element.title = name;
-    /** @type {HTMLElement} */ (element.querySelector(".name")).textContent = name;
+    /** @type {HTMLElement} */ (element.querySelector(".name")).textContent = home ? "" : name;
     /** @type {HTMLElement} */ (element.querySelector(".close")).setAttribute(
       "aria-label",
-      `Close ${name}`,
+      t("closeNamed", { name }),
     );
   }
 
@@ -110,6 +118,11 @@
    */
   function tabAt(target) {
     return target instanceof Element ? target.closest(".tab") : null;
+  }
+
+  /** @param {Element} tab */
+  function isHome(tab) {
+    return tab.classList.contains("home");
   }
 
   /** @param {EventTarget | null} target */
@@ -131,7 +144,8 @@
 
   strip.addEventListener("auxclick", (event) => {
     const tab = tabAt(event.target);
-    if (tab && event.button === 1) api.close(/** @type {string} */ (tab.dataset.id));
+    if (!tab || event.button !== 1 || isHome(tab)) return;
+    api.close(/** @type {string} */ (tab.dataset.id));
   });
 
   strip.addEventListener("click", (event) => {
@@ -186,7 +200,10 @@
   strip.addEventListener("dragstart", (event) => {
     const tab = tabAt(event.target);
     const dataTransfer = event.dataTransfer;
-    if (!tab || !dataTransfer) return;
+    if (!tab || !dataTransfer || isHome(tab)) {
+      event.preventDefault();
+      return;
+    }
     const id = /** @type {string} */ (tab.dataset.id);
     dataTransfer.setData(TAB_TYPE, id);
     dataTransfer.effectAllowed = "move";
@@ -239,13 +256,14 @@
   /**
    * @param {number} x
    * @returns {number} the index of the tab a drop at `x` goes before, or the
-   *   number of tabs to go after the last
+   *   number of tabs to go after the last. Never before Home.
    */
   function dropIndex(x) {
     const children = [...strip.children];
-    const index = children.findIndex((child) => {
+    const first = children[0] && isHome(children[0]) ? 1 : 0;
+    const index = children.findIndex((child, at) => {
       const { left, width } = child.getBoundingClientRect();
-      return x < left + width / 2;
+      return at >= first && x < left + width / 2;
     });
     return index === -1 ? children.length : index;
   }
@@ -295,7 +313,11 @@
           clientX,
           clientY,
         });
-        target.dispatchEvent(menu);
+        // A redraw may have replaced the element meanwhile, as a new state does.
+        const now = target.isConnected
+          ? target
+          : document.elementFromPoint(clientX, clientY)?.closest(selector);
+        if (now && container.contains(now)) now.dispatchEvent(menu);
       }, LONG_PRESS_TIME);
       signal.addEventListener("abort", () => clearTimeout(timer));
       /** @param {PointerEvent} event */

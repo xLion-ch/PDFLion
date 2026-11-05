@@ -8,39 +8,58 @@ import {
   expect,
   homeFrame,
   openApp,
+  openAppExplained,
   openFromHome,
   readLibrary,
   stripTabs,
   test,
 } from "./pdflion.js";
 
-test("documents open as tabs, and the strip shows for two or more", async ({ page, dir }) => {
+test("documents open as tabs after Home, which always shows, leftmost, as an icon", async ({
+  page,
+  dir,
+}) => {
   const other = path.join(dir, "Other.pdf");
   await writeLabelled(other, 2);
   await openApp(page);
-  await expect(page.locator("#tabs")).toBeHidden();
+  await expect(page.locator("#tabs")).toBeVisible();
+  expect(await stripTabs(page)).toMatchObject([{ name: "Home", home: true, active: true }]);
+  const homeTab = page.locator("#tabs .tab.home");
+  await expect(homeTab.locator(".name")).toHaveText("");
+  await expect(homeTab.locator(".close")).toBeHidden();
+  expect(await homeTab.getAttribute("draggable")).toBe("false");
 
   await openFromHome(page, [TRACEMONKEY, other]);
   await documentFrame(page, "Other.pdf");
-  await expect(page.locator("#tabs")).toBeVisible();
-  // The first took Home's place, and the last shows.
+  // After Home, and the last shows.
   expect(await stripTabs(page)).toMatchObject([
+    { name: "Home", home: true, active: false },
     { name: "compressed.tracemonkey-pldi-09.pdf", home: false, active: false },
     { name: "Other.pdf", home: false, active: true },
   ]);
   await expect(page).toHaveTitle("Other.pdf – PDFLion");
+  // Home's tab is narrower than a document's.
+  const width = async (/** @type {import("@playwright/test").Locator} */ tab) =>
+    (await tab.boundingBox())?.width ?? 0;
+  expect(await width(homeTab)).toBeLessThan(await width(page.locator("#tabs .tab:not(.home)").first()));
 
   const key = await commandKey(page);
-  await page.keyboard.press("Control+Tab");
-  await expect.poll(async () => (await stripTabs(page)).map((tab) => tab.active)).toEqual([true, false]);
+  await page.keyboard.press("Control+Shift+Tab");
+  await expect
+    .poll(async () => (await stripTabs(page)).map((tab) => tab.active))
+    .toEqual([false, true, false]);
   await page.keyboard.press(`${key}+w`);
-  await expect.poll(async () => (await stripTabs(page)).map((tab) => tab.name)).toEqual(["Other.pdf"]);
-  await expect(page.locator("#tabs")).toBeHidden();
+  await expect
+    .poll(async () => (await stripTabs(page)).map((tab) => tab.name))
+    .toEqual(["Home", "Other.pdf"]);
 
-  // The last tab closing shows Home.
+  // The last document closing shows Home, which doesn't close.
   await page.keyboard.press(`${key}+w`);
   await homeFrame(page);
-  expect(await stripTabs(page)).toMatchObject([{ home: true }]);
+  expect(await stripTabs(page)).toMatchObject([{ home: true, active: true }]);
+  await page.keyboard.press(`${key}+w`);
+  await homeFrame(page);
+  expect(await stripTabs(page)).toMatchObject([{ home: true, active: true }]);
 });
 
 test("the shortcuts work in the viewer, in Home and in the strip", async ({ page }) => {
@@ -69,15 +88,15 @@ test("the shortcuts work in the viewer, in Home and in the strip", async ({ page
   await expect(page.locator(".snackbar .text")).toHaveText("“Untitled.pdf” is saved in PDFLion.");
   expect((await readLibrary(page))[0].revision).toBe(1);
 
-  // ⇧⌘H shows Home, after the document.
+  // ⇧⌘H shows Home, before the document.
   await page.keyboard.press(`${key}+Shift+h`);
   await homeFrame(page);
-  expect(await stripTabs(page)).toMatchObject([{ name: "Untitled.pdf" }, { home: true, active: true }]);
+  expect(await stripTabs(page)).toMatchObject([{ home: true, active: true }, { name: "Untitled.pdf" }]);
 
   // ⌃⇧Tab in the strip.
   await page.locator("#tabs .tab.active").focus();
   await page.keyboard.press("Control+Shift+Tab");
-  await expect.poll(async () => (await stripTabs(page)).map((tab) => tab.active)).toEqual([true, false]);
+  await expect.poll(async () => (await stripTabs(page)).map((tab) => tab.active)).toEqual([false, true]);
 });
 
 test("pdf.js keeps the keys PDFLion leaves it, such as zooming", async ({ page }) => {
@@ -176,4 +195,29 @@ test("links in documents open only for http, https and mailto", async ({ page, d
   expect(opened).toBe(0);
   await page.waitForTimeout(500);
   expect(page.context().pages()).toHaveLength(2);
+});
+
+test.describe("in French", () => {
+  test.use({ locale: "fr-FR" });
+
+  test("PDFLion's own texts follow the browser's language, as pdf.js's do", async ({ page }) => {
+    const home = await openAppExplained(page);
+    await expect(home.locator("#empty .message")).toHaveText("Aucun document récent");
+    await expect(page.locator("#tabs")).toHaveAttribute("aria-label", "Documents");
+    await expect(page.locator("#tabs .tab.home")).toHaveAttribute("title", "Accueil");
+    await home.locator("#info").click();
+    await expect(page.getByRole("menuitem", { name: "À propos de PDFLion" })).toBeVisible();
+  });
+});
+
+test("the Home Screen icon follows the appearance, on a dark background in dark mode", async ({ page }) => {
+  await openAppExplained(page);
+  const icon = page.locator('link[rel="apple-touch-icon"]');
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(icon).toHaveAttribute("href", "web/icons/apple-touch-icon.png");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(icon).toHaveAttribute("href", "web/icons/apple-touch-icon-dark.png");
+  // The service worker has it for offline use, like every file of the app.
+  const response = await page.request.get("web/icons/apple-touch-icon-dark.png");
+  expect(response.headers()["content-type"]).toBe("image/png");
 });

@@ -226,6 +226,13 @@ test("a favourite shows in every window's toolbar, draws with its settings, and 
   await expect(favourite).toHaveAttribute("aria-pressed", "true");
   await drawLine(other);
   expect(await inkDrawings(other)).toEqual([{ color: [30, 102, 245], thickness: 5, opacity: 0.35 }]);
+  // A click on the favourite that's on turns its tool off, and another on again.
+  await favourite.click();
+  await expect(other.locator("#editorInkButton")).not.toHaveClass(/toggled/);
+  await expect(favourite).toHaveAttribute("aria-pressed", "false");
+  await favourite.click();
+  await expect(other.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await expect(favourite).toHaveAttribute("aria-pressed", "true");
   // Pencil off and on again opens its box, with the favourite's settings.
   await other.locator("#editorInkButton").click();
   await other.locator("#editorInkButton").click();
@@ -261,7 +268,10 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   const black = { ...pencil, color: "#000000" };
   const red = { tool: "freetext", color: "#e64553", size: 24 };
   const highlight = { tool: "highlight", color: "#53ffbc", thickness: 16 };
-  await setToolSettings(page, { favourites: [pencil, red, highlight, black] });
+  // Six, more than fit before pdf.js's medium view, with Print in the ⋮ menu.
+  const green = { ...pencil, color: "#40a02b" };
+  const thick = { ...pencil, thickness: 12 };
+  await setToolSettings(page, { favourites: [pencil, red, highlight, green, thick, black] });
   const more = page.locator("#pdflionFavouritesMoreButton");
   const items = page.locator("#pdflionFavouritesMenu .pdflionFavourite");
 
@@ -288,8 +298,8 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   // Wide, all fit.
   await setWidth(app, page, 1400);
   expect(await layout()).toEqual({
-    inToolbar: [true, true, true, true],
-    inMenu: [false, false, false, false],
+    inToolbar: [true, true, true, true, true, true],
+    inMenu: [false, false, false, false, false, false],
     more: false,
     compact: false,
   });
@@ -311,8 +321,8 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   // In pdf.js's medium view, all are in the menu.
   await setWidth(app, page, 700);
   expect(await layout()).toMatchObject({
-    inToolbar: [false, false, false, false],
-    inMenu: [true, true, true, true],
+    inToolbar: [false, false, false, false, false, false],
+    inMenu: [true, true, true, true, true, true],
     more: true,
   });
 
@@ -336,11 +346,11 @@ test("favourites that don't fit move into the ★ menu, which works with the mou
   await page.keyboard.press("h");
   await expect(items.nth(2)).toBeFocused();
   await page.keyboard.press("End");
-  await expect(items.nth(3)).toBeFocused();
+  await expect(items.nth(5)).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(items.nth(0)).toBeFocused();
   await page.keyboard.press("ArrowUp");
-  await expect(items.nth(3)).toBeFocused();
+  await expect(items.nth(5)).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("#pdflionFavouritesMenu")).toBeHidden();
   await expect(more).toBeFocused();

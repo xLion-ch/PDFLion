@@ -117,12 +117,14 @@ test("a pen turns pen-only drawing on, after which fingers scroll and draw nothi
   const { page } = await pdflion([await tracemonkey(await tempDir())]);
   const input = await inputOf(page);
   await page.locator("#editorInkButton").click();
-  const penOnly = page.locator("#pdflionInkPenOnly");
-  await expect(penOnly).toHaveAttribute("aria-pressed", "false");
+  // A setting for every tool, in the ⋮ menu.
+  const penOnly = page.locator("#pdflionSecondaryPenOnly");
+  await expect(page.locator("#editorInkParamsToolbar .pdflionPenOnlySetter")).toHaveCount(0);
+  await expect(penOnly).toHaveAttribute("aria-checked", "false");
 
   await input.pen(await across(page, 0.1, 0.4, 0.3));
   expect(await drawings(page)).toEqual(["ink"]);
-  await expect(penOnly).toHaveAttribute("aria-pressed", "true");
+  await expect(penOnly).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => toolSettings(page)).toMatchObject({ penOnly: true, penOnlyChosen: true });
 
   // A finger scrolls the page, with Pencil on.
@@ -137,7 +139,9 @@ test("a pen turns pen-only drawing on, after which fingers scroll and draw nothi
 
   // Turned off, and with Pencil chosen again, which pdf.js needs to take
   // another kind of pointer, a finger draws.
+  await page.locator("#secondaryToolbarToggleButton").click();
   await penOnly.click();
+  await expect(penOnly).toBeHidden();
   await expect
     .poll(() => toolSettings(page))
     .toMatchObject({ penOnly: false, penOnlyChosen: true });
@@ -148,7 +152,7 @@ test("a pen turns pen-only drawing on, after which fingers scroll and draw nothi
 
   // Chosen by hand, it stays off for the next pen.
   await input.pen(await across(page, 0.1, 0.4, 0.6));
-  await expect(penOnly).toHaveAttribute("aria-pressed", "false");
+  await expect(penOnly).toHaveAttribute("aria-checked", "false");
 });
 
 test("a long press of a finger on a favourite shows its menu", async ({ pdflion }) => {

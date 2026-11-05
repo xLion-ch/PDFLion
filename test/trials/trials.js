@@ -29,6 +29,15 @@ export const TRIALS = [
       "gets stored.",
   },
   {
+    name: "backup",
+    title: "Backup",
+    answers: "Large backups",
+    about:
+      "Zips copies of the file Large files in IndexedDB stored, up to several GB, as Export… " +
+      "does, then shares or downloads the ZIP, and reads a ZIP picked from Files a slice at a " +
+      "time, checking every entry, as Import… does.",
+  },
+  {
     name: "memory",
     title: "Viewer frames in memory",
     answers: "Memory",

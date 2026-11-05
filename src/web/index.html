@@ -7,7 +7,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!--
+      The app starts below iPadOS's status bar, which gets a solid strip of
+      its own, in the theme colour: under it, iPadOS 26 would blur and fade
+      the top of the app (its scroll edge effect).
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="PDFLion" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#dadada" />
@@ -21,7 +27,7 @@
     <script src="web/keys.js"></script>
     <script type="module" src="web/shell.js"></script>
   </head>
-  <body class="oneTab">
+  <body>
     <div id="tabs" role="tablist" aria-label="Documents"></div>
     <main id="frames"></main>
   </body>

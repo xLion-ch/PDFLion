@@ -10,14 +10,15 @@ A PDF viewer for macOS, Windows and Linux. It's based on Mozilla's [pdf.js](http
 - Opens PDFs from the file manager, the Open dialog, or dropped on a window, as tabs of the front window. Tabs can be dragged into another order, onto another window, or out into a window of their own.
 - Saves form data and annotations into the file, or to a new one with Save As, and asks about unsaved changes before closing or quitting.
 - File > New opens an untitled document with one blank page, US Letter or A4, whichever your region uses.
-- In the sidebar's thumbnails, and in View > Page Overview, which shows them as a grid across the window, pages can be moved, copied, cut, deleted and exported, and PDFs or images added. These changes are saved as a new file, which leaves out some of what the old one held, such as XMP metadata, layers and document scripts, and PDFLion asks first.
-- Edit > Insert Blank Page, and the page overview's Rotate Pages Left and Right, are saved as additions to the end of the file, so everything else in it stays as it was.
+- In the sidebar's thumbnails, and in View > Page Overview, which shows them as a grid across the window, pages can be moved, copied, cut, deleted and exported, and PDFs or images added. A click on a page in the overview opens it. These changes are saved as a new file, which leaves out some of what the old one held, such as XMP metadata, layers and document scripts, and PDFLion asks first.
+- Edit > Insert Blank Page, and Rotate Pages Left and Right above the thumbnails, in the sidebar and the page overview, are saved as additions to the end of the file, so everything else in it stays as it was.
 - Documents with a password can't have their pages changed, and signed documents ask first.
-- The Eraser, after Pencil, erases the parts of lines it passes over, or whole drawings, also those another app left in the file. A pen's eraser end erases too, without picking the Eraser.
-- Save as Favourite, in the options of Highlight, Text and Pencil, keeps the tool's settings, such as a blue pencil 1 point wide, as a button in the toolbar of every window.
-- With a pen, such as a Surface Pen, only the pen draws once it has touched a page, as on an iPad: fingers scroll and zoom while Pencil, Highlight or the Eraser is on. Draw Only with a Pen, in the options of Pencil and the Eraser, turns that off.
-- Zoom, rotation, search, sidebar, Presentation Mode and printing, from the menus and the platform's usual shortcuts.
-- Follows the system's light or dark appearance, and in the viewer its language. The menus are in English.
+- Each of Pencil's strokes is a drawing of its own, which Undo takes back alone. The Eraser, after Pencil, erases the parts of lines it passes over, each piece left a drawing of its own, or whole drawings, also those another app left in the file, and highlights whole. A pen's eraser end erases too, without picking the Eraser.
+- Save as Favourite, in the options of Highlight, Text and Pencil, keeps the tool's settings, such as a blue pencil 1 point wide, as a button in the toolbar of every window. A click on the favourite that's on turns its tool off.
+- With a pen, such as a Surface Pen, only the pen draws once it has touched a page, as on an iPad: fingers scroll and zoom while Pencil, Highlight or the Eraser is on. Draw Only with a Pen, at the top of the ⋮ menu, turns that off for every tool.
+- In Page Scrolling, a tap or click beside the page, or a swipe across it, turns to the previous or next page.
+- Zoom, from a narrow button that shows the zoom's icon or percentage, rotation, search, sidebar, Presentation Mode and printing, from the menus and the platform's usual shortcuts.
+- Follows the system's light or dark appearance, and its language: PDFLion's menus, buttons and messages are in English, German, French and Italian, and English for any other language. The viewer comes in pdf.js's many languages.
 - Remembers the last window's place and recently opened files, and updates itself from the releases on GitHub.
 
 PDFLion's only network requests of its own are its checks for updates. Links in a document open in your browser or mail app, and only `http`, `https` and `mailto` links open at all.
@@ -41,7 +42,7 @@ PDFLion isn't signed with an Apple or Microsoft certificate, so macOS and Window
 
 **Linux:** in the folder with the package, run `sudo apt install ./PDFLion-<version>-linux-amd64.deb`. PDFLion appears among your apps, and under Open With for PDFs in Files and Nemo, where you can also make it the default. Uninstall it with `sudo apt remove pdflion`.
 
-**iPad:** PDFLion is a web app there, with iPadOS 18 or later. Open [xlion-ch.github.io/PDFLion](https://xlion-ch.github.io/PDFLion/) in Safari, and add it with Share > Add to Home Screen: Safari deletes a website's data after 7 days without use, but not a Home Screen app's. The first visit downloads the app, about 12 MB, after which it works offline. PDFLion keeps its own copy of each document you open, through Open… or by dragging it from Files, and saves your changes into it. The file in Files changes only when you share the document and choose Save to Files, and until then PDFLion marks it "Not in Files". Removing the app from the Home Screen deletes its documents, so export them first (see Moving to another computer). Android tablets run it in Chrome, which hasn't been tried by hand.
+**iPad:** PDFLion is a web app there, with iPadOS 18 or later. Open [xlion-ch.github.io/PDFLion](https://xlion-ch.github.io/PDFLion/) in Safari, and add it with Share > Add to Home Screen: Safari deletes a website's data after 7 days without use, but not a Home Screen app's. The first visit downloads the app, about 12 MB, after which it works offline. PDFLion keeps its own copy of each document you open, through Open… or by dragging it from Files, and saves your changes into it. The file in Files changes only when you share the document and choose Save to Files, and until then PDFLion marks it "Not in Files". Removing the app from the Home Screen deletes its documents, so export them first (see Moving to another computer). Added in dark mode, its icon has a dark background, and it keeps the icon it was added with. Android tablets run it in Chrome, which hasn't been tried by hand.
 
 ### Updates
 
@@ -101,7 +102,7 @@ npm run build                  # runs all the tests, then builds the installers 
 
 ```sh
 npm test               # unit tests
-npm run test:e2e       # end-to-end tests: they open windows and take focus while they run
+npm run test:e2e       # end-to-end tests, in invisible windows that never take the focus (not on CI)
 npm run test:web       # build the web app, and test it in Playwright's WebKit and Chromium
 npm run pdfjs:check    # is there a newer pdf.js release?
 npm run pdfjs:update   # switch to it and rebuild pdf.js
@@ -125,7 +126,7 @@ The app runs from the copy its service worker keeps, so a reload shows the same 
 
 CI keeps the web app of each pull request from this repository as `PDFLion-<version>-web`, for 14 days, under the run's Artifacts. To try the build that would be released, download it, unzip it into a folder, and serve that with `npm run web:serve -- --https <folder>`.
 
-Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, the Apple Pencil, keys, printing and safe areas.
+Trials in `test/trials/` find out what the web app can rely on: today's viewer, and pages that measure memory, large files in IndexedDB, large backups, the Apple Pencil, keys, printing and safe areas.
 
 ```sh
 npm run web:trials                # build dist/trials/ and serve it at http://localhost:8080/PDFLion/
@@ -205,10 +206,10 @@ On Ubuntu 24.04 in its default Wayland session, and on Linux Mint 22 Cinnamon, w
 
 On every platform, and on Linux both on Wayland and on X11:
 
-- A tab dragged within the tab bar moves there, onto another window's tab bar joins it there, onto another window's document becomes its last tab, and outside every window opens in a window of its own, under the pointer where the platform allows. A window whose last tab leaves closes, and the document keeps its scroll position and unsaved changes. Esc cancels a drag, except on Wayland, where it tears the tab off.
+- A tab dragged within the tab bar moves there, onto another window's tab bar joins it there, onto another window's document becomes its last tab, and outside every window opens in a window of its own, under the pointer where the platform allows. Home stays the leftmost tab, nothing can be dropped before it, and it can't be dragged. A window left with only Home after its last document leaves closes, and the document keeps its scroll position and unsaved changes. Esc cancels a drag, except on Wayland, where it tears the tab off.
 - Clicking a tab, Show Next Tab and Show Previous Tab give that document the keys: the arrow keys scroll it right away.
-- With one tab, an edited form shows as `name.pdf — Edited` with a dot in the close button on macOS, and `*name.pdf` on Windows and Linux. With several, the edited tab shows a dot instead of its close button until the pointer is over it. Closing a window with several edited tabs asks about each in turn, showing it, and Cancel keeps the window open.
-- Presentation Mode in a window with several tabs fills the screen without the tab bar, and leaving full screen ends it.
+- With one document, an edited form shows as `name.pdf — Edited` with a dot in the close button on macOS, and `*name.pdf` on Windows and Linux. With several, the edited tab shows a dot instead of its close button until the pointer is over it. Closing a window with several edited tabs asks about each in turn, showing it, and Cancel keeps the window open.
+- Presentation Mode fills the screen without the tab bar, and leaving full screen ends it.
 - The tab bar follows the light or dark appearance, and high contrast where there is one.
 - The toolbar's own buttons, Insert Blank Page, the page overview's and the favourites', show in light and dark mode and in high contrast.
 - Insert Blank Page is disabled for a document with a password. On a document signed with a real signing tool, inserting or rotating pages asks first, and Acrobat still validates the signed revision afterwards.
@@ -216,22 +217,23 @@ On every platform, and on Linux both on Wayland and on X11:
 - While the page overview is open, its toolbar button shows on and the sidebar's off, and in the narrowest window, 560 pixels wide, it shows one column with its header's buttons inside. Closing it leaves the document and the sidebar as they were.
 - The Eraser works with a mouse, a trackpad, a touchscreen and a pen, with its circle as large as the eraser at every zoom. A fast Line drag across many strokes cuts them all where it passed, without lag, and what's left keeps its look, also in Preview or Acrobat after saving. It erases another app's drawing, such as Preview's markup, and saving removes it there too. While it's on, the Eraser shows on and Pencil off, and Pencil turns it off and draws. Edit > Undo and Redo, clicked in the menu, undo and redo erasing, and in a form field ⌘Z (Ctrl+Z) still undoes typing.
 - A pen's eraser end, such as a Surface Pen's, erases with Pencil on, which then draws on, with Highlight on, and with no tool on, which turns the Eraser on, and its drag doesn't scroll the page.
-- On a touchscreen with a pen, such as a Surface's: the pen's first stroke turns Draw Only with a Pen on in Pencil's and the Eraser's options, after which a finger scrolls and pinches with Pencil, Highlight or the Eraser on, and draws or erases nothing. A palm resting on the screen while the pen draws neither scrolls nor ends the stroke. Turned off, it stays off, also after a restart. A long press of a finger on a favourite shows its menu once, without picking the favourite, and the toolbar's buttons stay large enough to tap.
+- On a touchscreen with a pen, such as a Surface's: the pen's first stroke turns Draw Only with a Pen on, which the ⋮ menu shows, after which a finger scrolls and pinches with Pencil, Highlight or the Eraser on, and draws or erases nothing. A palm resting on the screen while the pen draws neither scrolls nor ends the stroke. Turned off, it stays off, also after a restart. A long press of a finger on a favourite shows its menu once, without picking the favourite, and the toolbar's buttons stay large enough to tap.
 - Save as Favourite shows as an outlined button, which Tab reaches, and says Saved, then Already a Favourite when clicked again.
 - Favourites in pale and dark colours show in light and dark mode, with legible sizes. With twenty, the toolbar shows as many as fit, and the ★ menu the rest, scrolling in a short window, and both follow the window as it's resized. The ★ menu works with Tab, the arrow keys, Enter and Esc. A favourite picks its tool with the tool's options closed, and picking one with a drawing selected leaves the drawing as it was.
 - A favourite dragged onto another, with a mouse or a trackpad, shows a line where it'll go, and moves there in every window: in the toolbar, in the ★ menu, and from the menu onto the toolbar.
-- In system languages other than English and German, the toolbar fits as a window narrows a little at a time: its buttons get smaller, then favourites move into the ★ menu, Print into the ⋮ menu, the previous and next page buttons go, and last the zoom menu. Nothing comes back until the window gets wider.
-- Home lists the documents opened, newest first, with their first pages, folders and times, and marks those open in a tab. A card opens its document in Home's place, and Open…, New and a PDF dragged from the file manager do too. The context menu's Show in Finder, Explorer or Files shows the file, and Remove from Recent and Clear take documents off. The arrow keys, Return and Delete (Backspace on macOS) work on the cards, and VoiceOver, Narrator or Orca reads each card's name, folder and time. Home follows the light or dark appearance and high contrast, and fits a window 560 pixels wide.
-- The toolbar's Home button shows the window's home tab, or adds one, and goes in the narrowest windows, where File > Home stays.
+- In system languages other than English and German, the toolbar fits as a window narrows a little at a time: its buttons get smaller, then favourites move into the ★ menu, the previous and next page buttons go, and last the zoom button. Nothing comes back until the window gets wider.
+- Home lists the documents opened, newest first, with their first pages, folders and times, and marks those open in a tab. Home is every window's leftmost tab, a Home icon without a close button, and stays when the last document closes. A card opens its document in a new tab, and Open…, New and a PDF dragged from the file manager do too. Close Tab (⌘W, Ctrl+W) on Home closes the window, and asks about edited documents first. The context menu's Show in Finder, Explorer or Files shows the file, and Remove from Recent and Clear take documents off. The arrow keys, Return and Delete (Backspace on macOS) work on the cards, and VoiceOver, Narrator or Orca reads each card's name, folder and time. Home follows the light or dark appearance and high contrast, and fits a window 560 pixels wide.
+- The toolbar's Home button shows the window's home tab, and goes in the narrowest windows, where File > Home stays.
 - File > Export Settings… writes the favourites and settings, and File > Import Settings… on another platform asks first, then adds the favourites to every window's toolbar, without repeats. A file that isn't a settings file shows an alert and changes nothing.
 - File > New gives a US Letter page with the region set to the United States or Canada, and an A4 page with Switzerland or the United Kingdom. ⌘N works on macOS with no window open. Closing an edited new document asks about saving, and Save asks where.
-- Pencil's strokes count as a change while its drawing is still open, and Save keeps them: after saving, reopening the file shows them.
+- Each of Pencil's strokes counts as a change, shows no box or delete button, and Save keeps it: after saving, reopening the file shows them. A stroke started over another draws, and the Eraser's Object mode erases one stroke at a time.
+- With the system set to German, French or Italian, the menus, Home, the tab bar, the toolbar's own buttons and PDFLion's alerts are in that language, and in Swiss German without ß. Access keys work in Windows' and Linux's menus.
 
 The web app, on an iPad with iPadOS 18 and one with iPadOS 26, in Safari and as a Home Screen app, served as above:
 
-- Home's Open… shows the Files picker, and the PDFs picked open as tabs, the first in Home's place. Picking the same file again opens the document PDFLion keeps. A PDF dragged from Files in Split View onto Home, the strip or a document opens too.
+- Home's Open… shows the Files picker, and the PDFs picked open as tabs after Home, which stays as the leftmost tab, an icon alone, a 44-point target. Picking the same file again opens the document PDFLion keeps. A PDF dragged from Files in Split View onto Home, the strip or a document opens too.
 - A change saves by itself after about 2 seconds. The first save ever explains that the file in Files hasn't changed, and later the first save of each document says so in a message at the bottom, with Share…. The toolbar's status and Home's card say "Not in Files", or "Only in PDFLion" for a new document.
-- Share in the toolbar shows the share sheet. Save to Files asks to replace the file there, then replaces it, and the status goes. Mail attaches the document as it is.
+- Share, in the ⋮ menu with Print, or a tap on the toolbar's status, shows the share sheet. Save to Files asks to replace the file there, then replaces it, and the status goes. Mail attaches the document as it is.
 - Drawing, then going to the Home Screen and ending PDFLion in the app switcher, then opening it again, keeps the drawing in the document, and brings back the tabs, the one that showed, and each document's page and zoom.
 - With six documents open, switching between them keeps working, those not shown for longest load again where they were, and iPadOS doesn't reload the app. A 200 MB PDF opens, and autosaves without stalling drawing.
 - After one launch online, the app and its documents open in Airplane Mode, also after ending it in the app switcher. A new build served meanwhile is offered once Wi-Fi is back, or from the ⓘ menu's Check for Updates…: Restart Now brings it up with the tabs, and Later keeps the old one until the app has been ended.

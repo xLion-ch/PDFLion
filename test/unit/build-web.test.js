@@ -45,6 +45,7 @@ describe("build-web.js parts", () => {
         '<script src="../../pdflion/geometry.js"></script>',
         '<script src="../../web/keys.js"></script>',
         '<script src="../../web/viewer-host.js"></script>',
+        '<script src="../../shared/texts.js"></script>',
         '<script src="../../pdflion/bridge.js"></script>',
       ].join(""),
     );
