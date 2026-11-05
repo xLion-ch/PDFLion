@@ -523,6 +523,13 @@
   let favouriteDrag = null;
 
   /**
+   * The favourite each of the favourites' buttons and ★ menu items stands
+   * for, and whether it's an item of the ★ menu.
+   * @type {WeakMap<Element, { favourite: Favourite, inMenu: boolean }>}
+   */
+  const favouriteOf = new WeakMap();
+
+  /**
    * Which of DROPPABLE the file holds, once `droppable` has found out, for
    * deciding at once whether a page change must ask first.
    * @type {Set<string>}
@@ -709,6 +716,7 @@
       followEraser(app);
       followPen(app);
       followPageTurns(app);
+      followTrackpadPinch(app);
       followFavourites(app);
       followToolsMenu(app);
       followZoomMenu(app);
@@ -3339,6 +3347,62 @@
   }
 
   /**
+   * Zooms the document for a pinch on a trackpad in Safari, as pdf.js does
+   * for Chromium's, which comes as wheel events with ctrlKey. Safari sends
+   * it as gesture events alone, without touches, so pdf.js's TouchManager
+   * never sees it, and Safari would zoom the whole page. A pinch with
+   * fingers on the screen, which brings gesture events too, stays
+   * TouchManager's, and so does a pinch that comes as wheel events after all.
+   *
+   * @param {any} app
+   */
+  function followTrackpadPinch(app) {
+    const container = document.getElementById("viewerContainer");
+    if (!container) return;
+    /** How many fingers are on the screen, as the last touch event said. */
+    let touches = 0;
+    /** @param {TouchEvent} event */
+    const countTouches = (event) => {
+      touches = event.touches?.length ?? 0;
+    };
+    for (const type of ["touchstart", "touchend", "touchcancel"]) {
+      window.addEventListener(type, /** @type {EventListener} */ (countTouches), true);
+    }
+    /**
+     * The pinch, from the scale it started at.
+     * @type {{ scale: number, byWheel: boolean } | null}
+     */
+    let pinch = null;
+    window.addEventListener(
+      "wheel",
+      (event) => {
+        if (pinch && event.ctrlKey) pinch.byWheel = true;
+      },
+      true,
+    );
+    container.addEventListener("gesturestart", (event) => {
+      pinch = null;
+      if (touches > 0 || app.pdfViewer?.isInPresentationMode) return;
+      event.preventDefault();
+      pinch = { scale: app.pdfViewer.currentScale, byWheel: false };
+    });
+    container.addEventListener("gesturechange", (event) => {
+      if (!pinch) return;
+      event.preventDefault();
+      const { scale, clientX, clientY } = /** @type {any} */ (event);
+      if (pinch.byWheel || !(scale > 0)) return;
+      // From where it started, so that pdf.js's rounding doesn't add up.
+      const factor = (pinch.scale * scale) / app.pdfViewer.currentScale;
+      if (Math.abs(factor - 1) >= 0.005) app.updateZoom(null, factor, [clientX, clientY]);
+    });
+    container.addEventListener("gestureend", (event) => {
+      if (!pinch) return;
+      event.preventDefault();
+      pinch = null;
+    });
+  }
+
+  /**
    * In Page Scrolling, where pdf.js shows one page at a time, turns pages as
    * a book app does: a tap or click beside the page, on the viewer's dark
    * background, goes to the previous page on the left and the next on the
@@ -3757,7 +3821,9 @@
   /**
    * A favourite's button: its tool's icon in its colour, which overrides.css
    * draws, and its size. A click uses it, a drag onto another favourite moves
-   * it there, and its context menu, also after a long press, removes it.
+   * it there, and its context menu, also after a long press, removes it. A
+   * finger or a pen drags it once it has held it long enough for the menu
+   * (dragFavourite()).
    *
    * @param {any} app
    * @param {Favourite} favourite
@@ -3788,8 +3854,25 @@
       event.preventDefault();
       window.pdflion.showFavouriteMenu(favourite);
     });
-    addLongPress(button);
+    favouriteOf.set(button, { favourite, inMenu });
+    addLongPress(button, (down) => dragFavourite(app, favourite, button, down));
     button.draggable = true;
+    // A finger or a pen drags it through dragFavourite() alone: iPadOS would
+    // start a drag of its own with the long press that opens the menu.
+    button.addEventListener("pointerdown", ({ pointerType, pointerId }) => {
+      if (pointerType === "mouse") return;
+      button.draggable = false;
+      const pressing = new AbortController();
+      /** @param {PointerEvent} event */
+      const ended = (event) => {
+        if (event.pointerId !== pointerId) return;
+        button.draggable = true;
+        pressing.abort();
+      };
+      const options = { capture: true, signal: pressing.signal };
+      window.addEventListener("pointerup", ended, options);
+      window.addEventListener("pointercancel", ended, options);
+    });
     button.addEventListener("dragstart", (/** @type {DragEvent} */ event) => {
       favouriteDrag = { favourite, over: null, after: false };
       const { dataTransfer } = event;
@@ -3803,13 +3886,7 @@
       if (!favouriteDrag || !event.dataTransfer?.types.includes(FAVOURITE_DRAG_TYPE)) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-      // Across the toolbar, which pdf.js lays out right to left for some
-      // languages, or down the ★ menu.
-      const box = button.getBoundingClientRect();
-      const after = inMenu
-        ? event.clientY > box.top + box.height / 2
-        : (event.clientX > box.left + box.width / 2) !== (document.documentElement.dir === "rtl");
-      showFavouriteDrop(button, after);
+      showFavouriteDrop(button, isDropAfter(button, inMenu, event));
     });
     button.addEventListener("dragleave", (/** @type {DragEvent} */ event) => {
       const to = /** @type {Node | null} */ (event.relatedTarget);
@@ -3833,6 +3910,79 @@
   }
 
   /**
+   * Whether a favourite dragged to a place goes after the favourite there,
+   * rather than before it: across the toolbar, which pdf.js lays out right to
+   * left for some languages, or down the ★ menu.
+   *
+   * @param {HTMLElement} over the favourite's button or ★ menu item
+   * @param {boolean} inMenu whether it's an item of the ★ menu
+   * @param {{ clientX: number, clientY: number }} at
+   */
+  function isDropAfter(over, inMenu, { clientX, clientY }) {
+    const box = over.getBoundingClientRect();
+    return inMenu
+      ? clientY > box.top + box.height / 2
+      : (clientX > box.left + box.width / 2) !== (document.documentElement.dir === "rtl");
+  }
+
+  /**
+   * Drags a favourite with a finger or a pen, once a long press has opened
+   * its menu, as iPadOS's own context menus do: moving on closes the menu,
+   * and lifting over another favourite, in the toolbar or the ★ menu, moves
+   * it there. Meanwhile the browser neither scrolls nor zooms.
+   *
+   * @param {any} app
+   * @param {Favourite} favourite
+   * @param {HTMLElement} button
+   * @param {PointerEvent} down the press
+   */
+  function dragFavourite(app, favourite, button, down) {
+    const following = new AbortController();
+    const { signal } = following;
+    let dragging = false;
+    window.addEventListener(
+      "touchmove",
+      (event) => {
+        if (event.cancelable) event.preventDefault();
+      },
+      { capture: true, passive: false, signal },
+    );
+    /** @param {PointerEvent} event */
+    const moved = (event) => {
+      if (event.pointerId !== down.pointerId) return;
+      if (!dragging) {
+        const far =
+          Math.hypot(event.clientX - down.clientX, event.clientY - down.clientY) > LONG_PRESS_SLOP;
+        if (!far) return;
+        dragging = true;
+        if (typeof window.pdflion.closeMenu === "function") window.pdflion.closeMenu();
+        favouriteDrag = { favourite, over: null, after: false };
+        button.classList.toggle("pdflionDragged", true);
+      }
+      const at = document.elementFromPoint(event.clientX, event.clientY);
+      const over = /** @type {HTMLElement | null} */ (at?.closest(".pdflionFavourite") ?? null);
+      const there = over ? favouriteOf.get(over) : undefined;
+      if (over && there) showFavouriteDrop(over, isDropAfter(over, there.inMenu, event));
+      else showFavouriteDrop(null, false);
+    };
+    /** @param {PointerEvent} event */
+    const ended = (event) => {
+      if (event.pointerId !== down.pointerId) return;
+      following.abort();
+      if (!dragging || !favouriteDrag) return;
+      const { over, after } = favouriteDrag;
+      button.classList.toggle("pdflionDragged", false);
+      showFavouriteDrop(null, false);
+      favouriteDrag = null;
+      const target = over ? favouriteOf.get(over)?.favourite : undefined;
+      if (event.type === "pointerup" && target) moveFavourite(app, favourite, target, after);
+    };
+    window.addEventListener("pointermove", moved, { capture: true, signal });
+    window.addEventListener("pointerup", ended, { capture: true, signal });
+    window.addEventListener("pointercancel", ended, { capture: true, signal });
+  }
+
+  /**
    * Opens an element's context menu after a long press with a finger or a
    * pen, of LONG_PRESS_TIME without moving more than LONG_PRESS_SLOP, which
    * iPadOS doesn't: it sends a contextmenu event where the press is. The
@@ -3842,8 +3992,10 @@
    * src/tabs/tabs.js and src/home/home.js.
    *
    * @param {HTMLElement} element
+   * @param {(down: PointerEvent) => void} [held] called once the menu has
+   *   opened, while the press goes on
    */
-  function addLongPress(element) {
+  function addLongPress(element, held) {
     /** Whether the last press opened the menu, until the next. */
     let opened = false;
     element.addEventListener("pointerdown", (down) => {
@@ -3863,6 +4015,7 @@
           clientY,
         });
         element.dispatchEvent(menu);
+        held?.(down);
       }, LONG_PRESS_TIME);
       signal.addEventListener("abort", () => clearTimeout(timer));
       /** @param {PointerEvent} event */
