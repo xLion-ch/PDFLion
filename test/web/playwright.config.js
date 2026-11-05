@@ -23,6 +23,10 @@ export default defineConfig({
   reporter: isCI ? [["list"], ["html", { open: "never", outputFolder: "../../playwright-report/web" }]] : "list",
   outputDir: "../../test-results/web",
   forbidOnly: isCI,
+  // WebKit on GitHub's macOS runners has left the service worker's first
+  // registration unsettled, which never happens here, so CI tries a failed
+  // test once more, and reports it as flaky if it then passes.
+  retries: isCI ? 1 : 0,
   webServer: {
     command: `node scripts/serve-web.js --port ${PORT} dist/web`,
     cwd: ROOT,

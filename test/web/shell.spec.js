@@ -221,3 +221,33 @@ test("the Home Screen icon follows the appearance, on a dark background in dark 
   const response = await page.request.get("web/icons/apple-touch-icon-dark.png");
   expect(response.headers()["content-type"]).toBe("image/png");
 });
+
+/**
+ * Makes the shell's registrations of its service worker never settle, as
+ * WebKit's have been seen to, the first `stalls` times the page loads.
+ *
+ * @param {import("@playwright/test").Page} page
+ * @param {number} stalls
+ */
+const stallRegistering = (page, stalls) =>
+  page.addInitScript((stalls) => {
+    if (window.top !== window) return;
+    const loads = Number(sessionStorage.getItem("test-loads") ?? 0) + 1;
+    sessionStorage.setItem("test-loads", String(loads));
+    if (loads <= stalls) ServiceWorkerContainer.prototype.register = () => new Promise(() => {});
+  }, stalls);
+
+test("a first launch whose service worker never registers reloads once", async ({ page }) => {
+  await stallRegistering(page, 1);
+  await openApp(page);
+  expect(await page.evaluate(() => sessionStorage.getItem("test-loads"))).toBe("2");
+});
+
+test("a first launch whose service worker never registers, also after reloading, says so", async ({
+  page,
+}) => {
+  await stallRegistering(page, 2);
+  await page.goto("./");
+  await expect(page.getByText("PDFLion couldn’t be downloaded.")).toBeVisible({ timeout: 40_000 });
+  expect(await page.evaluate(() => sessionStorage.getItem("test-loads"))).toBe("2");
+});
