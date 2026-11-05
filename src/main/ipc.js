@@ -13,7 +13,7 @@ import { showPageDialog } from "./pages.js";
 import { isViewerUrl } from "./routes.js";
 import { saveDocument, saveDocumentAs } from "./saving.js";
 import * as tabs from "./tabs.js";
-import { openDocuments, showHome } from "./windows.js";
+import { openDocuments } from "./windows.js";
 
 /** More than anyone drops at once, and few enough to open as tabs. */
 const MAX_DROPPED_FILES = 100;
@@ -70,12 +70,6 @@ export function handleIpc() {
     const tab = tabs.fromWebContents(event.sender);
     if (!tab || !fromViewer(event) || !isPageDialog(reason, items)) return false;
     return showPageDialog(tab, reason, items);
-  });
-
-  // The toolbar's Home button.
-  ipcMain.on("pdflion:show-home", (event) => {
-    const tab = tabs.fromWebContents(event.sender);
-    if (tab && fromViewer(event)) showHome(tabs.windowOf(tab) ?? undefined);
   });
 
   ipcMain.on("pdflion:command-done", (event, id, result) => {

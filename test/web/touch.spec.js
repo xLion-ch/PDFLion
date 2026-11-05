@@ -54,7 +54,7 @@ test("a tap on PDFLion's buttons does what a click does", async ({ page }) => {
   await expect.poll(() => frame.evaluate(() => PDFViewerApplication.pagesCount)).toBe(15);
 
   // Home, and the strip's tabs and close buttons.
-  await frame.locator("#pdflionHomeButton").tap();
+  await page.locator("#tabs .tab.home").tap();
   await homeFrame(page);
   // Home's frame is there from the start, so the strip says when it shows.
   await expect.poll(() => stripTabs(page)).toMatchObject([
@@ -131,10 +131,94 @@ test("a long press on a favourite opens its menu without using it, and a drag af
   await expect.poll(mode).toBe(15);
 });
 
+test("a finger that holds a favourite drags it onto another, which closes its menu", async ({
+  page,
+}) => {
+  const frame = await openPaper(page);
+  const blue = { tool: "ink", color: "#1e66f5", thickness: 7, opacity: 1 };
+  const red = { tool: "ink", color: "#d20f39", thickness: 7, opacity: 1 };
+  await frame.evaluate((favourites) => window.pdflion.setToolSettings({ favourites }), [blue, red]);
+  const favourite = "#pdflionFavourites > .pdflionFavourite";
+  await expect(frame.locator(favourite)).toHaveCount(2);
+  const colours = () =>
+    frame
+      .locator(favourite)
+      .evaluateAll((buttons) =>
+        buttons.map((button) => button.style.getPropertyValue("--pdflion-favourite-color")),
+      );
+  const finger = { pointerType: /** @type {const} */ ("touch"), pointerId: 41 };
+
+  // Held, it shows its menu, and isn't the browser's to drag meanwhile.
+  await dispatch(frame, favourite, [{ ...finger, type: "pointerdown", at: [0.5, 0.5] }]);
+  await expect(frame.locator(favourite).first()).toHaveJSProperty("draggable", false);
+  await expect.poll(() => menuItems(page)).toEqual(["Remove Favourite"]);
+  // Then it moves past the other, whose right half it's dropped on.
+  const moved = await dispatch(frame, favourite, [
+    { ...finger, type: "pointermove", at: [0.9, 0.5] },
+    { ...finger, type: "pointermove", at: [1.8, 0.5], wait: 50 },
+  ]);
+  expect(moved.map(({ cancelled }) => cancelled)).toEqual([false, false]);
+  await expect(page.locator(".menu")).toHaveCount(0);
+  await expect(frame.locator(".pdflionFavourite.pdflionDropAfter")).toHaveCount(1);
+  await dispatch(frame, favourite, [{ ...finger, type: "pointerup", at: [1.8, 0.5] }]);
+  await expect.poll(colours).toEqual([red.color, blue.color]);
+  await expect(frame.locator(".pdflionDragged, .pdflionDropAfter")).toHaveCount(0);
+  await expect(frame.locator(favourite).first()).toHaveJSProperty("draggable", true);
+
+  // Lifted where there's no favourite, nothing moves.
+  await dispatch(frame, favourite, [
+    { ...finger, type: "pointerdown", at: [0.5, 0.5] },
+    { ...finger, type: "pointermove", at: [0.5, 5], wait: 600 },
+    { ...finger, type: "pointerup", at: [0.5, 5] },
+  ]);
+  await expect(page.locator(".menu")).toHaveCount(0);
+  expect(await colours()).toEqual([red.color, blue.color]);
+});
+
+test("a pinch on a trackpad zooms the document, and a pinch with fingers is pdf.js's", async ({
+  page,
+}) => {
+  const frame = await openPaper(page);
+  const scale = () => frame.evaluate(() => PDFViewerApplication.pdfViewer.currentScale);
+  const before = await scale();
+  /** Safari's gesture events, which a pinch on a trackpad brings alone. */
+  const pinch = (/** @type {number[]} */ scales) =>
+    frame.evaluate((scales) => {
+      const page = /** @type {Element} */ (
+        document.querySelector('#viewerContainer .page[data-page-number="1"]')
+      );
+      const box = page.getBoundingClientRect();
+      const at = { clientX: box.left + box.width / 2, clientY: box.top + 100 };
+      const types = ["gesturestart", ...scales.slice(1, -1).map(() => "gesturechange"), "gestureend"];
+      return types.map((type, index) => {
+        const event = Object.assign(new Event(type, { bubbles: true, cancelable: true }), at, {
+          scale: scales[index],
+        });
+        return !page.dispatchEvent(event);
+      });
+    }, scales);
+
+  expect(await pinch([1, 1.5, 2, 2])).toEqual([true, true, true, true]);
+  await expect.poll(scale).toBeCloseTo(before * 2, 1);
+  expect(await frame.evaluate(() => visualViewport?.scale)).toBe(1);
+
+  // With a finger on the screen, the gesture is the fingers', which
+  // pdf.js's TouchManager pinches.
+  const zoomed = await scale();
+  await dispatch(frame, '#viewerContainer .page[data-page-number="1"]', [
+    { type: "touchstart", at: [0.5, 0.2], identifier: 51 },
+  ]);
+  expect(await pinch([1, 2, 2])).toEqual([false, false, false]);
+  await dispatch(frame, '#viewerContainer .page[data-page-number="1"]', [
+    { type: "touchend", at: [0.5, 0.2], identifier: 51 },
+  ]);
+  expect(await scale()).toBe(zoomed);
+});
+
 test("a long press on a Home card or a tab opens its menu", async ({ page }) => {
   await openPaper(page);
   const frame = await documentFrame(page, NAME);
-  await frame.locator("#pdflionHomeButton").tap();
+  await page.locator("#tabs .tab.home").tap();
   const home = await homeFrame(page);
 
   await longPress(home, ".card");
@@ -152,7 +236,7 @@ test("a pinch or a double tap on the toolbar, the strip or Home zooms nothing", 
   page,
 }) => {
   const frame = await openPaper(page);
-  await frame.locator("#pdflionHomeButton").tap();
+  await page.locator("#tabs .tab.home").tap();
   const home = await homeFrame(page);
 
   /**
@@ -181,8 +265,8 @@ test("a pinch or a double tap on the toolbar, the strip or Home zooms nothing", 
   expect(await zooming(frame, "#pdflionPageOverview", "#toolbarContainer")).toEqual(neither);
   expect(await zooming(page.mainFrame(), "#tabs .tab", "body")).toEqual(neither);
   expect(await zooming(home, ".card", "html")).toEqual(neither);
-  // On the pages, pdf.js zooms the document.
-  expect((await zooming(frame, "#viewerContainer .page", "html")).pinchStopped).toBe(false);
+  // On the pages, a pinch zooms the document (see the trackpad's test).
+  expect((await zooming(frame, "#viewerContainer .page", "html")).pinchStopped).toBe(true);
 });
 
 test("in Page Scrolling, a swipe or a tap beside the page turns it", async ({ page }) => {

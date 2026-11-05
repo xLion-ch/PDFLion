@@ -341,7 +341,7 @@ test("the arrow keys move through the cards, and Return opens one", async ({ pdf
   expect(homePages(app)).toHaveLength(1);
 });
 
-test("File > Home and the Home button show the window's home tab, its leftmost", async ({
+test("File > Home and the strip's Home tab show the window's home tab, its leftmost", async ({
   pdflion,
 }) => {
   const dir = await tempDir();
@@ -352,10 +352,10 @@ test("File > Home and the Home button show the window's home tab, its leftmost",
   const saveEnabled = () =>
     app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById("save")?.enabled);
 
-  // The toolbar's button, left of the sidebar's.
-  await expect(page.locator("#pdflionHomeButton + #viewsManagerToggleButton")).toHaveCount(1);
+  // The strip's Home tab, and no button in the toolbar.
+  await expect(page.locator("#pdflionHomeButton")).toHaveCount(0);
   await expect.poll(names).toEqual(["Home", "first.pdf*"]);
-  await page.locator("#pdflionHomeButton").click();
+  await strip.locator(".tab.home").click();
   await expect.poll(names).toEqual(["Home*", "first.pdf"]);
   const home = await homePage(app);
   // Menu items for documents don't act on Home.

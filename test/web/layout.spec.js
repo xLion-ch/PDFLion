@@ -44,6 +44,23 @@ function expectAtLeast(found, width, height) {
   }
 }
 
+test("a Home Screen app on iPadOS has a title bar above the strip", async ({ page }) => {
+  await openAppExplained(page);
+  const top = () => page.locator("#tabs").evaluate((tabs) => tabs.getBoundingClientRect().top);
+  expect(await top()).toBe(0);
+
+  // iPadOS 26 draws the window's controls and its blur there.
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "standalone", { get: () => true });
+  });
+  await page.reload();
+  await homeFrame(page);
+  expect(await top()).toBe(48);
+  const colour = (selector) =>
+    page.locator(selector).evaluate((element) => getComputedStyle(element).backgroundColor);
+  expect(await colour("body")).toBe(await colour("#tabs"));
+});
+
 test("touch targets are 44 px, and the toolbar's buttons 40 px", async ({ page }) => {
   await openAppExplained(page);
   await openFromHome(page, [TRACEMONKEY]);
@@ -73,7 +90,7 @@ test("touch targets are 44 px, and the toolbar's buttons 40 px", async ({ page }
   );
 
   // The strip, with two tabs.
-  await viewer.locator("#pdflionHomeButton").tap();
+  await page.locator("#tabs .tab.home").tap();
   const home = await homeFrame(page);
   expectAtLeast(await sizes(page.locator("#tabs .tab")), 44, 44);
   expectAtLeast(await sizes(page.locator("#tabs .tab:not(.home) .close")), 44, 44);

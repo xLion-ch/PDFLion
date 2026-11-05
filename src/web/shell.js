@@ -85,6 +85,12 @@ const showTouchIcon = () =>
 darkAppearance.addEventListener("change", showTouchIcon);
 showTouchIcon();
 
+// A Home Screen app on iPadOS, which web.css gives a title bar.
+document.documentElement.classList.toggle(
+  "homeScreenApp",
+  /** @type {{ standalone?: boolean }} */ (navigator).standalone === true,
+);
+
 /** @typedef {import("./library.js").DocumentRecord} DocumentRecord */
 /** @typedef {import("../shared/tools.js").ToolSettings} ToolSettings */
 /** @typedef {import("./session.js").View} View */
@@ -748,7 +754,6 @@ const VIEWER_MESSAGES = {
     dialogs.showMenu([{ label: t("removeFavourite"), action: remove }], inFrame(tab, x, y));
   },
   closeMenu: () => dialogs.closeMenus(),
-  showHome: () => showHome(),
   view(tab, value) {
     const view = parseView(value);
     if (!view) return;

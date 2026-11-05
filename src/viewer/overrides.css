@@ -166,10 +166,6 @@
 
 /* PDFLion's own toolbar buttons, which bridge.js adds. viewer.css draws the
    icon of every .toolbarButton as a mask, like pdf.js's own. */
-#pdflionHomeButton::before {
-  mask-image: url(/pdflion/icons/home.svg);
-}
-
 #pdflionPageOverview::before {
   mask-image: url(/pdflion/icons/grid_view.svg);
 }
@@ -301,10 +297,6 @@
 }
 
 /* What the narrowest steps move into the ⋮ menu and the tools' menu. */
-#pdflionSecondaryHome::before {
-  mask-image: url(/pdflion/icons/home.svg);
-}
-
 #pdflionSecondaryFind::before {
   mask-image: url(/pdflion/icons/search.svg);
 }
@@ -854,13 +846,6 @@
   display: none;
 }
 
-/* Home goes, which File > Home has too, and the ⋮ menu from then on. */
-:where(#toolbarContainer.pdflionToolbarWithoutHome) #pdflionHomeButton {
-  display: none;
-}
-
-#toolbarContainer:not(.pdflionToolbarWithoutHome)
-  :is(#pdflionSecondaryHome, .pdflionVisibleWithoutHome),
 #toolbarContainer:not(.pdflionToolbarTiny) .pdflionVisibleTiny {
   display: none;
 }

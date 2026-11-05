@@ -40,7 +40,7 @@ test("a PDF from Files is kept, shows on Home, and opens the same document again
   });
 
   // Home shows it, with its first page, and that it's open.
-  await viewer.locator("#pdflionHomeButton").click();
+  await page.locator("#tabs .tab.home").click();
   const home = await homeFrame(page);
   const card = home.locator(".card");
   await expect(card).toHaveCount(1);
@@ -75,7 +75,7 @@ test("Home's menu renames and deletes a document", async ({ page }) => {
   await openApp(page);
   await openFromHome(page, [TRACEMONKEY]);
   const viewer = await documentFrame(page, "compressed.tracemonkey-pldi-09.pdf");
-  await viewer.locator("#pdflionHomeButton").click();
+  await page.locator("#tabs .tab.home").click();
   const home = await homeFrame(page);
 
   await home.locator(".card").click({ button: "right" });
@@ -126,7 +126,7 @@ test("a drawing saves by itself, and the first save says what that means", async
   await expect(page.locator("dialog")).toHaveCount(0);
 
   // Home marks it.
-  await viewer.locator("#pdflionHomeButton").click();
+  await page.locator("#tabs .tab.home").click();
   const home = await homeFrame(page);
   await expect(home.locator(".card .mark.status")).toHaveText("Not in Files");
 });

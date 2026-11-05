@@ -81,8 +81,6 @@ contextBridge.exposeInMainWorld("pdflion", {
   },
   /** @param {object} favourite shows its context menu, with Remove Favourite */
   showFavouriteMenu: (favourite) => ipcRenderer.send("pdflion:favourite-menu", favourite),
-  /** Shows Home in this tab's window: its home tab, or a new one. */
-  showHome: () => ipcRenderer.send("pdflion:show-home"),
   /**
    * @param {Uint8Array} png the document's first page, for Home, which main
    *   keeps if the document has a file
