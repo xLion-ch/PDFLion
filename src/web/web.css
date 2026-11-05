@@ -66,14 +66,20 @@ body {
 }
 
 /*
- * A Home Screen app on iPadOS (shell.js) gets a title bar above the strip,
- * empty and in the strip's colour, where iPadOS 26 draws a window's controls,
- * and blurs and fades the top of the window (its scroll edge effect). The
- * safe area covers neither, so without it they're over the strip's tabs.
+ * A Home Screen app on iPadOS (shell.js) gets a narrow band above the strip,
+ * empty and in the strip's colour, where iPadOS 26 blurs and fades the top of
+ * the window (its scroll edge effect), and its tabs start right of the window's
+ * controls, which iPadOS draws at the top left. The safe area covers neither,
+ * so without them both are over the strip's tabs.
  */
 .homeScreenApp body {
-  --title-bar-height: 48px;
+  --title-bar-height: 8px;
   padding-top: calc(env(safe-area-inset-top) + var(--title-bar-height));
+}
+
+.homeScreenApp #tabs {
+  --window-controls-width: 72px;
+  padding-left: var(--window-controls-width);
 }
 
 #frames {
