@@ -48,8 +48,17 @@ export async function saveThumbnail(id, bytes) {
   await writeFileAtomic(file, bytes);
 }
 
-/** @param {string} id a recent document's */
+/**
+ * Windows refuses to delete a file another handle holds without sharing its
+ * deletion, as Chromium's does while Home loads the thumbnail, or an
+ * antivirus scanning it, so `fs.rm()` tries again on EBUSY and EPERM.
+ *
+ * @param {string} id a recent document's
+ */
 export async function deleteThumbnail(id) {
   const file = thumbnailFile(id);
-  if (file) await fs.rm(file, { force: true }).catch(() => {});
+  if (!file) return;
+  await fs.rm(file, { force: true, maxRetries: 10, retryDelay: 50 }).catch((error) => {
+    console.warn(`Couldn't delete the thumbnail ${file}:`, error);
+  });
 }
