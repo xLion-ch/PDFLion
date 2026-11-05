@@ -126,7 +126,7 @@ test("New opens an untitled blank page, Letter or A4 by region", async ({ pdflio
   expect(await letter.evaluate(() => PDFViewerApplication.pagesCount)).toBe(1);
   expect(await pageView(letter)).toEqual([0, 0, 612, 792]);
   expect(await windowTitle(app, letter)).toBe("Untitled.pdf");
-  expect(await stripTabs(strip)).toMatchObject([
+  await expect.poll(() => stripTabs(strip)).toMatchObject([
     { name: "Home", active: false, edited: false },
     { name: "tracemonkey.pdf", active: false, edited: false },
     { name: "Untitled.pdf", active: true, edited: false },

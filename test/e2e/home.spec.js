@@ -124,7 +124,8 @@ test("a launch without a document shows Home, in a window titled PDFLion", async
   await expect(home.locator("#empty .open")).toBeVisible();
   await expect(home.locator("#empty .new")).toBeVisible();
   expect(await windowTitle(app, home)).toBe("PDFLion");
-  expect(await stripTabs(await stripOf(app, home))).toMatchObject([{ name: "Home", active: true }]);
+  const strip = await stripOf(app, home);
+  await expect.poll(() => stripTabs(strip)).toMatchObject([{ name: "Home", active: true }]);
   expect(await home.evaluate(() => typeof window.pdflionHome)).toBe("object");
 });
 

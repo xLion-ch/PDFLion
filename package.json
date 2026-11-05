@@ -1,7 +1,7 @@
 {
   "name": "pdflion",
   "productName": "PDFLion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A PDF viewer for macOS, Windows and Linux, built on pdf.js",
   "author": "xLion-ch <181110832+xLion-ch@users.noreply.github.com>",
   "desktopName": "io.github.xlion-ch.pdflion.desktop",
