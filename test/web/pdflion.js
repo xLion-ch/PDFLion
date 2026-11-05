@@ -213,10 +213,44 @@ async function frameWhere(page, test) {
  *   tab is there from the start, so its frame may be loaded but hidden.
  */
 export async function homeFrame(page) {
-  const frame = await frameWhere(page, (url) => url.includes("/home/home.html"));
+  const frame = await frameWhere(page, (url) => url.includes("/home/home.html")).catch(
+    async (error) => {
+      throw new Error(`Home never showed. ${await startState(page)}`, { cause: error });
+    },
+  );
   await page.locator("#frames > .page.active[src$='/home/home.html']").waitFor({ state: "attached" });
   await frame.locator("#recent:not([hidden]), #empty:not([hidden])").waitFor();
   return frame;
+}
+
+/**
+ * @param {Page} page
+ * @returns {Promise<string>} how far the shell got starting: its service
+ *   worker, which caches the app's files, and the library, for a launch that
+ *   never shows Home
+ */
+function startState(page) {
+  return page
+    .evaluate(async () => {
+      const registration = await navigator.serviceWorker.getRegistration();
+      const worker = (/** @type {ServiceWorker | null | undefined} */ w) => w?.state ?? "none";
+      const caches_ = await Promise.all(
+        (await caches.keys()).map(
+          async (name) => `${name} (${(await (await caches.open(name)).keys()).length} files)`,
+        ),
+      );
+      const databases = (await indexedDB.databases?.())?.map(({ name }) => name) ?? "unknown";
+      return JSON.stringify({
+        installing: worker(registration?.installing),
+        waiting: worker(registration?.waiting),
+        active: worker(registration?.active),
+        controlled: !!navigator.serviceWorker.controller,
+        caches: caches_,
+        databases,
+        tabs: document.querySelectorAll("#tabs .tab").length,
+      });
+    })
+    .catch((/** @type {Error} */ error) => `Its state couldn't be read: ${error.message}`);
 }
 
 /**
