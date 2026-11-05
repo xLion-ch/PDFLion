@@ -34,7 +34,7 @@ test("after a reload, the tabs come back in order with the active one, where eac
     window.PDFViewerApplication.page = 5;
   });
   // Home, then the paper again.
-  await viewer.locator("#pdflionHomeButton").click();
+  await page.locator("#tabs .tab.home").click();
   await homeFrame(page);
   await page.locator("#tabs .tab").nth(1).click();
   await expect
@@ -102,7 +102,7 @@ test("a fifth document sends the one shown longest ago to sleep, saved, and it w
     window.PDFViewerApplication.page = 2;
   });
   for (const name of names.slice(1)) {
-    await viewer.locator("#pdflionHomeButton").click();
+    await page.locator("#tabs .tab.home").click();
     await openFromHome(page, [path.join(dir, name)]);
     viewer = await documentFrame(page, name);
   }

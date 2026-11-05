@@ -65,6 +65,17 @@ body {
   flex: none;
 }
 
+/*
+ * A Home Screen app on iPadOS (shell.js) gets a title bar above the strip,
+ * empty and in the strip's colour, where iPadOS 26 draws a window's controls,
+ * and blurs and fades the top of the window (its scroll edge effect). The
+ * safe area covers neither, so without it they're over the strip's tabs.
+ */
+.homeScreenApp body {
+  --title-bar-height: 48px;
+  padding-top: calc(env(safe-area-inset-top) + var(--title-bar-height));
+}
+
 #frames {
   position: relative;
   flex: 1;

@@ -48,10 +48,10 @@
  *
  * The host, which gives it `window.pdflion`, is the desktop's preload, or the
  * web app's src/web/viewer-host.js, in a frame of the web app's shell. What
- * the host offers decides what it adds: a Home button for `showHome`, Share
- * and the "not in Files" status for `share` and `onSaveStatus`, Open…, New
- * and About in the ⋮ menu for `showOpenPanel`, `newDocument` and
- * `showAbout`, and Undo and Redo buttons without `nativeMenu`. With
+ * the host offers decides what it adds: Share and the "not in Files" status
+ * for `share` and `onSaveStatus`, Open…, New and About in the ⋮ menu for
+ * `showOpenPanel`, `newDocument` and `showAbout`, and Undo and Redo buttons
+ * without `nativeMenu`. With
  * `autosave`, it saves by itself, after changes and when the page is hidden.
  * A host's `closeMenu` closes the menu a long press opened, once its
  * favourite is dragged. A host's `setView` hears where the document is
@@ -223,8 +223,8 @@
    * The toolbar's steps for narrower windows, as classes of #toolbarContainer
    * that overrides.css styles: 32 px buttons, then pdf.js's medium view,
    * which hides Print, its small view, which hides the previous and next page
-   * buttons, its hidden zoom menu, no Home button, which File > Home and the
-   * ⋮ menu stand in for, and the drawing tools in one button with a menu.
+   * buttons, its hidden zoom menu, and the drawing tools in one button with
+   * a menu.
    * Then, narrower than a desktop window gets, Find, Page Overview and Insert
    * Blank Page go into the ⋮ menu, the zoom buttons and the status go, and
    * last Undo and Redo go into the tools' menu. Each step keeps those before
@@ -235,7 +235,6 @@
     "pdflionToolbarMedium",
     "pdflionToolbarSmall",
     "pdflionToolbarNarrow",
-    "pdflionToolbarWithoutHome",
     "pdflionToolbarTools",
     "pdflionToolbarTiny",
     "pdflionToolbarWithoutZoom",
@@ -683,7 +682,6 @@
     // pdf.js hasn't bound its events yet.
     addFilesAsPageChanges(app);
     // The DOM is parsed, and pdf.js hasn't bound its toolbar yet.
-    addHomeButton();
     overviewButton = addOverviewButton(app);
     pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
     eraserTool = addEraserTool(app);
@@ -2064,21 +2062,6 @@
   }
 
   /**
-   * Adds Home to the toolbar, left of the sidebar's button, where the host
-   * shows Home: main's home tab on the desktop.
-   *
-   * @returns {HTMLButtonElement | null}
-   */
-  function addHomeButton() {
-    const sidebarButton = document.getElementById("viewsManagerToggleButton");
-    if (!sidebarButton || typeof window.pdflion.showHome !== "function") return null;
-    const button = makeButton("pdflionHomeButton", "toolbarButton", t("home"));
-    button.addEventListener("click", () => window.pdflion.showHome());
-    sidebarButton.before(button);
-    return button;
-  }
-
-  /**
    * Adds Share, for a host that shares documents, where pdf.js's Download
    * button is, which overrides.css hides: in the toolbar, and in the ⋮ menu
    * from pdf.js's medium view on, as Download is.
@@ -2213,8 +2196,8 @@
 
   /**
    * Adds to the top of the ⋮ menu what the toolbar's narrow steps take from
-   * it, which overrides.css shows only then: Home, once the Home button goes,
-   * and Find…, Page Overview and Insert Blank Page, once they go.
+   * it, which overrides.css shows only then: Find…, Page Overview and Insert
+   * Blank Page, once they go.
    *
    * @param {any} app
    * @returns {HTMLButtonElement[]} the items that change pages
@@ -2245,15 +2228,9 @@
       item("pdflionSecondaryFind", t("find"), () => app.findBar?.open()),
       item("pdflionSecondaryPageOverview", t("pageOverview"), () => toggleOverview(app)),
       insert,
+      createElement("div", { className: "horizontalToolbarSeparator" }),
     );
-    const items = [tiny];
-    if (typeof window.pdflion.showHome === "function") {
-      items.unshift(item("pdflionSecondaryHome", t("home"), () => window.pdflion.showHome()));
-    }
-    container.prepend(
-      ...items,
-      createElement("div", { className: "horizontalToolbarSeparator pdflionVisibleWithoutHome" }),
-    );
+    container.prepend(tiny);
     return [insert];
   }
 

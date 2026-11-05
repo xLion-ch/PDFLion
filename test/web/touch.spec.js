@@ -54,7 +54,7 @@ test("a tap on PDFLion's buttons does what a click does", async ({ page }) => {
   await expect.poll(() => frame.evaluate(() => PDFViewerApplication.pagesCount)).toBe(15);
 
   // Home, and the strip's tabs and close buttons.
-  await frame.locator("#pdflionHomeButton").tap();
+  await page.locator("#tabs .tab.home").tap();
   await homeFrame(page);
   // Home's frame is there from the start, so the strip says when it shows.
   await expect.poll(() => stripTabs(page)).toMatchObject([
@@ -134,7 +134,7 @@ test("a long press on a favourite opens its menu without using it, and a drag af
 test("a long press on a Home card or a tab opens its menu", async ({ page }) => {
   await openPaper(page);
   const frame = await documentFrame(page, NAME);
-  await frame.locator("#pdflionHomeButton").tap();
+  await page.locator("#tabs .tab.home").tap();
   const home = await homeFrame(page);
 
   await longPress(home, ".card");
@@ -152,7 +152,7 @@ test("a pinch or a double tap on the toolbar, the strip or Home zooms nothing", 
   page,
 }) => {
   const frame = await openPaper(page);
-  await frame.locator("#pdflionHomeButton").tap();
+  await page.locator("#tabs .tab.home").tap();
   const home = await homeFrame(page);
 
   /**

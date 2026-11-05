@@ -1454,25 +1454,12 @@ describe("bridge.js Home", () => {
     return sent;
   };
 
-  it("adds Home left of the sidebar's button, which shows Home", async () => {
+  it("adds no Home button, since the tab strip has Home", async () => {
     const bridge = loadBridge();
-    let shown = 0;
-    bridge.pdflion.showHome = () => shown++;
     await bridge.load();
-    const [home, sidebar, overview] = bridge.toolbar;
-    assert.equal(home.id, "pdflionHomeButton");
-    assert.equal(home.className, "toolbarButton");
-    assert.equal(home.title, "Home");
+    const [sidebar, overview] = bridge.toolbar;
     assert.equal(sidebar.id, "viewsManagerToggleButton");
     assert.equal(overview.id, "pdflionPageOverview");
-    home.listeners.click();
-    assert.equal(shown, 1);
-  });
-
-  it("adds no Home button for a host without Home", async () => {
-    const bridge = loadBridge();
-    await bridge.load();
-    assert.ok(!bridge.toolbar.some(({ id }) => id === "pdflionHomeButton"));
   });
 
   it("hands over the first page as a PNG once the viewer has shown a page", async () => {
@@ -4118,7 +4105,6 @@ describe("bridge.js without a native menu", () => {
     assert.deepEqual(ids, [
       // What the toolbar's narrowest steps move there.
       "pdflionVisibleTiny",
-      "horizontalToolbarSeparator pdflionVisibleWithoutHome",
       // Pen-only drawing, a setting for every tool.
       "pdflionSecondaryPenOnly",
       "horizontalToolbarSeparator",
@@ -4878,15 +4864,13 @@ describe("bridge.js the toolbar's narrowest steps", () => {
     );
   });
 
-  it("have Home, Find…, Page Overview and Insert Blank Page in the ⋮ menu", async () => {
-    let homes = 0;
-    const bridge = loadBridge({ host: { showHome: () => homes++ } });
+  it("have Find…, Page Overview and Insert Blank Page in the ⋮ menu", async () => {
+    const bridge = loadBridge();
     await bridge.load();
-    const [home, tiny, separator] = bridge.menuContainer.children;
-    assert.equal(home.id, "pdflionSecondaryHome");
+    const [tiny] = bridge.menuContainer.children;
     assert.equal(tiny.className, "pdflionVisibleTiny");
-    assert.equal(separator.className, "horizontalToolbarSeparator pdflionVisibleWithoutHome");
-    const [find, overview, insert] = tiny.children;
+    const [find, overview, insert, separator] = tiny.children;
+    assert.equal(separator.className, "horizontalToolbarSeparator");
     assert.deepEqual(
       [find, overview, insert].map((item) => [item.id, item.children[0].textContent]),
       [
@@ -4896,13 +4880,11 @@ describe("bridge.js the toolbar's narrowest steps", () => {
       ],
     );
 
-    home.listeners.click();
     find.listeners.click();
     overview.listeners.click();
-    assert.equal(homes, 1);
     assert.equal(named(bridge.calls, "findBar.open").length, 1);
     assert.ok(bridge.outerContainer.classes.has("pdflionPageOverview"));
-    assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 3);
+    assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 2);
 
     // Insert Blank Page works as its button does.
     assert.equal(insert.disabled, true);

@@ -86,7 +86,7 @@ test("a new version downloads only what changed, and Restart Now brings it up wi
     expect(await appVersion(page)).toBe(OLD);
 
     // Check for Updates… offers it again.
-    await viewer.locator("#pdflionHomeButton").click();
+    await page.locator("#tabs .tab.home").click();
     const home = await homeFrame(page);
     await home.locator("#info").click();
     await page.getByRole("menuitem", { name: "Check for Updates…" }).click();

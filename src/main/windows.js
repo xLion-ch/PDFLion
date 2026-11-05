@@ -103,7 +103,7 @@ export function newDocument(target) {
 }
 
 /**
- * File > Home, the toolbar's Home button, and a launch without documents:
+ * File > Home, and a launch without documents:
  * selects the window's home tab, and brings the window to the front. Without
  * a window, Home opens in a new one.
  *
