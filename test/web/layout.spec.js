@@ -44,10 +44,13 @@ function expectAtLeast(found, width, height) {
   }
 }
 
-test("a Home Screen app on iPadOS has a title bar above the strip", async ({ page }) => {
+test("a Home Screen app on iPadOS leaves room for the window's controls", async ({ page }) => {
   await openAppExplained(page);
   const top = () => page.locator("#tabs").evaluate((tabs) => tabs.getBoundingClientRect().top);
+  const left = () =>
+    page.locator(".tab.home").evaluate((home) => home.getBoundingClientRect().left);
   expect(await top()).toBe(0);
+  expect(await left()).toBe(4);
 
   // iPadOS 26 draws the window's controls and its blur there.
   await page.addInitScript(() => {
@@ -55,7 +58,8 @@ test("a Home Screen app on iPadOS has a title bar above the strip", async ({ pag
   });
   await page.reload();
   await homeFrame(page);
-  expect(await top()).toBe(48);
+  expect(await top()).toBe(8);
+  expect(await left()).toBe(72);
   const colour = (selector) =>
     page.locator(selector).evaluate((element) => getComputedStyle(element).backgroundColor);
   expect(await colour("body")).toBe(await colour("#tabs"));
