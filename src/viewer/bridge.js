@@ -3277,11 +3277,14 @@
    * Safari sends too. Nor does a palm start pdf.js's pinch then, which would
    * end the stroke, nor does the pen's own touch with a palm already down.
    *
+   * It also keeps a pen from losing pdf.js's drawing: see followLostLifts().
+   *
    * @param {any} app
    */
   function followPen(app) {
     const container = document.getElementById("viewerContainer");
     if (!container) return;
+    followLostLifts(app, container);
     container.addEventListener(
       "pointerdown",
       (event) => {
@@ -3319,6 +3322,65 @@
       },
       { capture: true, passive: false },
     );
+  }
+
+  /**
+   * Keeps a press that ended badly from stopping the next ones, in any tool:
+   * - A pen has one tip, so its press means that its last one ended, even if
+   *   no lift came, as when iPadOS takes the pen over, and so does any press
+   *   outside the pages, which may choose another tool. pdf.js would wait for
+   *   that lift, from that pointer, and draw nothing until then
+   *   (`CurrentPointers` in src/display/editor/tools.js), and a stroke left
+   *   open across tools would end as the new tool's (`#currentDraw` in
+   *   src/display/editor/draw.js), so it gets one first.
+   * - A layer ignores the press after one it never saw end: one the browser
+   *   cancelled, whose `button` isn't 0, or lifted outside the layer
+   *   (`pointerup()` in src/display/editor/annotation_editor_layer.js).
+   *   Its pointerdown() forgets the press, and with no target does no more.
+   *
+   * @param {any} app
+   * @param {HTMLElement} container #viewerContainer
+   */
+  function followLostLifts(app, container) {
+    window.addEventListener(
+      "pointerdown",
+      ({ pointerType, target }) => {
+        if (penDown === null) return;
+        // A finger on the pages may be a palm, while the pen draws.
+        if (pointerType !== "pen" && container.contains(/** @type {Node} */ (target))) return;
+        pointerType = "pen";
+        const lift = { pointerId: penDown, pointerType, button: 0, bubbles: true };
+        window.dispatchEvent(new PointerEvent("pointerup", lift));
+      },
+      true,
+    );
+    /** @type {number | null} the index of the page last pressed on */
+    let pressed = null;
+    container.addEventListener(
+      "pointerdown",
+      ({ target }) => {
+        const page = /** @type {any} */ (target)?.closest?.(PAGE);
+        pressed = page ? Number(page.dataset.pageNumber) - 1 : null;
+      },
+      true,
+    );
+    // After the layer's own listeners. In Highlight its text layer takes presses.
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(type, () => {
+        const mode = app.pdfViewer?.annotationEditorMode;
+        if (pressed === null || mode === EDITOR_HIGHLIGHT || !isToolMode(mode)) return;
+        uiManager(app)?.getLayer(pressed)?.pointerdown({ button: 0, target: null });
+        pressed = null;
+      });
+    }
+  }
+
+  /**
+   * @param {number | undefined} mode an `AnnotationEditorType`
+   * @returns {boolean} whether it's a drawing tool, not none or disabled
+   */
+  function isToolMode(mode) {
+    return mode !== undefined && mode !== EDITOR_NONE && mode !== EDITOR_DISABLE;
   }
 
   /**

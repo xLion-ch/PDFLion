@@ -22,6 +22,7 @@ import {
   line,
   pencilHover,
   pencilStroke,
+  strokeSteps,
   touchscreen,
 } from "./input.js";
 
@@ -403,4 +404,76 @@ test("the eraser erases a free highlight with the pen, in either mode", async ({
   await expect.poll(() => types(frame)).toEqual([]);
   await frame.locator("#pdflionUndo").tap();
   await expect.poll(() => types(frame)).toEqual(["highlight"]);
+});
+
+/**
+ * A pen's press that the browser takes over, as Safari does when it starts to
+ * pan: a press and moves, and pointercancel rather than a lift.
+ *
+ * @param {Frame} frame
+ * @param {[number, number][]} points on the first page
+ */
+const cancelledStroke = (frame, points) =>
+  dispatch(frame, FIRST_PAGE, [
+    ...strokeSteps(points, { pointerType: "pen", pointerId: 2 }).slice(0, -1),
+    { type: "pointercancel", at: /** @type {[number, number]} */ (points.at(-1)), pointerType: "pen", pointerId: 2, button: -1 },
+  ]);
+
+test("after a cancelled Highlight stroke the pen still draws, in that tool and the next", async ({
+  page,
+}) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorHighlightButton").tap();
+  await cancelledStroke(frame, line([0.03, 0.2], [0.03, 0.4]));
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
+  await expect(frame.locator(".annotationEditorLayer.drawing")).toHaveCount(0);
+
+  await pencilStroke(frame, line([0.03, 0.5], [0.03, 0.7]), { pointerId: 3 });
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight"]);
+
+  await cancelledStroke(frame, line([0.97, 0.2], [0.97, 0.4]));
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.4]), { pointerId: 4 });
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight", "highlight", "ink"]);
+});
+
+test("after a cancelled press the pen's next one counts, with Pencil and Text", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorInkButton").tap();
+  await cancelledStroke(frame, line([0.2, 0.2], [0.6, 0.2]));
+  await expect.poll(() => types(frame)).toEqual(["ink"]);
+  await pencilStroke(frame, line([0.2, 0.4], [0.6, 0.4]), { pointerId: 3 });
+  await expect.poll(() => types(frame)).toEqual(["ink", "ink"]);
+
+  await frame.locator("#editorFreeTextButton").tap();
+  await expect(frame.locator("#editorFreeTextButton")).toHaveClass(/toggled/);
+  await cancelledStroke(frame, [[0.2, 0.6]]);
+  await pencilStroke(frame, [[0.2, 0.7]], { pointerId: 4 });
+  await expect.poll(() => types(frame)).toEqual(["ink", "ink", "freetext"]);
+});
+
+test("a pen's press ends a stroke whose lift never came", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorHighlightButton").tap();
+  await dispatch(
+    frame,
+    FIRST_PAGE,
+    strokeSteps(line([0.03, 0.2], [0.03, 0.4]), { pointerType: "pen", pointerId: 2 }).slice(0, -1),
+  );
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.4]), { pointerId: 3 });
+  await expect.poll(() => types(frame)).toEqual(["highlight", "ink"]);
+
+  await dispatch(
+    frame,
+    FIRST_PAGE,
+    strokeSteps(line([0.2, 0.5], [0.6, 0.5]), { pointerType: "pen", pointerId: 5 }).slice(0, -1),
+  );
+  await pencilStroke(frame, line([0.2, 0.7], [0.6, 0.7]), { pointerId: 6 });
+  // Both strokes are there, in one drawing, since the second came at once.
+  await expect
+    .poll(async () => (await drawings(frame)).reduce((sum, { strokes }) => sum + strokes, 0))
+    .toBe(3);
 });

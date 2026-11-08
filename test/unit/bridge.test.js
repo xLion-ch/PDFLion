@@ -2474,6 +2474,8 @@ describe("bridge.js eraser", () => {
       addUndoableEditor(added) {
         commands.push({ added: added.id });
       }
+      // followLostLifts() has it forget a press after each lift.
+      pointerdown() {}
     }
     const layer = new Layer();
     uiManager.getLayer = () => layer;
