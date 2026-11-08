@@ -530,3 +530,32 @@ test("no drawing or highlight shows a box, or takes a press, with any tool on", 
   await expect.poll(() => types(frame)).toEqual(["highlight", "highlight", "ink", "freetext"]);
   await expect(frame.locator(".inkEditor.selectedEditor, .highlightEditor.selectedEditor")).toHaveCount(0);
 });
+
+test("Highlight and Pencil mark over a text box, which stays unselected", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorFreeTextButton").tap();
+  await expect(frame.locator("#editorFreeTextButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, [[0.01, 0.3]]);
+  await expect.poll(() => types(frame)).toEqual(["freetext"]);
+  await page.keyboard.type("A comment");
+
+  // Starting over the text box, whose text pdf.js keeps above the highlight.
+  await frame.locator("#editorHighlightButton").tap();
+  await expect(frame.locator("#editorHighlightButton")).toHaveClass(/toggled/);
+  const across = line([0.03, 0.29], [0.07, 0.31]);
+  const box = await frame.locator(".freeTextEditor").boundingBox();
+  const start = await frame.evaluate(
+    ([x, y]) => document.elementFromPoint(x, y)?.className,
+    [/** @type {any} */ (box).x + 10, /** @type {any} */ (box).y + 5],
+  );
+  expect(start).toContain("textLayer");
+  await pencilStroke(frame, across);
+  await expect.poll(() => types(frame)).toEqual(["freetext", "highlight"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, across);
+  await expect.poll(() => types(frame)).toEqual(["freetext", "highlight", "ink"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+});

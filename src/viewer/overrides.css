@@ -670,6 +670,24 @@
   pointer-events: none !important;
 }
 
+/*
+ * While Highlight or Pencil is on, they mark over everything else too: text
+ * boxes, stamps and signatures let presses through, rather than selecting.
+ * Highlights show under a text box's text, as under a page's.
+ */
+.annotationEditorLayer:is(.highlightEditing, .inkEditing)
+  :is(.freeTextEditor, .stampEditor, .signatureEditor) {
+  &,
+  * {
+    pointer-events: none !important;
+  }
+}
+
+.annotationEditorLayer.getElements:is(.highlightEditing, .inkEditing)
+  > :is(.freeTextEditor, .stampEditor, .signatureEditor) {
+  pointer-events: none !important;
+}
+
 /* A highlight's outlines, which pdf.js draws on the page rather than in its editor. */
 .canvasWrapper svg.highlightOutline {
   display: none;
