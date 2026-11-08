@@ -184,7 +184,7 @@ test("a long press of a finger on a favourite shows its menu", async ({ pdflion 
         ),
       ),
     )
-    .toEqual(["Remove Favourite"]);
+    .toEqual(["Edit Favourite", "Remove Favourite"]);
   // Only once, whether Chromium's own long press comes too or not, and
   // without using the favourite.
   await page.waitForTimeout(500);

@@ -85,6 +85,15 @@ describe("tools parseFavourite", () => {
     }
   });
 
+  it("takes the eraser's favourite, with its mode and size and nothing else", () => {
+    const eraser = { tool: "eraser", mode: "line", size: 20 };
+    assert.deepEqual(parseFavourite(eraser), eraser);
+    assert.deepEqual(parseFavourite({ ...eraser, color: "#000000", onclick: "x" }), eraser);
+    assert.equal(parseFavourite({ ...eraser, mode: "stroke" }), null);
+    assert.equal(parseFavourite({ ...eraser, size: 51 }), null);
+    assert.equal(parseFavourite({ tool: "eraser", mode: "line" }), null);
+  });
+
   it("writes colours in lower case", () => {
     assert.equal(parseFavourite({ ...pencil, color: "#1E66F5" })?.color, "#1e66f5");
   });

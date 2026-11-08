@@ -516,6 +516,19 @@
   let favouriteMode = null;
 
   /**
+   * The favourite being edited, whose tool's option box is open with its
+   * settings, and whose Save as Favourite now updates it (editFavourite()).
+   * @type {Favourite | null}
+   */
+  let editedFavourite = null;
+
+  /**
+   * Each tool's label on Save as Favourite, by its name in a favourite.
+   * @type {Map<string, HTMLElement>}
+   */
+  const saveLabels = new Map();
+
+  /**
    * The favourite being dragged to another place among them, and where it
    * would go: before or after the favourite it's over.
    * @type {{ favourite: Favourite, over: HTMLElement | null, after: boolean } | null}
@@ -542,7 +555,7 @@
   /** @type {ReturnType<typeof setTimeout> | null} the next autosave */
   let autosaveTimer = null;
 
-  /** @type {HTMLButtonElement[]} Undo and Redo, while a drawing tool is on */
+  /** @type {HTMLButtonElement[]} Undo and Redo, which work while a drawing tool is on */
   let undoButtons = [];
 
   /**
@@ -1086,21 +1099,24 @@
    * of adding a drawing. pdf.js ends a stroke on a pointerup it listens for
    * on window from the stroke's start, after this listener, so the drawing
    * ends a task later, unless another stroke has started meanwhile, and
-   * is left unselected, as overrides.css shows Pencil's drawings meanwhile.
+   * is left unselected, as overrides.css shows drawings and highlights. So is
+   * a new highlight, or the next colour chosen would change it, unseen.
    *
    * @param {any} app
    */
   function followPencilStrokes(app) {
-    window.addEventListener("pointerup", () => {
-      if (app.pdfViewer?.annotationEditorMode !== EDITOR_INK || erasing) return;
-      setTimeout(() => {
-        if (app.pdfViewer?.annotationEditorMode === EDITOR_INK && !isDrawing()) {
-          endPencilDrawing(app);
-          // pdf.js selects the new drawing, with its box and toolbar.
+    const drawsMarks = () => PEN_TOOLS.has(app.pdfViewer?.annotationEditorMode) && !erasing;
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(type, () => {
+        if (!drawsMarks()) return;
+        setTimeout(() => {
+          if (!drawsMarks() || isDrawing()) return;
+          if (app.pdfViewer.annotationEditorMode === EDITOR_INK) endPencilDrawing(app);
+          // pdf.js selects the new one, with its box and toolbar.
           uiManager(app)?.unselectAll();
-        }
-      }, 0);
-    });
+        }, 0);
+      });
+    }
   }
 
   /**
@@ -2120,7 +2136,8 @@
 
   /**
    * Adds Undo and Redo before the drawing tools, for a host without a native
-   * menu, as on an iPad without a keyboard. They show while a drawing tool
+   * menu, as on an iPad without a keyboard. They always show, so that the
+   * toolbar doesn't shift as a tool is chosen, and work while a drawing tool
    * is on, as Edit > Undo and Redo work for pdf.js then.
    *
    * @param {any} app
@@ -2131,11 +2148,12 @@
     if (hasNativeMenu || !tools) return [];
     const undo = makeButton("pdflionUndo", "toolbarButton", t("undo"));
     const redo = makeButton("pdflionRedo", "toolbarButton", t("redo"));
+    undo.disabled = redo.disabled = true;
     undo.addEventListener("click", () => editingAction(app, "undo"));
     redo.addEventListener("click", () => editingAction(app, "redo"));
     const group = createElement(
       "div",
-      { id: "pdflionUndoRedo", className: "toolbarHorizontalGroup", hidden: true },
+      { id: "pdflionUndoRedo", className: "toolbarHorizontalGroup" },
       undo,
       redo,
     );
@@ -2144,18 +2162,13 @@
   }
 
   /**
-   * Shows Undo and Redo while a drawing tool is on.
+   * Enables Undo and Redo while a drawing tool is on.
    *
    * @param {any} app
    */
   function followUndoButtons(app) {
     app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
-      const group = undoButtons[0]?.parentElement;
-      if (!group) return;
-      const hidden = mode === EDITOR_NONE || mode === EDITOR_DISABLE;
-      if (group.hidden === hidden) return;
-      group.hidden = hidden;
-      layoutToolbar();
+      for (const button of undoButtons) button.disabled = !isToolMode(mode);
     });
   }
 
@@ -2659,6 +2672,7 @@
     const ui = uiManager(app);
     if (erasing || !ui) return;
     erasing = true;
+    showEditedFavourite(null);
     showErasing(true);
     updateFavouritesPressed(app);
     if (app.pdfViewer.annotationEditorMode === EDITOR_INK) {
@@ -2681,6 +2695,7 @@
     if (!erasing) return;
     endGesture(app);
     erasing = false;
+    if (editedFavourite?.tool === "eraser") showEditedFavourite(null);
     showErasing(false);
     updateFavouritesPressed(app);
     if (mode === EDITOR_NONE) {
@@ -3277,11 +3292,14 @@
    * Safari sends too. Nor does a palm start pdf.js's pinch then, which would
    * end the stroke, nor does the pen's own touch with a palm already down.
    *
+   * It also keeps a pen from losing pdf.js's drawing: see followLostLifts().
+   *
    * @param {any} app
    */
   function followPen(app) {
     const container = document.getElementById("viewerContainer");
     if (!container) return;
+    followLostLifts(app, container);
     container.addEventListener(
       "pointerdown",
       (event) => {
@@ -3319,6 +3337,65 @@
       },
       { capture: true, passive: false },
     );
+  }
+
+  /**
+   * Keeps a press that ended badly from stopping the next ones, in any tool:
+   * - A pen has one tip, so its press means that its last one ended, even if
+   *   no lift came, as when iPadOS takes the pen over, and so does any press
+   *   outside the pages, which may choose another tool. pdf.js would wait for
+   *   that lift, from that pointer, and draw nothing until then
+   *   (`CurrentPointers` in src/display/editor/tools.js), and a stroke left
+   *   open across tools would end as the new tool's (`#currentDraw` in
+   *   src/display/editor/draw.js), so it gets one first.
+   * - A layer ignores the press after one it never saw end: one the browser
+   *   cancelled, whose `button` isn't 0, or lifted outside the layer
+   *   (`pointerup()` in src/display/editor/annotation_editor_layer.js).
+   *   Its pointerdown() forgets the press, and with no target does no more.
+   *
+   * @param {any} app
+   * @param {HTMLElement} container #viewerContainer
+   */
+  function followLostLifts(app, container) {
+    window.addEventListener(
+      "pointerdown",
+      ({ pointerType, target }) => {
+        if (penDown === null) return;
+        // A finger on the pages may be a palm, while the pen draws.
+        if (pointerType !== "pen" && container.contains(/** @type {Node} */ (target))) return;
+        pointerType = "pen";
+        const lift = { pointerId: penDown, pointerType, button: 0, bubbles: true };
+        window.dispatchEvent(new PointerEvent("pointerup", lift));
+      },
+      true,
+    );
+    /** @type {number | null} the index of the page last pressed on */
+    let pressed = null;
+    container.addEventListener(
+      "pointerdown",
+      ({ target }) => {
+        const page = /** @type {any} */ (target)?.closest?.(PAGE);
+        pressed = page ? Number(page.dataset.pageNumber) - 1 : null;
+      },
+      true,
+    );
+    // After the layer's own listeners. In Highlight its text layer takes presses.
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(type, () => {
+        const mode = app.pdfViewer?.annotationEditorMode;
+        if (pressed === null || mode === EDITOR_HIGHLIGHT || !isToolMode(mode)) return;
+        uiManager(app)?.getLayer(pressed)?.pointerdown({ button: 0, target: null });
+        pressed = null;
+      });
+    }
+  }
+
+  /**
+   * @param {number | undefined} mode an `AnnotationEditorType`
+   * @returns {boolean} whether it's a drawing tool, not none or disabled
+   */
+  function isToolMode(mode) {
+    return mode !== undefined && mode !== EDITOR_NONE && mode !== EDITOR_DISABLE;
   }
 
   /**
@@ -3482,41 +3559,73 @@
   }
 
   /**
-   * Adds Save as Favourite to the end of the option boxes of Highlight, Text
-   * and Pencil, as an outlined button. A click has main keep the tool's
-   * settings for every tab, and the button says for a moment what it did.
+   * Adds Save as Favourite to the end of the option boxes of Highlight, Text,
+   * Pencil and the eraser.
    */
   function addSaveFavouriteButtons() {
     for (const [tool, { name }] of Object.entries(FAVOURITE_TOOLS)) {
       const container = document.querySelector(
         `#editor${name}ParamsToolbar > .editorParamsToolbarContainer`,
       );
-      if (!container) continue;
-      const label = createElement("span", { textContent: SAVE_FAVOURITE, ariaLive: "polite" });
-      const button = createElement(
-        "button",
-        {
-          type: "button",
-          id: `pdflionSave${name}Favourite`,
-          className: "secondaryButton pdflionSaveFavourite",
-        },
-        label,
-      );
-      let timer = 0;
-      button.addEventListener("click", async () => {
-        label.textContent = await saveFavourite(/** @type {Favourite["tool"]} */ (tool));
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          label.textContent = SAVE_FAVOURITE;
-        }, FAVOURITE_NOTE_TIME);
-      });
-      container.append(button);
+      if (container) addSaveFavouriteButton(tool, name, container);
     }
+    if (eraserTool) addSaveFavouriteButton("eraser", "Eraser", eraserTool.box.children[0]);
+  }
+
+  /**
+   * Adds Save as Favourite to an option box, as an outlined button. A click
+   * has main keep the tool's settings for every tab, and the button says for
+   * a moment what it did.
+   *
+   * @param {string} tool
+   * @param {string} name in the button's id
+   * @param {Element} container
+   */
+  function addSaveFavouriteButton(tool, name, container) {
+    const label = createElement("span", { textContent: SAVE_FAVOURITE, ariaLive: "polite" });
+    const button = createElement(
+      "button",
+      {
+        type: "button",
+        id: `pdflionSave${name}Favourite`,
+        className: "secondaryButton pdflionSaveFavourite",
+      },
+      label,
+    );
+    let timer = 0;
+    button.addEventListener("click", async () => {
+      label.textContent = await saveFavourite(/** @type {Favourite["tool"]} */ (tool));
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        label.textContent = saveLabel(tool);
+      }, FAVOURITE_NOTE_TIME);
+    });
+    saveLabels.set(tool, label);
+    container.append(button);
+  }
+
+  /**
+   * @param {string} tool
+   * @returns {string} what its option box's button does now
+   */
+  function saveLabel(tool) {
+    return editedFavourite?.tool === tool ? t("updateFavourite") : SAVE_FAVOURITE;
+  }
+
+  /**
+   * Has the favourite's tool's option box update it, or none any more.
+   *
+   * @param {Favourite | null} favourite
+   */
+  function showEditedFavourite(favourite) {
+    editedFavourite = favourite;
+    for (const [tool, label] of saveLabels) label.textContent = saveLabel(tool);
   }
 
   /**
    * Has main keep a tool's settings, as its option box shows them, as a
-   * favourite, unless they're one already. Main drops repeats too.
+   * favourite, unless they're one already, or in place of the favourite being
+   * edited. Main drops repeats too.
    *
    * @param {Favourite["tool"]} tool
    * @returns {Promise<string>} what happened, for the button to say
@@ -3526,9 +3635,22 @@
     if (!favourite) return t("chooseColourFirst");
     await toolSettingsLoaded;
     if (!favourites) return t("couldntSave");
-    if (favourites.some((other) => sameFavourite(other, favourite))) return t("alreadyFavourite");
-    favourites = [...favourites, favourite];
+    const edited = editedFavourite?.tool === tool ? editedFavourite : null;
+    // Another tab may have removed it, and then it's a new one.
+    const index = edited ? favourites.findIndex((other) => sameFavourite(other, edited)) : -1;
+    const repeat = favourites.some(
+      (other, at) => at !== index && sameFavourite(other, favourite),
+    );
+    if (repeat) return t("alreadyFavourite");
+    favourites =
+      index === -1
+        ? [...favourites, favourite]
+        : favourites.map((other, at) => (at === index ? favourite : other));
     window.pdflion.setToolSettings({ favourites });
+    if (edited) {
+      showEditedFavourite(null);
+      closeOptionBox(tool);
+    }
     return t("saved");
   }
 
@@ -3543,6 +3665,7 @@
    *   selected highlight whose colour none of the swatches has
    */
   function readFavourite(tool) {
+    if (tool === "eraser") return { tool, ...eraser };
     const input = (/** @type {string} */ id) =>
       /** @type {HTMLInputElement} */ (document.getElementById(id));
     if (tool === "highlight") {
@@ -3821,7 +3944,8 @@
   /**
    * A favourite's button: its tool's icon in its colour, which overrides.css
    * draws, and its size. A click uses it, a drag onto another favourite moves
-   * it there, and its context menu, also after a long press, removes it. A
+   * it there, and its context menu, also after a long press, edits or removes
+   * it. A
    * finger or a pen drags it once it has held it long enough for the menu
    * (dragFavourite()).
    *
@@ -3848,7 +3972,7 @@
     else button.title = description;
     button.setAttribute("data-tool", favourite.tool);
     button.setAttribute("data-size", String(favourite.size ?? favourite.thickness));
-    button.style.setProperty("--pdflion-favourite-color", favourite.color);
+    if (favourite.color) button.style.setProperty("--pdflion-favourite-color", favourite.color);
     button.addEventListener("click", () => useFavourite(app, favourite));
     button.addEventListener("contextmenu", (/** @type {Event} */ event) => {
       event.preventDefault();
@@ -4098,12 +4222,13 @@
 
   /**
    * @param {Favourite} favourite
-   * @returns {string} what it is, such as "Pencil, #1E66F5, 1 pt, 100 %"
+   * @returns {string} what it is, such as "Pencil, #1E66F5, 1 pt, 100 %", or
+   *   "Eraser, Line, 10 pt"
    */
-  function describeFavourite({ tool, color, thickness, size, opacity }) {
+  function describeFavourite({ tool, color, thickness, size, opacity, mode }) {
     const parts = [
-      FAVOURITE_TOOLS[tool].label,
-      color.toUpperCase(),
+      tool === "eraser" ? t("eraser") : FAVOURITE_TOOLS[tool].label,
+      tool === "eraser" ? t(mode === "line" ? "eraseLine" : "eraseObject") : color?.toUpperCase(),
       t("points", { size: size ?? thickness }),
     ];
     if (opacity !== undefined) parts.push(t("percent", { percent: Math.round(opacity * 100) }));
@@ -4128,13 +4253,47 @@
   function useFavourite(app, favourite) {
     const ui = uiManager(app);
     if (!ui) return;
-    const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
     commitDrawing(ui);
+    showEditedFavourite(null);
     // The favourite that's on turns its tool off, as the tool's own button does.
     if (isFavouriteOn(app, favourite)) {
-      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
+      if (erasing) stopErasing(app, EDITOR_NONE);
+      else app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
       return;
     }
+    turnOnFavourite(app, favourite);
+  }
+
+  /**
+   * Edits a favourite, from its context menu: its tool goes on with its
+   * settings, and its option box opens, whose Save as Favourite now updates
+   * it, in its place among them. Another tool ends that.
+   *
+   * @param {any} app
+   * @param {Favourite} favourite
+   */
+  function editFavourite(app, favourite) {
+    const ui = uiManager(app);
+    if (!ui || !toolsEnabled) return;
+    commitDrawing(ui);
+    showEditedFavourite(null);
+    if (!isFavouriteOn(app, favourite)) turnOnFavourite(app, favourite);
+    // pdf.js opens the box as it switches to the tool, which then stays open.
+    favouriteMode = null;
+    openOptionBox(favourite.tool);
+    showEditedFavourite(favourite);
+  }
+
+  /**
+   * @param {any} app
+   * @param {Favourite} favourite
+   */
+  function turnOnFavourite(app, favourite) {
+    if (favourite.tool === "eraser") {
+      useEraserFavourite(app, favourite);
+      return;
+    }
+    const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
     if (erasing && mode === EDITOR_INK) stopErasing(app, EDITOR_INK);
     if (app.pdfViewer.annotationEditorMode !== mode) {
       favouriteMode = mode;
@@ -4153,14 +4312,32 @@
   }
 
   /**
+   * Turns the eraser on with a favourite's settings, which become its
+   * settings in every tab, as if chosen in its option box, which stays closed.
+   *
+   * @param {any} app
+   * @param {Favourite} favourite
+   */
+  function useEraserFavourite(app, favourite) {
+    const { mode, size } = /** @type {EraserSettings} */ (/** @type {unknown} */ (favourite));
+    const settings = { mode, size };
+    showEraser(settings);
+    storeEraser(settings);
+    startErasing(app);
+    closeOptionBox("eraser");
+    updateFavouritesPressed(app);
+  }
+
+  /**
    * @param {any} app
    * @returns {Favourite | null} the tool that's on with its settings, as its
-   *   option box shows them, and none while the eraser is on
+   *   option box shows them
    */
   function currentFavourite(app) {
+    if (erasing) return readFavourite("eraser");
     const mode = app.pdfViewer?.annotationEditorMode;
     const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
-    return tool && !erasing ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
+    return tool ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
   }
 
   /**
@@ -4175,7 +4352,7 @@
 
   /**
    * Shows as pressed the favourites whose tool is on with their settings,
-   * as its option box shows them, and none while the eraser is on. It reads
+   * as its option box shows them. It reads
    * them once pdf.js has shown a change: Highlight's colour picker marks the
    * chosen swatch only after dispatching it (src/display/editor/color_picker.js).
    *
@@ -4307,9 +4484,28 @@
    * @param {Favourite["tool"]} tool
    */
   function closeOptionBox(tool) {
-    const { name } = FAVOURITE_TOOLS[tool];
-    document.getElementById(`editor${name}Button`)?.setAttribute("aria-expanded", "false");
-    document.getElementById(`editor${name}ParamsToolbar`)?.classList.toggle("hidden", true);
+    showOptionBox(tool, false);
+  }
+
+  /**
+   * Opens a drawing tool's option box, as pdf.js does with its tool.
+   *
+   * @param {Favourite["tool"]} tool
+   */
+  function openOptionBox(tool) {
+    showOptionBox(tool, true);
+  }
+
+  /**
+   * @param {Favourite["tool"]} tool
+   * @param {boolean} open
+   */
+  function showOptionBox(tool, open) {
+    const name = tool === "eraser" ? null : FAVOURITE_TOOLS[tool].name;
+    const button = name ? document.getElementById(`editor${name}Button`) : eraserTool?.button;
+    const box = name ? document.getElementById(`editor${name}ParamsToolbar`) : eraserTool?.box;
+    button?.setAttribute("aria-expanded", String(open));
+    box?.classList.toggle("hidden", !open);
   }
 
   /**
@@ -4317,12 +4513,19 @@
    * tools do, and show as pressed while their tool is on with their settings.
    * A tool a favourite turned on keeps its option box closed, which pdf.js
    * opened just before, since its event bus calls other listeners after its
-   * own (web/event_utils.js).
+   * own (web/event_utils.js). Another tool ends the editing of a favourite.
    *
    * @param {any} app
    */
   function followFavourites(app) {
+    window.pdflion.onEditFavourite?.((/** @type {Favourite} */ favourite) => {
+      editFavourite(app, favourite);
+    });
     app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+      const edited = editedFavourite?.tool;
+      if (edited && edited !== "eraser" && FAVOURITE_TOOLS[edited].mode !== mode) {
+        showEditedFavourite(null);
+      }
       toolsEnabled = mode !== EDITOR_DISABLE;
       if (favouritesBar) favouritesBar.moreButton.disabled = !toolsEnabled;
       if (toolsMenu) toolsMenu.button.disabled = !toolsEnabled;
@@ -4484,7 +4687,7 @@
   /**
    * Fills the drawing tools' menu with the tools pdf.js shows, the one that's
    * on checked. Choosing one clicks its button. At the toolbar's last step,
-   * Undo and Redo come first, while a tool is on.
+   * Undo and Redo come first.
    *
    * @param {any} app
    */
@@ -4492,15 +4695,15 @@
     if (!toolsMenu) return;
     /** @type {HTMLElement[]} */
     const entries = [];
-    const undoGroup = undoButtons[0]?.parentElement;
     const last = document
       .getElementById("toolbarContainer")
       ?.classList.contains("pdflionToolbarMinimal");
-    if (last && undoGroup && !undoGroup.hidden) {
+    if (last && undoButtons.length > 0) {
       for (const button of undoButtons) {
         const item = makeButton(`${button.id}Item`, "toolbarButton labeled", button.title);
         item.setAttribute("role", "menuitem");
         item.tabIndex = -1;
+        item.disabled = button.disabled;
         item.addEventListener("click", () => button.click());
         entries.push(item);
       }

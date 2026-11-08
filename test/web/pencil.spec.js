@@ -22,6 +22,7 @@ import {
   line,
   pencilHover,
   pencilStroke,
+  strokeSteps,
   touchscreen,
 } from "./input.js";
 
@@ -403,4 +404,199 @@ test("the eraser erases a free highlight with the pen, in either mode", async ({
   await expect.poll(() => types(frame)).toEqual([]);
   await frame.locator("#pdflionUndo").tap();
   await expect.poll(() => types(frame)).toEqual(["highlight"]);
+});
+
+/**
+ * A pen's press that the browser takes over, as Safari does when it starts to
+ * pan: a press and moves, and pointercancel rather than a lift.
+ *
+ * @param {Frame} frame
+ * @param {[number, number][]} points on the first page
+ */
+const cancelledStroke = (frame, points) =>
+  dispatch(frame, FIRST_PAGE, [
+    ...strokeSteps(points, { pointerType: "pen", pointerId: 2 }).slice(0, -1),
+    { type: "pointercancel", at: /** @type {[number, number]} */ (points.at(-1)), pointerType: "pen", pointerId: 2, button: -1 },
+  ]);
+
+test("after a cancelled Highlight stroke the pen still draws, in that tool and the next", async ({
+  page,
+}) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorHighlightButton").tap();
+  await cancelledStroke(frame, line([0.03, 0.2], [0.03, 0.4]));
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
+  await expect(frame.locator(".annotationEditorLayer.drawing")).toHaveCount(0);
+
+  await pencilStroke(frame, line([0.03, 0.5], [0.03, 0.7]), { pointerId: 3 });
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight"]);
+
+  await cancelledStroke(frame, line([0.97, 0.2], [0.97, 0.4]));
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.4]), { pointerId: 4 });
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight", "highlight", "ink"]);
+});
+
+test("after a cancelled press the pen's next one counts, with Pencil and Text", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorInkButton").tap();
+  await cancelledStroke(frame, line([0.2, 0.2], [0.6, 0.2]));
+  await expect.poll(() => types(frame)).toEqual(["ink"]);
+  await pencilStroke(frame, line([0.2, 0.4], [0.6, 0.4]), { pointerId: 3 });
+  await expect.poll(() => types(frame)).toEqual(["ink", "ink"]);
+
+  await frame.locator("#editorFreeTextButton").tap();
+  await expect(frame.locator("#editorFreeTextButton")).toHaveClass(/toggled/);
+  await cancelledStroke(frame, [[0.2, 0.6]]);
+  await pencilStroke(frame, [[0.2, 0.7]], { pointerId: 4 });
+  await expect.poll(() => types(frame)).toEqual(["ink", "ink", "freetext"]);
+});
+
+test("a pen's press ends a stroke whose lift never came", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorHighlightButton").tap();
+  await dispatch(
+    frame,
+    FIRST_PAGE,
+    strokeSteps(line([0.03, 0.2], [0.03, 0.4]), { pointerType: "pen", pointerId: 2 }).slice(0, -1),
+  );
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.4]), { pointerId: 3 });
+  await expect.poll(() => types(frame)).toEqual(["highlight", "ink"]);
+
+  await dispatch(
+    frame,
+    FIRST_PAGE,
+    strokeSteps(line([0.2, 0.5], [0.6, 0.5]), { pointerType: "pen", pointerId: 5 }).slice(0, -1),
+  );
+  await pencilStroke(frame, line([0.2, 0.7], [0.6, 0.7]), { pointerId: 6 });
+  // Both strokes are there, in one drawing, since the second came at once.
+  await expect
+    .poll(async () => (await drawings(frame)).reduce((sum, { strokes }) => sum + strokes, 0))
+    .toBe(3);
+});
+
+test("the eraser saves as a favourite, which erases with its mode and size", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorInkButton").tap();
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.3]));
+  await expect.poll(() => types(frame)).toEqual(["ink"]);
+
+  await frame.locator("#pdflionEditorEraserButton").tap();
+  await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
+  await frame.locator("#pdflionSaveEraserFavourite").tap();
+  const favourite = frame.locator('#pdflionFavourites > .pdflionFavourite[data-tool="eraser"]');
+  await expect(favourite).toHaveAttribute("aria-pressed", "true");
+  await expect(favourite).toHaveAttribute("title", "Eraser, Line, 10 pt");
+  // The option box closes with the eraser, and stays closed for the favourite.
+  await frame.locator("#pdflionEditorEraserButton").tap();
+  await expect(favourite).toHaveAttribute("aria-pressed", "false");
+
+  await favourite.tap();
+  await expect(frame.locator("#outerContainer")).toHaveClass(/pdflionErasing/);
+  await expect(frame.locator("#pdflionEditorEraserParamsToolbar")).toBeHidden();
+  // Line mode cuts the drawing in two.
+  await pencilStroke(frame, line([0.4, 0.2], [0.4, 0.4]));
+  await expect.poll(() => types(frame)).toEqual(["ink", "ink"]);
+});
+
+test("no drawing or highlight shows a box, or takes a press, with any tool on", async ({ page }) => {
+  const frame = await openPaper(page);
+  const margin = line([0.03, 0.3], [0.03, 0.6]);
+  await frame.locator("#editorHighlightButton").tap();
+  await pencilStroke(frame, margin);
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+  await expect(frame.locator(".highlightEditor .editToolbar")).toBeHidden();
+  await expect(frame.locator("svg.highlightOutline").first()).toBeHidden();
+
+  // A press on the highlight draws another, rather than selecting it, also
+  // within pdf.js's time for a double press.
+  await pencilStroke(frame, margin);
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.3]));
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight", "ink"]);
+
+  // Text: a press on the drawing opens a text box, rather than selecting it.
+  await frame.locator("#editorFreeTextButton").tap();
+  await expect(frame.locator("#editorFreeTextButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, [[0.4, 0.3]]);
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight", "ink", "freetext"]);
+  await expect(frame.locator(".inkEditor.selectedEditor, .highlightEditor.selectedEditor")).toHaveCount(0);
+});
+
+test("Highlight and Pencil mark over a text box, which stays unselected", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorFreeTextButton").tap();
+  await expect(frame.locator("#editorFreeTextButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, [[0.01, 0.3]]);
+  await expect.poll(() => types(frame)).toEqual(["freetext"]);
+  await page.keyboard.type("A comment");
+
+  // Starting over the text box, whose text pdf.js keeps above the highlight.
+  await frame.locator("#editorHighlightButton").tap();
+  await expect(frame.locator("#editorHighlightButton")).toHaveClass(/toggled/);
+  const across = line([0.03, 0.29], [0.07, 0.31]);
+  const box = await frame.locator(".freeTextEditor").boundingBox();
+  const start = await frame.evaluate(
+    ([x, y]) => document.elementFromPoint(x, y)?.className,
+    [/** @type {any} */ (box).x + 10, /** @type {any} */ (box).y + 5],
+  );
+  expect(start).toContain("textLayer");
+  await pencilStroke(frame, across);
+  await expect.poll(() => types(frame)).toEqual(["freetext", "highlight"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, across);
+  await expect.poll(() => types(frame)).toEqual(["freetext", "highlight", "ink"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+});
+
+test("Undo and Redo always show, so that choosing a tool doesn't shift the toolbar", async ({ page }) => {
+  const frame = await openPaper(page);
+  const undo = frame.locator("#pdflionUndo");
+  const tool = frame.locator("#editorHighlightButton");
+  await expect(undo).toBeVisible();
+  await expect(undo).toBeDisabled();
+  const before = await tool.boundingBox();
+
+  await tool.tap();
+  await expect(undo).toBeEnabled();
+  expect(await tool.boundingBox()).toEqual(before);
+
+  await tool.tap();
+  await expect(undo).toBeDisabled();
+  expect(await tool.boundingBox()).toEqual(before);
+});
+
+test("a favourite's menu edits it, and Update Favourite keeps its place", async ({ page }) => {
+  const frame = await openPaper(page);
+  const blue = { tool: "ink", color: "#1e66f5", thickness: 7, opacity: 1 };
+  const eraser = { tool: "eraser", mode: "object", size: 10 };
+  await frame.evaluate(
+    (favourites) => window.pdflion.setToolSettings({ favourites }),
+    [blue, eraser],
+  );
+  const button = frame.locator('#pdflionFavourites > .pdflionFavourite[data-tool="eraser"]');
+  await expect(button).toHaveCount(1);
+  await button.dispatchEvent("contextmenu");
+  await page.getByRole("menuitem", { name: "Edit Favourite" }).click();
+
+  await expect(frame.locator("#pdflionEditorEraserParamsToolbar")).toBeVisible();
+  await expect(frame.locator("#outerContainer")).toHaveClass(/pdflionErasing/);
+  const update = frame.locator("#pdflionSaveEraserFavourite");
+  await expect(update).toHaveText("Update Favourite");
+  await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
+  await update.tap();
+  await expect(frame.locator("#pdflionEditorEraserParamsToolbar")).toBeHidden();
+  await expect(button).toHaveAttribute("title", "Eraser, Line, 10 pt");
+  await expect(frame.locator("#pdflionFavourites > .pdflionFavourite").first()).toHaveAttribute("data-tool", "ink");
 });

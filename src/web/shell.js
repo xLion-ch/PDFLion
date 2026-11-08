@@ -751,7 +751,14 @@ const VIEWER_MESSAGES = {
     if (!favourite) return;
     const remove = () =>
       updateToolSettings({ favourites: removeFavourite(toolSettings.favourites, favourite) });
-    dialogs.showMenu([{ label: t("removeFavourite"), action: remove }], inFrame(tab, x, y));
+    const edit = () => tab.port?.postMessage({ type: "editFavourite", favourite });
+    dialogs.showMenu(
+      [
+        { label: t("editFavourite"), action: edit },
+        { label: t("removeFavourite"), action: remove },
+      ],
+      inFrame(tab, x, y),
+    );
   },
   closeMenu: () => dialogs.closeMenus(),
   view(tab, value) {

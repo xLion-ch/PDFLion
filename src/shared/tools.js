@@ -48,11 +48,13 @@ export const MAX_FAVOURITES = 500;
 
 /**
  * @typedef {object} Favourite
- * @property {"ink" | "freetext" | "highlight"} tool pdf.js's name for it
- * @property {string} color `#rrggbb`, in lower case
+ * @property {"ink" | "freetext" | "highlight" | "eraser"} tool pdf.js's name
+ *   for it, or "eraser" for PDFLion's own, which has only its own settings
+ * @property {string} [color] `#rrggbb`, in lower case, for all but the eraser
  * @property {number} [thickness] for ink and highlight
  * @property {number} [opacity] for ink
- * @property {number} [size] for freetext
+ * @property {number} [size] for freetext and the eraser
+ * @property {"line" | "object"} [mode] for the eraser
  */
 
 /**
@@ -87,6 +89,10 @@ export function parseEraser(value) {
 export function parseFavourite(value) {
   if (!isRecord(value)) return null;
   const { tool, color } = value;
+  if (tool === "eraser") {
+    const eraser = parseEraser(value);
+    return eraser && { tool, ...eraser };
+  }
   if (typeof tool !== "string" || !Object.hasOwn(TOOLS, tool)) return null;
   if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) return null;
   /** @type {Record<string, unknown>} */

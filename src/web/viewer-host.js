@@ -46,6 +46,8 @@
 
   /** @type {((settings: object) => void)[]} */
   const toolSettingsListeners = [];
+  /** @type {((favourite: object) => void)[]} */
+  const editFavouriteListeners = [];
 
   /** @type {((status: string | null) => void) | null} */
   let saveStatusListener = null;
@@ -64,6 +66,9 @@
       case "command":
         if (commandHandler) runCommand(data.id, data.command);
         else queuedCommands.push(data);
+        break;
+      case "editFavourite":
+        for (const listener of editFavouriteListeners) listener(data.favourite);
         break;
       case "toolSettings":
         for (const listener of toolSettingsListeners) listener(data.settings);
@@ -159,6 +164,10 @@
     },
     /** @param {object} favourite */
     showFavouriteMenu: (favourite) => send("favouriteMenu", favourite, menuAt.x, menuAt.y),
+    /** @param {(favourite: object) => void} callback */
+    onEditFavourite(callback) {
+      editFavouriteListeners.push(callback);
+    },
     /** Closes the shell's menu, once a long press that opened it drags its favourite. */
     closeMenu: () => send("closeMenu"),
     /** @param {object} view where the document is shown, which the shell keeps */

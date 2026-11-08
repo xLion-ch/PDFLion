@@ -342,10 +342,6 @@
   mask-image: url(/pdflion/icons/info.svg);
 }
 
-#pdflionUndoRedo[hidden] {
-  display: none;
-}
-
 /*
  * The status, such as "Not in Files", as Material's assist chip: its icon and
  * its label, which goes from pdf.js's medium view on.
@@ -483,7 +479,7 @@
 
 /*
  * Save as Favourite (bridge.js), at the end of the option boxes of Highlight,
- * Text and Pencil: an outlined button, pdf.js's .secondaryButton, across the
+ * Text, Pencil and the eraser: an outlined button, pdf.js's .secondaryButton, across the
  * box. Highlight's box has gaps of its own between its parts, the others
  * don't.
  */
@@ -537,6 +533,10 @@
 
   &[data-tool="ink"] > .pdflionFavouriteIcon::before {
     mask-image: var(--toolbarButton-editorInk-icon);
+  }
+
+  &[data-tool="eraser"] > .pdflionFavouriteIcon::before {
+    mask-image: url(/pdflion/icons/ink_eraser.svg);
   }
 
   /* The size, which the description gives in the ★ menu. */
@@ -606,7 +606,8 @@
     filter: drop-shadow(0 0 0.5px var(--toolbar-icon-bg-color));
 
     &::before {
-      background-color: var(--pdflion-favourite-color);
+      /* The eraser's has no colour. */
+      background-color: var(--pdflion-favourite-color, var(--toolbar-icon-bg-color));
     }
   }
 }
@@ -626,14 +627,19 @@
 }
 
 /*
- * While Pencil is on, its drawings show no box, handles or toolbar, and let
- * presses through to the layer, where pdf.js starts a stroke only: each
- * stroke is a drawing of its own (bridge.js), and a stroke that starts over
- * another draws, rather than selecting or moving it. The border stays,
- * transparent, since pdf.js places an editor by its width.
+ * Pencil's drawings and highlights never show a box, handles or a toolbar,
+ * and let presses through to what's under them, with any tool on: each stroke
+ * is a drawing of its own (bridge.js), and a stroke that starts over another
+ * draws, rather than selecting or moving it. The border stays, transparent,
+ * since pdf.js places an editor by its width. viewer.css gives them presses
+ * on a selector four classes deep, hence !important.
  */
-.annotationEditorLayer.inkEditing .inkEditor {
-  pointer-events: none;
+.annotationEditorLayer :is(.inkEditor, .highlightEditor) {
+  pointer-events: none !important;
+
+  .internal {
+    pointer-events: none !important;
+  }
 
   &,
   &.selectedEditor,
@@ -649,6 +655,38 @@
   > :is(.resizers, .editToolbar) {
     display: none;
   }
+}
+
+/*
+ * Nor do they count as what a double press is on, which would swallow a second
+ * stroke within 500 ms that starts over one, to edit it. pdf.js looks for
+ * editors with this class on the layer, which gives them presses.
+ */
+.annotationEditorLayer.getElements > :is(.inkEditor, .highlightEditor) {
+  pointer-events: none !important;
+}
+
+/*
+ * While Highlight or Pencil is on, they mark over everything else too: text
+ * boxes, stamps and signatures let presses through, rather than selecting.
+ * Highlights show under a text box's text, as under a page's.
+ */
+.annotationEditorLayer:is(.highlightEditing, .inkEditing)
+  :is(.freeTextEditor, .stampEditor, .signatureEditor) {
+  &,
+  * {
+    pointer-events: none !important;
+  }
+}
+
+.annotationEditorLayer.getElements:is(.highlightEditing, .inkEditing)
+  > :is(.freeTextEditor, .stampEditor, .signatureEditor) {
+  pointer-events: none !important;
+}
+
+/* A highlight's outlines, which pdf.js draws on the page rather than in its editor. */
+.canvasWrapper svg.highlightOutline {
+  display: none;
 }
 
 /* viewer.css sets this on a selector three classes deep, hence !important. */

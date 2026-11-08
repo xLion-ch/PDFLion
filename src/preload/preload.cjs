@@ -79,8 +79,12 @@ contextBridge.exposeInMainWorld("pdflion", {
   onToolSettingsChange(callback) {
     ipcRenderer.on("pdflion:tool-settings-changed", (_event, settings) => callback(settings));
   },
-  /** @param {object} favourite shows its context menu, with Remove Favourite */
+  /** @param {object} favourite shows its context menu, with Edit and Remove Favourite */
   showFavouriteMenu: (favourite) => ipcRenderer.send("pdflion:favourite-menu", favourite),
+  /** @param {(favourite: object) => void} callback called with the favourite that menu's Edit chose */
+  onEditFavourite(callback) {
+    ipcRenderer.on("pdflion:edit-favourite", (_event, favourite) => callback(favourite));
+  },
   /**
    * @param {Uint8Array} png the document's first page, for Home, which main
    *   keeps if the document has a file
