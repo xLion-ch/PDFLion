@@ -4097,7 +4097,7 @@ describe("bridge.js without a native menu", () => {
     }
   });
 
-  it("adds Undo and Redo before the drawing tools, shown while one is on", async () => {
+  it("adds Undo and Redo before the drawing tools, which work while one is on", async () => {
     const bridge = loadBridge({ host: WEB });
     await bridge.load();
     const group = bridge.toolbar.find((element) => element.id === "pdflionUndoRedo");
@@ -4108,12 +4108,13 @@ describe("bridge.js without a native menu", () => {
       bridge.toolbar.indexOf(tools) + 1,
       bridge.toolbar.indexOf(bridge.editorModeButtons),
     );
-    assert.equal(group.hidden, true);
     const [undo, redo] = group.children;
     assert.deepEqual([undo.id, redo.id], ["pdflionUndo", "pdflionRedo"]);
+    assert.ok(!group.hidden, "they always show, so that the toolbar doesn't shift");
+    assert.deepEqual([undo.disabled, redo.disabled], [true, true]);
 
     bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 15 });
-    assert.equal(group.hidden, false);
+    assert.deepEqual([undo.disabled, redo.disabled], [false, false]);
     undo.listeners.click();
     redo.listeners.click();
     const actions = bridge.app.eventBus.dispatched.filter(([name]) => name === "editingaction");
@@ -4122,7 +4123,8 @@ describe("bridge.js without a native menu", () => {
       ["undo", "redo"],
     );
     bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 0 });
-    assert.equal(group.hidden, true);
+    assert.ok(!group.hidden);
+    assert.deepEqual([undo.disabled, redo.disabled], [true, true]);
   });
 
   it("adds no Undo and Redo where a native menu has them", async () => {
@@ -4867,7 +4869,7 @@ describe("bridge.js the toolbar's narrowest steps", () => {
     assert.ok(!button.classes.has("toggled"));
   });
 
-  it("put Undo and Redo first in the tools' menu at the last step, while they show", async () => {
+  it("put Undo and Redo first in the tools' menu at the last step, disabled with no tool on", async () => {
     const bridge = loadBridge({ host: { nativeMenu: false } });
     await bridge.load();
     const container = Object.assign(bridge.document.createElement("div"), {
@@ -4900,11 +4902,9 @@ describe("bridge.js the toolbar's narrowest steps", () => {
 
     bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 0 });
     button.listeners.click();
-    assert.equal(
-      items()[0].attributes["data-tool"],
-      "editorHighlightButton",
-      "not with no tool on",
-    );
+    const [undoOff, redoOff] = items();
+    assert.deepEqual([undoOff.id, undoOff.disabled], ["pdflionUndoItem", true]);
+    assert.deepEqual([redoOff.id, redoOff.disabled], ["pdflionRedoItem", true]);
   });
 
   it("have Find…, Page Overview and Insert Blank Page in the ⋮ menu", async () => {

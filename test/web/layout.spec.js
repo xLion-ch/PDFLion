@@ -162,7 +162,7 @@ async function narrow(page, frame) {
 }
 
 // German labels are longer than English ones, and a thousand pages make the
-// page count wider. A drawing tool that's on shows Undo and Redo.
+// page count wider.
 for (const locale of ["en-US", "de-DE"]) {
   test.describe(locale, () => {
     test.use({ locale });

@@ -542,7 +542,7 @@
   /** @type {ReturnType<typeof setTimeout> | null} the next autosave */
   let autosaveTimer = null;
 
-  /** @type {HTMLButtonElement[]} Undo and Redo, while a drawing tool is on */
+  /** @type {HTMLButtonElement[]} Undo and Redo, which work while a drawing tool is on */
   let undoButtons = [];
 
   /**
@@ -2123,7 +2123,8 @@
 
   /**
    * Adds Undo and Redo before the drawing tools, for a host without a native
-   * menu, as on an iPad without a keyboard. They show while a drawing tool
+   * menu, as on an iPad without a keyboard. They always show, so that the
+   * toolbar doesn't shift as a tool is chosen, and work while a drawing tool
    * is on, as Edit > Undo and Redo work for pdf.js then.
    *
    * @param {any} app
@@ -2134,11 +2135,12 @@
     if (hasNativeMenu || !tools) return [];
     const undo = makeButton("pdflionUndo", "toolbarButton", t("undo"));
     const redo = makeButton("pdflionRedo", "toolbarButton", t("redo"));
+    undo.disabled = redo.disabled = true;
     undo.addEventListener("click", () => editingAction(app, "undo"));
     redo.addEventListener("click", () => editingAction(app, "redo"));
     const group = createElement(
       "div",
-      { id: "pdflionUndoRedo", className: "toolbarHorizontalGroup", hidden: true },
+      { id: "pdflionUndoRedo", className: "toolbarHorizontalGroup" },
       undo,
       redo,
     );
@@ -2147,18 +2149,13 @@
   }
 
   /**
-   * Shows Undo and Redo while a drawing tool is on.
+   * Enables Undo and Redo while a drawing tool is on.
    *
    * @param {any} app
    */
   function followUndoButtons(app) {
     app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
-      const group = undoButtons[0]?.parentElement;
-      if (!group) return;
-      const hidden = mode === EDITOR_NONE || mode === EDITOR_DISABLE;
-      if (group.hidden === hidden) return;
-      group.hidden = hidden;
-      layoutToolbar();
+      for (const button of undoButtons) button.disabled = !isToolMode(mode);
     });
   }
 
@@ -4589,7 +4586,7 @@
   /**
    * Fills the drawing tools' menu with the tools pdf.js shows, the one that's
    * on checked. Choosing one clicks its button. At the toolbar's last step,
-   * Undo and Redo come first, while a tool is on.
+   * Undo and Redo come first.
    *
    * @param {any} app
    */
@@ -4597,15 +4594,15 @@
     if (!toolsMenu) return;
     /** @type {HTMLElement[]} */
     const entries = [];
-    const undoGroup = undoButtons[0]?.parentElement;
     const last = document
       .getElementById("toolbarContainer")
       ?.classList.contains("pdflionToolbarMinimal");
-    if (last && undoGroup && !undoGroup.hidden) {
+    if (last && undoButtons.length > 0) {
       for (const button of undoButtons) {
         const item = makeButton(`${button.id}Item`, "toolbarButton labeled", button.title);
         item.setAttribute("role", "menuitem");
         item.tabIndex = -1;
+        item.disabled = button.disabled;
         item.addEventListener("click", () => button.click());
         entries.push(item);
       }

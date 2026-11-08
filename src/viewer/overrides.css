@@ -342,10 +342,6 @@
   mask-image: url(/pdflion/icons/info.svg);
 }
 
-#pdflionUndoRedo[hidden] {
-  display: none;
-}
-
 /*
  * The status, such as "Not in Files", as Material's assist chip: its icon and
  * its label, which goes from pdf.js's medium view on.

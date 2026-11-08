@@ -559,3 +559,20 @@ test("Highlight and Pencil mark over a text box, which stays unselected", async 
   await expect.poll(() => types(frame)).toEqual(["freetext", "highlight", "ink"]);
   await expect(frame.locator(".selectedEditor")).toHaveCount(0);
 });
+
+test("Undo and Redo always show, so that choosing a tool doesn't shift the toolbar", async ({ page }) => {
+  const frame = await openPaper(page);
+  const undo = frame.locator("#pdflionUndo");
+  const tool = frame.locator("#editorHighlightButton");
+  await expect(undo).toBeVisible();
+  await expect(undo).toBeDisabled();
+  const before = await tool.boundingBox();
+
+  await tool.tap();
+  await expect(undo).toBeEnabled();
+  expect(await tool.boundingBox()).toEqual(before);
+
+  await tool.tap();
+  await expect(undo).toBeDisabled();
+  expect(await tool.boundingBox()).toEqual(before);
+});
