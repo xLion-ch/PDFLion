@@ -255,8 +255,8 @@ test("a favourite shows in every window's toolbar, draws with its settings, and 
   await kept.click({ button: "right" });
   await expect
     .poll(() => relaunched.evaluate(() => /** @type {any} */ (globalThis).contextMenu?.items[0].label))
-    .toBe("Remove Favourite");
-  await relaunched.evaluate(() => /** @type {any} */ (globalThis).contextMenu.items[0].click());
+    .toBe("Edit Favourite");
+  await relaunched.evaluate(() => /** @type {any} */ (globalThis).contextMenu.items[1].click());
   await expect(kept).toHaveCount(0);
   await expect(again.locator("#pdflionFavourites")).toBeHidden();
 });
@@ -406,6 +406,34 @@ test("favourites move when dragged onto another, in the toolbar and in the ★ m
   await expect(items.nth(0)).toContainText("Highlight, #53FFBC, 16 pt");
 });
 
+test("a favourite's context menu edits it, in its tool's option box", async ({ pdflion }) => {
+  const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
+  await app.evaluate(({ Menu }) => {
+    Menu.prototype.popup = function () {
+      /** @type {any} */ (globalThis).contextMenu = this;
+    };
+  });
+  await setToolSettings(page, { favourites: [text, pencil] });
+  const favourite = page.locator('#pdflionFavourites > .pdflionFavourite[data-tool="ink"]');
+  await expect(favourite).toHaveCount(1);
+
+  await favourite.click({ button: "right" });
+  await expect
+    .poll(() => app.evaluate(() => /** @type {any} */ (globalThis).contextMenu?.items[0].label))
+    .toBe("Edit Favourite");
+  await app.evaluate(() => /** @type {any} */ (globalThis).contextMenu.items[0].click());
+
+  await expect(page.locator("#editorInkParamsToolbar")).toBeVisible();
+  const update = page.locator("#pdflionSaveInkFavourite");
+  await expect(update).toHaveText("Update Favourite");
+  await page.locator("#editorInkThickness").fill("7");
+  await update.click();
+  const changed = { ...pencil, thickness: 7 };
+  await expect.poll(async () => (await toolSettings(page)).favourites).toEqual([text, changed]);
+  await expect(page.locator("#editorInkParamsToolbar")).toBeHidden();
+  await expect(favourite).toHaveAttribute("aria-pressed", "true");
+});
+
 test("a favourite's context menu removes it", async ({ pdflion }) => {
   const { app, page } = await pdflion([await tracemonkey(await tempDir())]);
   await app.evaluate(({ Menu }) => {
@@ -430,8 +458,8 @@ test("a favourite's context menu removes it", async ({ pdflion }) => {
         ),
       ),
     )
-    .toEqual(["Remove Favourite"]);
-  await app.evaluate(() => /** @type {any} */ (globalThis).contextMenu.items[0].click());
+    .toEqual(["Edit Favourite", "Remove Favourite"]);
+  await app.evaluate(() => /** @type {any} */ (globalThis).contextMenu.items[1].click());
   await expect
     .poll(() => heard(page))
     .toEqual([

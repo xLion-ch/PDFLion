@@ -235,7 +235,8 @@ A favourite is a drawing tool with its settings, such as a blue pencil 1 pt wide
 - The tool's option box stays closed. pdf.js opens it as it switches tools, and calls external listeners after its own, so `followFavourites()` closes it again on `annotationeditormodechanged`.
 - Which favourite shows pressed is read a microtask after pdf.js's events, since Highlight's colour picker marks its swatch only after dispatching.
 - Reordering with a mouse is HTML5 drag and drop with a data type of its own (`FAVOURITE_DRAG_TYPE`), which the preload and the strip leave alone. A drop rebuilds the buttons, so it ends the drag itself. A finger or a pen drags with Pointer Events instead (`dragFavourite()`), once its long press has opened the menu, which moving on closes, as iPadOS's context menus do. Meanwhile the button isn't `draggable`, so iPadOS starts no drag of its own, and touchmoves are cancelled.
-- The ★ menu copies pdf.js's Stamp menu, and repeats `web/menu.js`'s keyboard handling, which `bridge.js` can't import. Remove Favourite is main's context menu, which a long press opens too (`addLongPress()`), after which a drag closes the host's menu (`closeMenu`, the web app's).
+- Edit Favourite, in its context menu, is how a favourite changes (`editFavourite()`): it turns the tool on with those settings and opens its option box, where Save as Favourite becomes Update Favourite, which replaces it in its place and closes the box. Another tool ends the editing, with the favourite as it was. The menu is the host's, so the host sends the choice back (`onEditFavourite`).
+- The ★ menu copies pdf.js's Stamp menu, and repeats `web/menu.js`'s keyboard handling, which `bridge.js` can't import. Edit Favourite and Remove Favourite are main's context menu, which a long press opens too (`addLongPress()`), after which a drag closes the host's menu (`closeMenu`, the web app's).
 
 ## Pens and touch
 

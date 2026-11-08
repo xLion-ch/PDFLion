@@ -42,6 +42,14 @@ export function handleToolSettings() {
     if (!win) return;
     Menu.buildFromTemplate([
       {
+        label: t("editFavourite"),
+        click: () => {
+          if (!tab.webContents.isDestroyed()) {
+            tab.webContents.send("pdflion:edit-favourite", favourite);
+          }
+        },
+      },
+      {
         label: t("removeFavourite"),
         click: () =>
           updateToolSettings({

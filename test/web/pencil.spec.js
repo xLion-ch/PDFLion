@@ -576,3 +576,27 @@ test("Undo and Redo always show, so that choosing a tool doesn't shift the toolb
   await expect(undo).toBeDisabled();
   expect(await tool.boundingBox()).toEqual(before);
 });
+
+test("a favourite's menu edits it, and Update Favourite keeps its place", async ({ page }) => {
+  const frame = await openPaper(page);
+  const blue = { tool: "ink", color: "#1e66f5", thickness: 7, opacity: 1 };
+  const eraser = { tool: "eraser", mode: "object", size: 10 };
+  await frame.evaluate(
+    (favourites) => window.pdflion.setToolSettings({ favourites }),
+    [blue, eraser],
+  );
+  const button = frame.locator('#pdflionFavourites > .pdflionFavourite[data-tool="eraser"]');
+  await expect(button).toHaveCount(1);
+  await button.dispatchEvent("contextmenu");
+  await page.getByRole("menuitem", { name: "Edit Favourite" }).click();
+
+  await expect(frame.locator("#pdflionEditorEraserParamsToolbar")).toBeVisible();
+  await expect(frame.locator("#outerContainer")).toHaveClass(/pdflionErasing/);
+  const update = frame.locator("#pdflionSaveEraserFavourite");
+  await expect(update).toHaveText("Update Favourite");
+  await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
+  await update.tap();
+  await expect(frame.locator("#pdflionEditorEraserParamsToolbar")).toBeHidden();
+  await expect(button).toHaveAttribute("title", "Eraser, Line, 10 pt");
+  await expect(frame.locator("#pdflionFavourites > .pdflionFavourite").first()).toHaveAttribute("data-tool", "ink");
+});

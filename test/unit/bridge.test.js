@@ -214,6 +214,12 @@ function loadBridge({
     showFavouriteMenu(favourite) {
       pdflion.favouriteMenus.push(JSON.parse(JSON.stringify(favourite)));
     },
+    /** @type {((favourite: object) => void) | null} */
+    editFavouriteListener: null,
+    /** @param {(favourite: object) => void} callback */
+    onEditFavourite(callback) {
+      pdflion.editFavouriteListener = callback;
+    },
     ...host,
   };
 
@@ -3127,6 +3133,61 @@ describe("bridge.js favourites in the toolbar", () => {
     await settle();
     assert.ok(!bridge.outerContainer.classes.has("pdflionErasing"));
     assert.equal(button.attributes["aria-pressed"], "false");
+  });
+
+  it("edit a favourite in its tool's option box, and update it in its place", async () => {
+    const bridge = await withFavourites([text, pencil, highlight]);
+    const { toolBoxes } = bridge;
+    const save = bridge.document
+      .querySelector("#editorInkParamsToolbar > .editorParamsToolbarContainer")
+      .children.find((/** @type {any} */ child) => child.id === "pdflionSaveInkFavourite");
+    const label = save.children[0];
+    assert.equal(label.textContent, "Save as Favourite");
+
+    bridge.pdflion.editFavouriteListener?.(pencil);
+    await settle();
+    assert.ok(bridge.pencilButton.classes.has("toggled"), "its tool goes on");
+    assert.ok(!toolBoxes.Ink.classes.has("hidden"), "its box stays open");
+    assert.equal(label.textContent, "Update Favourite");
+
+    Object.assign(bridge.params, {
+      editorInkColor: { value: "#e64553" },
+      editorInkThickness: { valueAsNumber: 9 },
+      editorInkOpacity: { valueAsNumber: 0.5 },
+    });
+    await save.listeners.click();
+    const changed = { tool: "ink", color: "#e64553", thickness: 9, opacity: 0.5 };
+    assert.deepEqual(plain(bridge.pdflion.storedToolSettings.at(-1)), {
+      favourites: [text, changed, highlight],
+    });
+    assert.ok(toolBoxes.Ink.classes.has("hidden"), "its box closes");
+  });
+
+  it("end editing a favourite with another tool, and refuse a repeat", async () => {
+    const other = { tool: "ink", color: "#e64553", thickness: 9, opacity: 0.5 };
+    const bridge = await withFavourites([pencil, other]);
+    const save = bridge.document
+      .querySelector("#editorInkParamsToolbar > .editorParamsToolbarContainer")
+      .children.find((/** @type {any} */ child) => child.id === "pdflionSaveInkFavourite");
+    bridge.pdflion.editFavouriteListener?.(pencil);
+    await settle();
+    Object.assign(bridge.params, {
+      editorInkColor: { value: "#e64553" },
+      editorInkThickness: { valueAsNumber: 9 },
+      editorInkOpacity: { valueAsNumber: 0.5 },
+    });
+    const stored = bridge.pdflion.storedToolSettings.length;
+    await save.listeners.click();
+    assert.equal(save.children[0].textContent, "Already a Favourite");
+    assert.equal(bridge.pdflion.storedToolSettings.length, stored);
+    assert.ok(!bridge.toolBoxes.Ink.classes.has("hidden"), "its box stays open");
+
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 3 });
+    await settle();
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 15 });
+    await settle();
+    await save.listeners.click();
+    assert.equal(save.children[0].textContent, "Already a Favourite", "a save, not an update");
   });
 
   it("keep the tool's option box closed, unlike pdf.js's own tool buttons", async () => {

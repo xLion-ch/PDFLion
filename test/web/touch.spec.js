@@ -105,7 +105,7 @@ test("a long press on a favourite opens its menu without using it, and a drag af
   await expect(page.locator(".menu")).toHaveCount(0);
 
   await longPress(frame, favourite);
-  await expect.poll(() => menuItems(page)).toEqual(["Remove Favourite"]);
+  await expect.poll(() => menuItems(page)).toEqual(["Edit Favourite", "Remove Favourite"]);
   // The click that may follow the lift doesn't use the favourite.
   await frame.locator(favourite).dispatchEvent("click");
   expect(await mode()).toBe(0);
@@ -114,7 +114,7 @@ test("a long press on a favourite opens its menu without using it, and a drag af
   await expect(page.locator(".menu")).toHaveCount(0);
 
   await longPress(frame, favourite);
-  await expect.poll(() => menuItems(page)).toEqual(["Remove Favourite"]);
+  await expect.poll(() => menuItems(page)).toEqual(["Edit Favourite", "Remove Favourite"]);
   await frame.locator(favourite).dispatchEvent("dragstart");
   await expect(page.locator(".menu")).toHaveCount(0);
 
@@ -151,7 +151,7 @@ test("a finger that holds a favourite drags it onto another, which closes its me
   // Held, it shows its menu, and isn't the browser's to drag meanwhile.
   await dispatch(frame, favourite, [{ ...finger, type: "pointerdown", at: [0.5, 0.5] }]);
   await expect(frame.locator(favourite).first()).toHaveJSProperty("draggable", false);
-  await expect.poll(() => menuItems(page)).toEqual(["Remove Favourite"]);
+  await expect.poll(() => menuItems(page)).toEqual(["Edit Favourite", "Remove Favourite"]);
   // Then it moves past the other, whose right half it's dropped on.
   const moved = await dispatch(frame, favourite, [
     { ...finger, type: "pointermove", at: [0.9, 0.5] },

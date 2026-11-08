@@ -516,6 +516,19 @@
   let favouriteMode = null;
 
   /**
+   * The favourite being edited, whose tool's option box is open with its
+   * settings, and whose Save as Favourite now updates it (editFavourite()).
+   * @type {Favourite | null}
+   */
+  let editedFavourite = null;
+
+  /**
+   * Each tool's label on Save as Favourite, by its name in a favourite.
+   * @type {Map<string, HTMLElement>}
+   */
+  const saveLabels = new Map();
+
+  /**
    * The favourite being dragged to another place among them, and where it
    * would go: before or after the favourite it's over.
    * @type {{ favourite: Favourite, over: HTMLElement | null, after: boolean } | null}
@@ -2659,6 +2672,7 @@
     const ui = uiManager(app);
     if (erasing || !ui) return;
     erasing = true;
+    showEditedFavourite(null);
     showErasing(true);
     updateFavouritesPressed(app);
     if (app.pdfViewer.annotationEditorMode === EDITOR_INK) {
@@ -2681,6 +2695,7 @@
     if (!erasing) return;
     endGesture(app);
     erasing = false;
+    if (editedFavourite?.tool === "eraser") showEditedFavourite(null);
     showErasing(false);
     updateFavouritesPressed(app);
     if (mode === EDITOR_NONE) {
@@ -3582,15 +3597,35 @@
       label.textContent = await saveFavourite(/** @type {Favourite["tool"]} */ (tool));
       clearTimeout(timer);
       timer = setTimeout(() => {
-        label.textContent = SAVE_FAVOURITE;
+        label.textContent = saveLabel(tool);
       }, FAVOURITE_NOTE_TIME);
     });
+    saveLabels.set(tool, label);
     container.append(button);
   }
 
   /**
+   * @param {string} tool
+   * @returns {string} what its option box's button does now
+   */
+  function saveLabel(tool) {
+    return editedFavourite?.tool === tool ? t("updateFavourite") : SAVE_FAVOURITE;
+  }
+
+  /**
+   * Has the favourite's tool's option box update it, or none any more.
+   *
+   * @param {Favourite | null} favourite
+   */
+  function showEditedFavourite(favourite) {
+    editedFavourite = favourite;
+    for (const [tool, label] of saveLabels) label.textContent = saveLabel(tool);
+  }
+
+  /**
    * Has main keep a tool's settings, as its option box shows them, as a
-   * favourite, unless they're one already. Main drops repeats too.
+   * favourite, unless they're one already, or in place of the favourite being
+   * edited. Main drops repeats too.
    *
    * @param {Favourite["tool"]} tool
    * @returns {Promise<string>} what happened, for the button to say
@@ -3600,9 +3635,22 @@
     if (!favourite) return t("chooseColourFirst");
     await toolSettingsLoaded;
     if (!favourites) return t("couldntSave");
-    if (favourites.some((other) => sameFavourite(other, favourite))) return t("alreadyFavourite");
-    favourites = [...favourites, favourite];
+    const edited = editedFavourite?.tool === tool ? editedFavourite : null;
+    // Another tab may have removed it, and then it's a new one.
+    const index = edited ? favourites.findIndex((other) => sameFavourite(other, edited)) : -1;
+    const repeat = favourites.some(
+      (other, at) => at !== index && sameFavourite(other, favourite),
+    );
+    if (repeat) return t("alreadyFavourite");
+    favourites =
+      index === -1
+        ? [...favourites, favourite]
+        : favourites.map((other, at) => (at === index ? favourite : other));
     window.pdflion.setToolSettings({ favourites });
+    if (edited) {
+      showEditedFavourite(null);
+      closeOptionBox(tool);
+    }
     return t("saved");
   }
 
@@ -3896,7 +3944,8 @@
   /**
    * A favourite's button: its tool's icon in its colour, which overrides.css
    * draws, and its size. A click uses it, a drag onto another favourite moves
-   * it there, and its context menu, also after a long press, removes it. A
+   * it there, and its context menu, also after a long press, edits or removes
+   * it. A
    * finger or a pen drags it once it has held it long enough for the menu
    * (dragFavourite()).
    *
@@ -4205,12 +4254,41 @@
     const ui = uiManager(app);
     if (!ui) return;
     commitDrawing(ui);
+    showEditedFavourite(null);
     // The favourite that's on turns its tool off, as the tool's own button does.
     if (isFavouriteOn(app, favourite)) {
       if (erasing) stopErasing(app, EDITOR_NONE);
       else app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
       return;
     }
+    turnOnFavourite(app, favourite);
+  }
+
+  /**
+   * Edits a favourite, from its context menu: its tool goes on with its
+   * settings, and its option box opens, whose Save as Favourite now updates
+   * it, in its place among them. Another tool ends that.
+   *
+   * @param {any} app
+   * @param {Favourite} favourite
+   */
+  function editFavourite(app, favourite) {
+    const ui = uiManager(app);
+    if (!ui || !toolsEnabled) return;
+    commitDrawing(ui);
+    showEditedFavourite(null);
+    if (!isFavouriteOn(app, favourite)) turnOnFavourite(app, favourite);
+    // pdf.js opens the box as it switches to the tool, which then stays open.
+    favouriteMode = null;
+    openOptionBox(favourite.tool);
+    showEditedFavourite(favourite);
+  }
+
+  /**
+   * @param {any} app
+   * @param {Favourite} favourite
+   */
+  function turnOnFavourite(app, favourite) {
     if (favourite.tool === "eraser") {
       useEraserFavourite(app, favourite);
       return;
@@ -4246,10 +4324,7 @@
     showEraser(settings);
     storeEraser(settings);
     startErasing(app);
-    if (eraserTool) {
-      eraserTool.box.classList.toggle("hidden", true);
-      eraserTool.button.setAttribute("aria-expanded", "false");
-    }
+    closeOptionBox("eraser");
     updateFavouritesPressed(app);
   }
 
@@ -4409,9 +4484,28 @@
    * @param {Favourite["tool"]} tool
    */
   function closeOptionBox(tool) {
-    const { name } = FAVOURITE_TOOLS[tool];
-    document.getElementById(`editor${name}Button`)?.setAttribute("aria-expanded", "false");
-    document.getElementById(`editor${name}ParamsToolbar`)?.classList.toggle("hidden", true);
+    showOptionBox(tool, false);
+  }
+
+  /**
+   * Opens a drawing tool's option box, as pdf.js does with its tool.
+   *
+   * @param {Favourite["tool"]} tool
+   */
+  function openOptionBox(tool) {
+    showOptionBox(tool, true);
+  }
+
+  /**
+   * @param {Favourite["tool"]} tool
+   * @param {boolean} open
+   */
+  function showOptionBox(tool, open) {
+    const name = tool === "eraser" ? null : FAVOURITE_TOOLS[tool].name;
+    const button = name ? document.getElementById(`editor${name}Button`) : eraserTool?.button;
+    const box = name ? document.getElementById(`editor${name}ParamsToolbar`) : eraserTool?.box;
+    button?.setAttribute("aria-expanded", String(open));
+    box?.classList.toggle("hidden", !open);
   }
 
   /**
@@ -4419,12 +4513,19 @@
    * tools do, and show as pressed while their tool is on with their settings.
    * A tool a favourite turned on keeps its option box closed, which pdf.js
    * opened just before, since its event bus calls other listeners after its
-   * own (web/event_utils.js).
+   * own (web/event_utils.js). Another tool ends the editing of a favourite.
    *
    * @param {any} app
    */
   function followFavourites(app) {
+    window.pdflion.onEditFavourite?.((/** @type {Favourite} */ favourite) => {
+      editFavourite(app, favourite);
+    });
     app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+      const edited = editedFavourite?.tool;
+      if (edited && edited !== "eraser" && FAVOURITE_TOOLS[edited].mode !== mode) {
+        showEditedFavourite(null);
+      }
       toolsEnabled = mode !== EDITOR_DISABLE;
       if (favouritesBar) favouritesBar.moreButton.disabled = !toolsEnabled;
       if (toolsMenu) toolsMenu.button.disabled = !toolsEnabled;
