@@ -2809,6 +2809,20 @@ describe("bridge.js Save as Favourite", () => {
     assert.deepEqual(bridge.pdflion.storedToolSettings.at(-1), { favourites: [pencil] });
   });
 
+  it("adds the eraser's settings to main's favourites", async () => {
+    const bridge = loadBridge();
+    bridge.pdflion.toolSettings = { eraser: { mode: "line", size: 25 }, favourites: [] };
+    await bridge.load();
+    const box = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser").children[1];
+    const save = box.children[0].children.find(
+      (/** @type {any} */ child) => child.id === "pdflionSaveEraserFavourite",
+    );
+    await save.listeners.click();
+    assert.deepEqual(JSON.parse(JSON.stringify(bridge.pdflion.storedToolSettings)), [
+      { favourites: [{ tool: "eraser", mode: "line", size: 25 }] },
+    ]);
+  });
+
   it("adds nothing that's a favourite already, and says so", async () => {
     const bridge = loadBridge();
     const highlight = { tool: "highlight", color: "#ffff98", thickness: 12 };
@@ -3086,6 +3100,33 @@ describe("bridge.js favourites in the toolbar", () => {
       .slice(from)
       .filter(([name]) => name === "switchannotationeditormode");
     assert.deepEqual(switches, []);
+  });
+
+  it("save the eraser as a favourite, and turn it on with those settings, with its box closed", async () => {
+    const eraserFavourite = { tool: "eraser", mode: "line", size: 30 };
+    const bridge = await withFavourites([eraserFavourite]);
+    const eraser = bridge.toolbar.find((element) => element.id === "pdflionEditorEraser");
+    const [eraserButton, box] = eraser.children;
+    const [button] = barOf(bridge).buttons;
+    assert.equal(button.title, "Eraser, Line, 30 pt");
+    assert.equal(button.attributes["data-tool"], "eraser");
+    assert.equal(button.attributes["data-size"], "30");
+
+    button.listeners.click();
+    await settle();
+    assert.ok(bridge.outerContainer.classes.has("pdflionErasing"));
+    assert.ok(box.classes.has("hidden"), "its box stays closed");
+    assert.equal(eraserButton.attributes["aria-expanded"], "false");
+    assert.deepEqual(plain(bridge.pdflion.storedToolSettings.at(-1)), {
+      eraser: { mode: "line", size: 30 },
+    });
+    assert.equal(button.attributes["aria-pressed"], "true");
+
+    // Once more turns it off, as a tool's own favourite does.
+    button.listeners.click();
+    await settle();
+    assert.ok(!bridge.outerContainer.classes.has("pdflionErasing"));
+    assert.equal(button.attributes["aria-pressed"], "false");
   });
 
   it("keep the tool's option box closed, unlike pdf.js's own tool buttons", async () => {

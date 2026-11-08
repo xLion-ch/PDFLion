@@ -477,3 +477,27 @@ test("a pen's press ends a stroke whose lift never came", async ({ page }) => {
     .poll(async () => (await drawings(frame)).reduce((sum, { strokes }) => sum + strokes, 0))
     .toBe(3);
 });
+
+test("the eraser saves as a favourite, which erases with its mode and size", async ({ page }) => {
+  const frame = await openPaper(page);
+  await frame.locator("#editorInkButton").tap();
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.3]));
+  await expect.poll(() => types(frame)).toEqual(["ink"]);
+
+  await frame.locator("#pdflionEditorEraserButton").tap();
+  await frame.locator('input[name="pdflionEraserMode"][value="line"]').tap();
+  await frame.locator("#pdflionSaveEraserFavourite").tap();
+  const favourite = frame.locator('#pdflionFavourites > .pdflionFavourite[data-tool="eraser"]');
+  await expect(favourite).toHaveAttribute("aria-pressed", "true");
+  await expect(favourite).toHaveAttribute("title", "Eraser, Line, 10 pt");
+  // The option box closes with the eraser, and stays closed for the favourite.
+  await frame.locator("#pdflionEditorEraserButton").tap();
+  await expect(favourite).toHaveAttribute("aria-pressed", "false");
+
+  await favourite.tap();
+  await expect(frame.locator("#outerContainer")).toHaveClass(/pdflionErasing/);
+  await expect(frame.locator("#pdflionEditorEraserParamsToolbar")).toBeHidden();
+  // Line mode cuts the drawing in two.
+  await pencilStroke(frame, line([0.4, 0.2], [0.4, 0.4]));
+  await expect.poll(() => types(frame)).toEqual(["ink", "ink"]);
+});

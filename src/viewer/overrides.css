@@ -483,7 +483,7 @@
 
 /*
  * Save as Favourite (bridge.js), at the end of the option boxes of Highlight,
- * Text and Pencil: an outlined button, pdf.js's .secondaryButton, across the
+ * Text, Pencil and the eraser: an outlined button, pdf.js's .secondaryButton, across the
  * box. Highlight's box has gaps of its own between its parts, the others
  * don't.
  */
@@ -537,6 +537,10 @@
 
   &[data-tool="ink"] > .pdflionFavouriteIcon::before {
     mask-image: var(--toolbarButton-editorInk-icon);
+  }
+
+  &[data-tool="eraser"] > .pdflionFavouriteIcon::before {
+    mask-image: url(/pdflion/icons/ink_eraser.svg);
   }
 
   /* The size, which the description gives in the ★ menu. */
@@ -606,7 +610,8 @@
     filter: drop-shadow(0 0 0.5px var(--toolbar-icon-bg-color));
 
     &::before {
-      background-color: var(--pdflion-favourite-color);
+      /* The eraser's has no colour. */
+      background-color: var(--pdflion-favourite-color, var(--toolbar-icon-bg-color));
     }
   }
 }

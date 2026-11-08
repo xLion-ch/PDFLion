@@ -3544,36 +3544,48 @@
   }
 
   /**
-   * Adds Save as Favourite to the end of the option boxes of Highlight, Text
-   * and Pencil, as an outlined button. A click has main keep the tool's
-   * settings for every tab, and the button says for a moment what it did.
+   * Adds Save as Favourite to the end of the option boxes of Highlight, Text,
+   * Pencil and the eraser.
    */
   function addSaveFavouriteButtons() {
     for (const [tool, { name }] of Object.entries(FAVOURITE_TOOLS)) {
       const container = document.querySelector(
         `#editor${name}ParamsToolbar > .editorParamsToolbarContainer`,
       );
-      if (!container) continue;
-      const label = createElement("span", { textContent: SAVE_FAVOURITE, ariaLive: "polite" });
-      const button = createElement(
-        "button",
-        {
-          type: "button",
-          id: `pdflionSave${name}Favourite`,
-          className: "secondaryButton pdflionSaveFavourite",
-        },
-        label,
-      );
-      let timer = 0;
-      button.addEventListener("click", async () => {
-        label.textContent = await saveFavourite(/** @type {Favourite["tool"]} */ (tool));
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          label.textContent = SAVE_FAVOURITE;
-        }, FAVOURITE_NOTE_TIME);
-      });
-      container.append(button);
+      if (container) addSaveFavouriteButton(tool, name, container);
     }
+    if (eraserTool) addSaveFavouriteButton("eraser", "Eraser", eraserTool.box.children[0]);
+  }
+
+  /**
+   * Adds Save as Favourite to an option box, as an outlined button. A click
+   * has main keep the tool's settings for every tab, and the button says for
+   * a moment what it did.
+   *
+   * @param {string} tool
+   * @param {string} name in the button's id
+   * @param {Element} container
+   */
+  function addSaveFavouriteButton(tool, name, container) {
+    const label = createElement("span", { textContent: SAVE_FAVOURITE, ariaLive: "polite" });
+    const button = createElement(
+      "button",
+      {
+        type: "button",
+        id: `pdflionSave${name}Favourite`,
+        className: "secondaryButton pdflionSaveFavourite",
+      },
+      label,
+    );
+    let timer = 0;
+    button.addEventListener("click", async () => {
+      label.textContent = await saveFavourite(/** @type {Favourite["tool"]} */ (tool));
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        label.textContent = SAVE_FAVOURITE;
+      }, FAVOURITE_NOTE_TIME);
+    });
+    container.append(button);
   }
 
   /**
@@ -3605,6 +3617,7 @@
    *   selected highlight whose colour none of the swatches has
    */
   function readFavourite(tool) {
+    if (tool === "eraser") return { tool, ...eraser };
     const input = (/** @type {string} */ id) =>
       /** @type {HTMLInputElement} */ (document.getElementById(id));
     if (tool === "highlight") {
@@ -3910,7 +3923,7 @@
     else button.title = description;
     button.setAttribute("data-tool", favourite.tool);
     button.setAttribute("data-size", String(favourite.size ?? favourite.thickness));
-    button.style.setProperty("--pdflion-favourite-color", favourite.color);
+    if (favourite.color) button.style.setProperty("--pdflion-favourite-color", favourite.color);
     button.addEventListener("click", () => useFavourite(app, favourite));
     button.addEventListener("contextmenu", (/** @type {Event} */ event) => {
       event.preventDefault();
@@ -4160,12 +4173,13 @@
 
   /**
    * @param {Favourite} favourite
-   * @returns {string} what it is, such as "Pencil, #1E66F5, 1 pt, 100 %"
+   * @returns {string} what it is, such as "Pencil, #1E66F5, 1 pt, 100 %", or
+   *   "Eraser, Line, 10 pt"
    */
-  function describeFavourite({ tool, color, thickness, size, opacity }) {
+  function describeFavourite({ tool, color, thickness, size, opacity, mode }) {
     const parts = [
-      FAVOURITE_TOOLS[tool].label,
-      color.toUpperCase(),
+      tool === "eraser" ? t("eraser") : FAVOURITE_TOOLS[tool].label,
+      tool === "eraser" ? t(mode === "line" ? "eraseLine" : "eraseObject") : color?.toUpperCase(),
       t("points", { size: size ?? thickness }),
     ];
     if (opacity !== undefined) parts.push(t("percent", { percent: Math.round(opacity * 100) }));
@@ -4190,13 +4204,18 @@
   function useFavourite(app, favourite) {
     const ui = uiManager(app);
     if (!ui) return;
-    const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
     commitDrawing(ui);
     // The favourite that's on turns its tool off, as the tool's own button does.
     if (isFavouriteOn(app, favourite)) {
-      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
+      if (erasing) stopErasing(app, EDITOR_NONE);
+      else app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
       return;
     }
+    if (favourite.tool === "eraser") {
+      useEraserFavourite(app, favourite);
+      return;
+    }
+    const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
     if (erasing && mode === EDITOR_INK) stopErasing(app, EDITOR_INK);
     if (app.pdfViewer.annotationEditorMode !== mode) {
       favouriteMode = mode;
@@ -4215,14 +4234,35 @@
   }
 
   /**
+   * Turns the eraser on with a favourite's settings, which become its
+   * settings in every tab, as if chosen in its option box, which stays closed.
+   *
+   * @param {any} app
+   * @param {Favourite} favourite
+   */
+  function useEraserFavourite(app, favourite) {
+    const { mode, size } = /** @type {EraserSettings} */ (/** @type {unknown} */ (favourite));
+    const settings = { mode, size };
+    showEraser(settings);
+    storeEraser(settings);
+    startErasing(app);
+    if (eraserTool) {
+      eraserTool.box.classList.toggle("hidden", true);
+      eraserTool.button.setAttribute("aria-expanded", "false");
+    }
+    updateFavouritesPressed(app);
+  }
+
+  /**
    * @param {any} app
    * @returns {Favourite | null} the tool that's on with its settings, as its
-   *   option box shows them, and none while the eraser is on
+   *   option box shows them
    */
   function currentFavourite(app) {
+    if (erasing) return readFavourite("eraser");
     const mode = app.pdfViewer?.annotationEditorMode;
     const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
-    return tool && !erasing ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
+    return tool ? readFavourite(/** @type {Favourite["tool"]} */ (tool)) : null;
   }
 
   /**
@@ -4237,7 +4277,7 @@
 
   /**
    * Shows as pressed the favourites whose tool is on with their settings,
-   * as its option box shows them, and none while the eraser is on. It reads
+   * as its option box shows them. It reads
    * them once pdf.js has shown a change: Highlight's colour picker marks the
    * chosen swatch only after dispatching it (src/display/editor/color_picker.js).
    *
