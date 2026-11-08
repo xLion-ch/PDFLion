@@ -631,14 +631,19 @@
 }
 
 /*
- * While Pencil is on, its drawings show no box, handles or toolbar, and let
- * presses through to the layer, where pdf.js starts a stroke only: each
- * stroke is a drawing of its own (bridge.js), and a stroke that starts over
- * another draws, rather than selecting or moving it. The border stays,
- * transparent, since pdf.js places an editor by its width.
+ * Pencil's drawings and highlights never show a box, handles or a toolbar,
+ * and let presses through to what's under them, with any tool on: each stroke
+ * is a drawing of its own (bridge.js), and a stroke that starts over another
+ * draws, rather than selecting or moving it. The border stays, transparent,
+ * since pdf.js places an editor by its width. viewer.css gives them presses
+ * on a selector four classes deep, hence !important.
  */
-.annotationEditorLayer.inkEditing .inkEditor {
-  pointer-events: none;
+.annotationEditorLayer :is(.inkEditor, .highlightEditor) {
+  pointer-events: none !important;
+
+  .internal {
+    pointer-events: none !important;
+  }
 
   &,
   &.selectedEditor,
@@ -654,6 +659,20 @@
   > :is(.resizers, .editToolbar) {
     display: none;
   }
+}
+
+/*
+ * Nor do they count as what a double press is on, which would swallow a second
+ * stroke within 500 ms that starts over one, to edit it. pdf.js looks for
+ * editors with this class on the layer, which gives them presses.
+ */
+.annotationEditorLayer.getElements > :is(.inkEditor, .highlightEditor) {
+  pointer-events: none !important;
+}
+
+/* A highlight's outlines, which pdf.js draws on the page rather than in its editor. */
+.canvasWrapper svg.highlightOutline {
+  display: none;
 }
 
 /* viewer.css sets this on a selector three classes deep, hence !important. */

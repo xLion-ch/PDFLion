@@ -1086,21 +1086,24 @@
    * of adding a drawing. pdf.js ends a stroke on a pointerup it listens for
    * on window from the stroke's start, after this listener, so the drawing
    * ends a task later, unless another stroke has started meanwhile, and
-   * is left unselected, as overrides.css shows Pencil's drawings meanwhile.
+   * is left unselected, as overrides.css shows drawings and highlights. So is
+   * a new highlight, or the next colour chosen would change it, unseen.
    *
    * @param {any} app
    */
   function followPencilStrokes(app) {
-    window.addEventListener("pointerup", () => {
-      if (app.pdfViewer?.annotationEditorMode !== EDITOR_INK || erasing) return;
-      setTimeout(() => {
-        if (app.pdfViewer?.annotationEditorMode === EDITOR_INK && !isDrawing()) {
-          endPencilDrawing(app);
-          // pdf.js selects the new drawing, with its box and toolbar.
+    const drawsMarks = () => PEN_TOOLS.has(app.pdfViewer?.annotationEditorMode) && !erasing;
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(type, () => {
+        if (!drawsMarks()) return;
+        setTimeout(() => {
+          if (!drawsMarks() || isDrawing()) return;
+          if (app.pdfViewer.annotationEditorMode === EDITOR_INK) endPencilDrawing(app);
+          // pdf.js selects the new one, with its box and toolbar.
           uiManager(app)?.unselectAll();
-        }
-      }, 0);
-    });
+        }, 0);
+      });
+    }
   }
 
   /**

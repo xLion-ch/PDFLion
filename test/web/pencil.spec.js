@@ -501,3 +501,32 @@ test("the eraser saves as a favourite, which erases with its mode and size", asy
   await pencilStroke(frame, line([0.4, 0.2], [0.4, 0.4]));
   await expect.poll(() => types(frame)).toEqual(["ink", "ink"]);
 });
+
+test("no drawing or highlight shows a box, or takes a press, with any tool on", async ({ page }) => {
+  const frame = await openPaper(page);
+  const margin = line([0.03, 0.3], [0.03, 0.6]);
+  await frame.locator("#editorHighlightButton").tap();
+  await pencilStroke(frame, margin);
+  await expect.poll(() => types(frame)).toEqual(["highlight"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+  await expect(frame.locator(".highlightEditor .editToolbar")).toBeHidden();
+  await expect(frame.locator("svg.highlightOutline").first()).toBeHidden();
+
+  // A press on the highlight draws another, rather than selecting it, also
+  // within pdf.js's time for a double press.
+  await pencilStroke(frame, margin);
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight"]);
+  await expect(frame.locator(".selectedEditor")).toHaveCount(0);
+
+  await frame.locator("#editorInkButton").tap();
+  await expect(frame.locator("#editorInkButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, line([0.2, 0.3], [0.6, 0.3]));
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight", "ink"]);
+
+  // Text: a press on the drawing opens a text box, rather than selecting it.
+  await frame.locator("#editorFreeTextButton").tap();
+  await expect(frame.locator("#editorFreeTextButton")).toHaveClass(/toggled/);
+  await pencilStroke(frame, [[0.4, 0.3]]);
+  await expect.poll(() => types(frame)).toEqual(["highlight", "highlight", "ink", "freetext"]);
+  await expect(frame.locator(".inkEditor.selectedEditor, .highlightEditor.selectedEditor")).toHaveCount(0);
+});
