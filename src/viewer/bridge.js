@@ -176,6 +176,22 @@
   /** What pdf.js puts on the clipboard for the editors it copies. */
   const EDITORS_TYPE = "application/pdfjs";
 
+  /**
+   * The images pdf.js takes for an image annotation
+   * (`SupportedImageMimeTypes` in src/display/display_utils.js).
+   */
+  const IMAGE_TYPES = [
+    "image/apng",
+    "image/avif",
+    "image/bmp",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/svg+xml",
+    "image/webp",
+    "image/x-icon",
+  ];
+
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
   const PDF_LIB_URL = new URL("../../lib/pdf-lib.min.js", location.href).href;
 
@@ -543,6 +559,15 @@
    * @property {number} clientY
    */
 
+  /**
+   * @typedef {object} PageMenuOptions what the page menu offers
+   * @property {boolean} editors whether drawings, text boxes or images are
+   *   selected, for Cut, Copy and Delete
+   * @property {boolean} text whether text is selected, for Copy
+   * @property {boolean} editable whether pdf.js lets the document have new
+   *   annotations, for Paste and Add Image from File…
+   */
+
   /** @type {Place | null} where the page menu's Paste goes, until its paste event comes */
   let pastePlace = null;
 
@@ -806,6 +831,7 @@
     pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
     eraserTool = addEraserTool(app);
     areaButtons = addAreaTools(app);
+    hideStampTool();
     addSaveFavouriteButtons();
     favouritesBar = addFavouritesBar();
     undoButtons = addUndoButtons(app);
@@ -830,6 +856,7 @@
       followEraser(app);
       followAreaTools(app);
       followPageMenu(app);
+      followImageDrops(app);
       followPen(app);
       followPageTurns(app);
       followTrackpadPinch(app);
@@ -3472,6 +3499,17 @@
   }
 
   /**
+   * Hides pdf.js's Stamp tool, Add Image, whose images come from the page
+   * menu's Add Image from File… and Paste instead, where the menu opened,
+   * and which then show in the select tool, to move and resize them. pdf.js
+   * never shows the tool by itself; overrides.css hides it too.
+   */
+  function hideStampTool() {
+    const stamp = document.getElementById("editorStamp");
+    if (stamp) stamp.hidden = true;
+  }
+
+  /**
    * Keeps the select and screenshot tools in step with pdf.js and the user,
    * as followEraser() does the eraser:
    * - their buttons work whenever pdf.js's tools do
@@ -4111,6 +4149,8 @@
     const options = {
       editors: isToolMode(mode) && !!ui.hasSelection,
       text: !isToolMode(mode) && !!document.getSelection()?.toString(),
+      // Whether pdf.js lets the document have new annotations.
+      editable: mode !== EDITOR_DISABLE,
     };
     const at = { ...place, clientX: event.clientX, clientY: event.clientY };
     if (typeof window.pdflion.showPageMenu === "function") showHostPageMenu(app, at, options);
@@ -4120,15 +4160,17 @@
   /**
    * Shows the host's page menu, which runs Cut, Copy and Paste itself. Its
    * Paste sends a paste event, which pastes at the place (pasteAtPlace()).
+   * Its Add Image from File… comes with the activation a file picker needs.
    *
    * @param {any} app
    * @param {Place} place
-   * @param {{ editors: boolean, text: boolean }} options
+   * @param {PageMenuOptions} options
    */
   async function showHostPageMenu(app, place, options) {
     pastePlace = place;
     const chosen = await window.pdflion.showPageMenu(options);
     if (chosen === "delete") uiManager(app)?.delete();
+    if (chosen === "add-image") pickImage(app, place);
     const forget = () => {
       if (pastePlace === place) pastePlace = null;
     };
@@ -4137,13 +4179,14 @@
   }
 
   /**
-   * Shows the page's own menu at the place: Cut, Copy, Paste, and Delete.
+   * Shows the page's own menu at the place: Cut, Copy, Paste, Delete, and
+   * Add Image from File…, whose picker opens in the tap, as iPadOS requires.
    *
    * @param {any} app
    * @param {Place} place
-   * @param {{ editors: boolean, text: boolean }} options
+   * @param {PageMenuOptions} options
    */
-  function showOwnPageMenu(app, place, { editors, text }) {
+  function showOwnPageMenu(app, place, { editors, text, editable }) {
     closePageMenu();
     const container = document.getElementById("toolbarContainer");
     if (!container) return;
@@ -4170,9 +4213,11 @@
         uiManager(app)?.delete();
       }),
       item("pdflionPageMenuCopy", t("copy"), editors || text, () => document.execCommand("copy")),
-      item("pdflionPageMenuPaste", t("paste"), true, () => pasteFromClipboard(app, place)),
+      item("pdflionPageMenuPaste", t("paste"), editable, () => pasteFromClipboard(app, place)),
       createElement("div", { className: "horizontalToolbarSeparator" }),
       item("pdflionPageMenuDelete", t("delete"), editors, () => uiManager(app)?.delete()),
+      createElement("div", { className: "horizontalToolbarSeparator" }),
+      item("pdflionPageMenuAddImage", t("addImage"), editable, () => pickImage(app, place)),
     ];
     const menu = createElement(
       "div",
@@ -4256,32 +4301,135 @@
   /**
    * Takes the paste event the host's page menu sends after its Paste, and
    * pastes what it holds at the menu's place, rather than where pdf.js would.
-   * Other paste events, as from ⌘V, stay pdf.js's.
+   * Other paste events, as from ⌘V, stay pdf.js's, but for an image, which
+   * goes in the middle of the page in view, as pdf.js would put it, and
+   * shows in the select tool, as from the menu. Text pasted into a field or
+   * a text box stays theirs.
    *
    * @param {any} app
    * @param {ClipboardEvent} event
    */
   function pasteAtPlace(app, event) {
-    const place = pastePlace;
     const data = event.clipboardData;
-    if (!place || !data) return;
+    if (!data) return;
+    // The data can be read only while the event is dispatched.
+    const image = imageIn(data);
+    if (!pastePlace && (!image || targetIn(event, "input, textarea, [contenteditable]"))) return;
+    const place = pastePlace ?? middleInView(app);
     pastePlace = null;
+    if (!place) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    // The data can be read only while the event is dispatched.
-    const image = [...data.items]
-      .find((item) => item.kind === "file" && item.type.startsWith("image/"))
-      ?.getAsFile();
     const editors = image ? "" : data.getData(EDITORS_TYPE);
     if (image) insertImageAt(app, place, image);
     else if (editors) pasteEditorsAt(app, place, editors);
   }
 
   /**
-   * Adds an image as pdf.js's image annotation, centred on a place, as
-   * pdf.js's own paste does in the middle of the page: in its Stamp mode,
-   * where it's then selected, to move it, and to resize it by its handles.
-   * pdf.js opens the Stamp menu as it switches to Stamp, which stays closed.
+   * @param {DataTransfer} data
+   * @returns {File | null} the first image pdf.js takes in it
+   */
+  function imageIn(data) {
+    const item = [...data.items].find(
+      (entry) => entry.kind === "file" && IMAGE_TYPES.includes(entry.type),
+    );
+    return item?.getAsFile() ?? null;
+  }
+
+  /**
+   * @param {any} app
+   * @returns {Place | null} the middle of the part in view of the current page
+   */
+  function middleInView(app) {
+    const { pdfViewer } = app;
+    const pageIndex = pdfViewer.currentPageNumber - 1;
+    const view = pdfViewer.getPageView(pageIndex);
+    const container = document.getElementById("viewerContainer");
+    if (!view?.div || !view.viewport || !container) return null;
+    const page = view.div.getBoundingClientRect();
+    const shown = container.getBoundingClientRect();
+    const clientX = (Math.max(page.left, shown.left) + Math.min(page.right, shown.right)) / 2;
+    const clientY = (Math.max(page.top, shown.top) + Math.min(page.bottom, shown.bottom)) / 2;
+    const point = view.viewport.convertToPdfPoint(
+      clientX - page.left - view.div.clientLeft,
+      clientY - page.top - view.div.clientTop,
+    );
+    return { pageIndex, point, scale: view.viewport.scale, clientX, clientY };
+  }
+
+  /**
+   * Images dropped on a page go where they're dropped, as pasted ones do,
+   * rather than to pdf.js, which puts them in the middle of the page in
+   * its Stamp mode, which has no button.
+   *
+   * @param {any} app
+   */
+  function followImageDrops(app) {
+    /** @param {DragEvent} event @returns {boolean} */
+    const isImageDrag = (event) =>
+      !!targetIn(event, PAGE) &&
+      app.pdfViewer?.annotationEditorMode !== EDITOR_DISABLE &&
+      [...(event.dataTransfer?.items ?? [])].some(
+        (item) => item.kind === "file" && IMAGE_TYPES.includes(item.type),
+      );
+    window.addEventListener(
+      "dragover",
+      (event) => {
+        if (!isImageDrag(event)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      },
+      true,
+    );
+    window.addEventListener(
+      "drop",
+      (event) => {
+        if (!isImageDrag(event) || !event.dataTransfer) return;
+        const place = placeOf(app, event);
+        const image = imageIn(event.dataTransfer);
+        if (!place || !image) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        insertImageAt(app, { ...place, clientX: event.clientX, clientY: event.clientY }, image);
+      },
+      true,
+    );
+  }
+
+  /**
+   * Opens a file picker for an image, which goes centred on a place. It must
+   * open during a press, or with the activation main grants, since browsers
+   * open one only then.
+   *
+   * @param {any} app
+   * @param {Place} place
+   */
+  function pickImage(app, place) {
+    const input = createElement("input", {
+      type: "file",
+      accept: IMAGE_TYPES.join(","),
+      hidden: true,
+    });
+    input.addEventListener(
+      "change",
+      () => {
+        const [file] = input.files ?? [];
+        input.remove();
+        if (file && IMAGE_TYPES.includes(file.type)) insertImageAt(app, place, file);
+      },
+      { once: true },
+    );
+    input.addEventListener("cancel", () => input.remove(), { once: true });
+    document.body.append(input);
+    input.click();
+  }
+
+  /**
+   * Adds an image as pdf.js's image annotation, centred on a place. pdf.js
+   * makes them only in its Stamp mode, as its own paste does, whose tool is
+   * hidden (hideStampTool()), so the image then shows selected in the select
+   * tool, which moves it, and resizes it by its handles.
    *
    * @param {any} app
    * @param {Place} place
@@ -4295,13 +4443,21 @@
       const changed = nextEvent(app.eventBus, "annotationeditormodechanged");
       app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_STAMP });
       await changed;
-      document.getElementById("editorStampButton")?.setAttribute("aria-expanded", "false");
-      document.getElementById("editorStampParamsToolbar")?.classList.toggle("hidden", true);
     }
     const layer = ui.getLayer(place.pageIndex);
     if (!layer?.div) return;
     const [offsetX, offsetY] = layerPoint(layer.div, place);
-    layer.createAndAddNewEditor({ offsetX, offsetY }, true, { bitmapFile: file });
+    const editor = layer.createAndAddNewEditor({ offsetX, offsetY }, true, { bitmapFile: file });
+    if (!editor) return;
+    const selecting = nextEvent(app.eventBus, "annotationeditormodechanged");
+    startAreaTool(app, "select");
+    await selecting;
+    // It loads in the background, and pdf.js selects it as it shows, which
+    // in the select tool keeps it selected (followAreaTools()).
+    if (areaTool === "select" && !editor.isSelected) {
+      commitDrawing(ui);
+      ui.toggleSelected(editor);
+    }
   }
 
   /**

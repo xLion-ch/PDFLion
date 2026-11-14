@@ -88,10 +88,13 @@ contextBridge.exposeInMainWorld("pdflion", {
   /**
    * Shows the pages' context menu, whose Cut, Copy and Paste main runs.
    *
-   * @param {{ editors: boolean, text: boolean }} options whether drawings,
-   *   text boxes or images are selected, and whether text is
-   * @returns {Promise<"paste" | "delete" | null>} Paste, after which a paste
-   *   event comes, Delete, for the page to carry out, or null
+   * @param {{ editors: boolean, text: boolean, editable: boolean }} options
+   *   whether drawings, text boxes or images are selected, whether text is,
+   *   and whether pdf.js lets the document have new annotations
+   * @returns {Promise<"paste" | "delete" | "add-image" | null>} Paste, after
+   *   which a paste event comes, Delete, for the page to carry out, Add Image
+   *   from File…, for the page to open a file picker, with the activation it
+   *   needs, or null
    */
   showPageMenu: (options) => ipcRenderer.invoke("pdflion:page-menu", options),
   /**

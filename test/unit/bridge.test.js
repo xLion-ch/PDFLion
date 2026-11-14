@@ -5379,7 +5379,7 @@ describe("bridge.js select and screenshot tools", () => {
 
     // On the drawing, which it selects.
     assert.ok(menu(200, 92).prevented);
-    assert.deepEqual(asked, [{ editors: true, text: false }]);
+    assert.deepEqual(asked, [{ editors: true, text: false, editable: true }]);
     assert.deepEqual(page.selected(), ["a"]);
     answer("delete");
     await settle();

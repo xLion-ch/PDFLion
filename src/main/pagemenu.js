@@ -1,8 +1,9 @@
 /**
  * The context menu of a document's pages: Cut, Copy, Paste and Delete, for
  * the drawings, text boxes and images pdf.js has selected, the text selected,
- * and what the clipboard holds. bridge.js asks for it on a right click or a
- * long press on a page, and pastes at that place.
+ * and what the clipboard holds, and Add Image from File…. bridge.js asks for
+ * it on a right click or a long press on a page, and pastes or adds an image
+ * at that place.
  *
  * Cut, Copy and Paste run here, as the Edit menu's roles do: the page gets
  * the clipboard events with the clipboard's data, without the permission to
@@ -22,6 +23,8 @@ import { t } from "../shared/i18n.js";
  * @property {boolean} editors whether pdf.js has drawings, text boxes or
  *   images selected, which Cut, Copy and Delete take
  * @property {boolean} text whether text is selected, which Copy takes
+ * @property {boolean} editable whether pdf.js lets the document have new
+ *   annotations, which Paste and Add Image from File… add
  */
 
 /** Must run once the app is ready, before any window loads. */
@@ -42,9 +45,11 @@ export function handlePageMenu() {
  */
 export function parsePageMenuOptions(value) {
   if (typeof value !== "object" || value === null) return null;
-  const { editors, text } = /** @type {Record<string, unknown>} */ (value);
-  if (typeof editors !== "boolean" || typeof text !== "boolean") return null;
-  return { editors, text };
+  const { editors, text, editable } = /** @type {Record<string, unknown>} */ (value);
+  if (typeof editors !== "boolean" || typeof text !== "boolean" || typeof editable !== "boolean") {
+    return null;
+  }
+  return { editors, text, editable };
 }
 
 /**
@@ -74,12 +79,13 @@ async function clipboardTypes() {
  * @param {Electron.WebContents} webContents the tab's
  * @param {Electron.BrowserWindow} win
  * @param {PageMenuOptions} options
- * @returns {Promise<"paste" | "delete" | null>} Paste, which the page then
- *   expects a paste event for, Delete, which the page carries out, or null
- *   for anything else, or nothing chosen
+ * @returns {Promise<"paste" | "delete" | "add-image" | null>} Paste, which
+ *   the page then expects a paste event for, Delete, which the page carries
+ *   out, Add Image from File…, for which the page opens a file picker, or
+ *   null for anything else, or nothing chosen
  */
-async function showPageMenu(webContents, win, { editors, text }) {
-  const pasteable = canPaste(await clipboardTypes());
+async function showPageMenu(webContents, win, { editors, text, editable }) {
+  const pasteable = editable && canPaste(await clipboardTypes());
   return new Promise((resolve) => {
     /** @param {(contents: Electron.WebContents) => void} run */
     const onTab = (run) => () => {
@@ -106,6 +112,18 @@ async function showPageMenu(webContents, win, { editors, text }) {
         label: t("menuDelete"),
         enabled: editors,
         click: () => resolve("delete"),
+      },
+      { type: "separator" },
+      {
+        label: t("menuAddImage"),
+        enabled: editable,
+        // A click on a native menu gives the page no activation, without
+        // which it can't open a file picker. Running nothing as a user
+        // gesture gives it some, as runCommand() does.
+        click: onTab(async (contents) => {
+          await contents.executeJavaScript("void 0", true).catch(() => {});
+          resolve("add-image");
+        }),
       },
     ]).popup({
       window: win,

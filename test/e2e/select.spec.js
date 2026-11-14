@@ -4,6 +4,7 @@
  *
  * These tests write the system's clipboard, and put back its text after.
  */
+import fs from "node:fs/promises";
 import path from "node:path";
 import { expect, isEdited, tempDir, test } from "./pdflion.js";
 import { writeLabelled } from "./pdfs.js";
@@ -347,6 +348,21 @@ test("the screenshot tool copies a rectangle of the page as an image, drawings t
   }
 });
 
+/**
+ * @param {ElectronApplication} app
+ * @param {Page} page
+ * @param {number[]} point where it should be centred, in PDF coordinates
+ */
+async function expectSelectedImageAt(app, page, point) {
+  await expect.poll(async () => (await editors(page)).map(({ type }) => type)).toEqual(["stamp"]);
+  await expect.poll(async () => centredOn((await editors(page))[0].box, point)).toBe(true);
+  // Selected in the select tool, once loaded, rather than in pdf.js's Stamp mode.
+  await expect.poll(async () => (await editors(page))[0].selected).toBe(true);
+  await expect(page.locator("#pdflionEditorSelectButton")).toHaveAttribute("aria-pressed", "true");
+  expect(await page.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode)).toBe(15);
+  await expect.poll(() => isEdited(app, page)).toBe(true);
+}
+
 test("Paste in the pages' menu puts an image where it opened, and the select tool resizes it", async ({
   pdflion,
 }) => {
@@ -362,24 +378,15 @@ test("Paste in the pages' menu puts an image where it opened, and the select too
       "Copy": false,
       "Paste": false,
       "Delete": false,
+      "Add Image from File…": true,
     });
 
     await copyRedImage(app);
     expect((await openPageMenu(app, page, 300, 500)).Paste).toBe(true);
     await clickContextMenu(app, "Paste");
-    await expect.poll(async () => (await editors(page)).map(({ type }) => type)).toEqual(["stamp"]);
-    // In pdf.js's Stamp mode, centred where the menu opened.
-    expect(await page.evaluate(() => PDFViewerApplication.pdfViewer.annotationEditorMode)).toBe(13);
-    await expect(page.locator("#editorStampParamsToolbar")).toBeHidden();
-    await expect.poll(async () => centredOn((await editors(page))[0].box, [300, 500])).toBe(true);
-    await expect.poll(() => isEdited(app, page)).toBe(true);
-    // pdf.js selects it once it has loaded.
-    await expect.poll(async () => (await editors(page))[0].selected).toBe(true);
+    await expectSelectedImageAt(app, page, [300, 500]);
 
-    // The select tool picks it, and its handle resizes it.
-    await page.locator("#pdflionEditorSelectButton").click();
-    await page.mouse.click(...(await toWindow(page, 300, 500)));
-    await expect.poll(async () => (await editors(page))[0].selected).toBe(true);
+    // Its handle resizes it.
     const [{ box }] = await editors(page);
     const handle = page.locator(".stampEditor .resizer.bottomRight");
     await expect(handle).toBeVisible();
@@ -415,6 +422,7 @@ test("the pages' menu copies selected drawings, pastes them where it opens, and 
       "Copy": true,
       "Paste": false,
       "Delete": true,
+      "Add Image from File…": true,
     });
     expect((await editors(page))[0].selected).toBe(true);
     await clickContextMenu(app, "Copy");
@@ -437,4 +445,96 @@ test("the pages' menu copies selected drawings, pastes them where it opens, and 
   } finally {
     await restore();
   }
+});
+
+test("Add Image from File… in the pages' menu puts the image chosen where it opened", async ({
+  pdflion,
+}) => {
+  const dir = await tempDir();
+  const file = path.join(dir, "pages.pdf");
+  await writeLabelled(file, 1);
+  const image = path.join(dir, "red.png");
+  const { app, page } = await pdflion([file]);
+  // A 40 × 20 red PNG, which main encodes.
+  const png = await app.evaluate(({ nativeImage }) => {
+    const bitmap = Buffer.alloc(40 * 20 * 4);
+    for (let i = 0; i < bitmap.length; i += 4) bitmap.set([0, 0, 255, 255], i);
+    return nativeImage.createFromBitmap(bitmap, { width: 40, height: 20 }).toPNG().toString("base64");
+  });
+  await fs.writeFile(image, Buffer.from(png, "base64"));
+  await recordContextMenus(app);
+
+  await openPageMenu(app, page, 250, 550);
+  const choosing = page.waitForEvent("filechooser");
+  await clickContextMenu(app, "Add Image from File…");
+  const chooser = await choosing;
+  await chooser.setFiles(image);
+  await expectSelectedImageAt(app, page, [250, 550]);
+
+  // Choosing none adds none.
+  await openPageMenu(app, page, 400, 500);
+  const cancelling = page.waitForEvent("filechooser");
+  await clickContextMenu(app, "Add Image from File…");
+  await (await cancelling).setFiles([]);
+  await page.waitForTimeout(300);
+  expect(await editors(page)).toHaveLength(1);
+});
+
+test("pdf.js's Add Image tool is gone, and ⌘V pastes an image in the middle of the page in view", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  const { app, page } = await pdflion([file]);
+  await expect(page.locator("#editorStamp")).toBeHidden();
+  const restore = await keepClipboard(app);
+  try {
+    await copyRedImage(app);
+    const middle = await page.evaluate(() => {
+      const view = PDFViewerApplication.pdfViewer.getPageView(0);
+      const page = view.div.getBoundingClientRect();
+      const shown = /** @type {HTMLElement} */ (document.getElementById("viewerContainer")).getBoundingClientRect();
+      const x = (Math.max(page.left, shown.left) + Math.min(page.right, shown.right)) / 2;
+      const y = (Math.max(page.top, shown.top) + Math.min(page.bottom, shown.bottom)) / 2;
+      return view.viewport.convertToPdfPoint(x - page.left - view.div.clientLeft, y - page.top - view.div.clientTop);
+    });
+    // As Edit > Paste, the paste role, sends it.
+    await app.evaluate(({ webContents }) => {
+      for (const contents of webContents.getAllWebContents()) {
+        if (contents.getURL().includes("/viewer/web/viewer.html")) contents.paste();
+      }
+    });
+    await expectSelectedImageAt(app, page, middle);
+  } finally {
+    await restore();
+  }
+});
+
+test("an image dropped on a page goes where it's dropped, selected in the select tool", async ({
+  pdflion,
+}) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  const { app, page } = await pdflion([file]);
+  const [x, y] = await toWindow(page, 320, 560);
+  // A dragged file, as the file manager's drop brings it.
+  const dropped = await page.evaluate(
+    async ([x, y]) => {
+      const canvas = document.createElement("canvas");
+      [canvas.width, canvas.height] = [40, 20];
+      const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const data = new DataTransfer();
+      data.items.add(new File([png], "red.png", { type: "image/png" }));
+      const target = /** @type {Element} */ (document.elementFromPoint(x, y));
+      const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: data };
+      const over = new DragEvent("dragover", init);
+      target.dispatchEvent(over);
+      const drop = new DragEvent("drop", init);
+      target.dispatchEvent(drop);
+      return over.defaultPrevented && drop.defaultPrevented;
+    },
+    [x, y],
+  );
+  expect(dropped).toBe(true);
+  await expectSelectedImageAt(app, page, [320, 560]);
 });

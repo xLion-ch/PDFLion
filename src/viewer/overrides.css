@@ -244,6 +244,11 @@
   mask-image: url(/pdflion/icons/ink_eraser.svg);
 }
 
+/* pdf.js's Stamp tool, which the page menu's Add Image from File… replaces (bridge.js). */
+#editorStamp {
+  display: none !important;
+}
+
 #pdflionEditorSelectButton::before {
   mask-image: url(/pdflion/icons/select_area.svg);
 }
