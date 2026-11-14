@@ -210,8 +210,19 @@ function template() {
         { type: "separator" },
         commandItem(t("menuFind"), "find", "CmdOrCtrl+F"),
         { type: "separator" },
-        // A new page, as ⌘N is a new document. Preview's has no shortcut.
-        commandItem(t("menuInsertBlankPage"), "insertBlankPage", "Shift+CmdOrCtrl+N"),
+        // A new page after the current one, on each background. A blank one
+        // has ⇧⌘N, as ⌘N is a new document. Preview's has no shortcut.
+        {
+          label: t("menuInsertPage"),
+          submenu: [
+            commandItem(t("menuBackgroundBlank"), "insertBlankPage", "Shift+CmdOrCtrl+N"),
+            commandItem(t("menuBackgroundLined"), "insertLinedPage"),
+            commandItem(t("menuBackgroundGrid"), "insertGridPage"),
+            commandItem(t("menuBackgroundDotted"), "insertDottedPage"),
+            commandItem(t("menuBackgroundFineDotted"), "insertFineDottedPage"),
+            commandItem(t("menuBackgroundIsometric"), "insertIsometricPage"),
+          ],
+        },
         // Turns the eraser on and off, as its button does.
         commandItem(t("menuEraser"), "eraser", "Shift+CmdOrCtrl+E"),
         ...onMac(
@@ -520,7 +531,7 @@ function onWindowsAndLinux(...items) {
  *
  * @param {string} label
  * @param {string} command a key of COMMANDS in bridge.js
- * @param {string} accelerator
+ * @param {string} [accelerator]
  * @param {string} [id] defaults to `command`; ids must be unique
  * @returns {Electron.MenuItemConstructorOptions}
  */

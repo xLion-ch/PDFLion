@@ -17,7 +17,7 @@ function loadGeometry() {
   return page.PDFLionGeometry;
 }
 
-const { resample, distanceToPolyline, hitsStroke, cutStroke } = loadGeometry();
+const { resample, distanceToPolyline, hitsStroke, hitsBox, cutStroke } = loadGeometry();
 
 /**
  * @param {number} x0
@@ -226,4 +226,30 @@ describe("geometry cutStroke", () => {
       assertRuns(cutStroke(stroke, [50, 0], radius), [stroke]);
     });
   }
+});
+
+describe("hitsBox", () => {
+  const box = [100, 100, 200, 200];
+
+  it("takes a stroke with a point in the box", () => {
+    assert.equal(hitsBox([50, 50, 150, 150, 250, 50], box, 0), true);
+  });
+
+  it("takes a stroke whose segment crosses the box without a point in it", () => {
+    assert.equal(hitsBox([50, 150, 250, 150], box, 0), true);
+    assert.equal(hitsBox([50, 250, 250, 50], box, 0), true);
+  });
+
+  it("leaves a stroke that passes by, unless its ink reaches the box", () => {
+    assert.equal(hitsBox([50, 205, 250, 205], box, 0), false);
+    assert.equal(hitsBox([50, 205, 250, 205], box, 12), true);
+    // Diagonally past a corner, about 7 from it.
+    assert.equal(hitsBox([150, 260, 260, 150], box, 0), false);
+    assert.equal(hitsBox([150, 260, 260, 150], box, 16), true);
+  });
+
+  it("takes a dot in the box, and leaves one outside", () => {
+    assert.equal(hitsBox([150, 150], box, 0), true);
+    assert.equal(hitsBox([250, 150], box, 0), false);
+  });
 });

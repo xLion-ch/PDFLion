@@ -50,7 +50,8 @@ test("a tap on PDFLion's buttons does what a click does", async ({ page }) => {
   await eraser.tap();
   await expect(eraser).toHaveAttribute("aria-expanded", "false");
 
-  await frame.locator("#pdflionInsertBlankPage").tap();
+  await frame.locator("#pdflionInsertPageButton").tap();
+  await frame.locator("#pdflionInsertPage-lined").tap();
   await expect.poll(() => frame.evaluate(() => PDFViewerApplication.pagesCount)).toBe(15);
 
   // Home, and the strip's tabs and close buttons.

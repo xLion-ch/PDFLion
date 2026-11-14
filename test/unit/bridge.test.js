@@ -8,6 +8,7 @@ import vm from "node:vm";
 const SRC = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..", "src");
 const BRIDGE = fs.readFileSync(path.join(SRC, "viewer", "bridge.js"), "utf8");
 const GEOMETRY = fs.readFileSync(path.join(SRC, "viewer", "geometry.js"), "utf8");
+const BACKGROUNDS = fs.readFileSync(path.join(SRC, "viewer", "backgrounds.js"), "utf8");
 const TEXTS = fs.readFileSync(path.join(SRC, "shared", "texts.js"), "utf8");
 
 /** Lets pending promises and stream reads settle. */
@@ -297,10 +298,10 @@ function loadBridge({
       const siblings = this.siblings();
       siblings.splice(siblings.indexOf(this), 0, sibling);
     }
-    /** @param {Element} sibling */
-    after(sibling) {
+    /** @param {Element[]} nodes */
+    after(...nodes) {
       const siblings = this.siblings();
-      siblings.splice(siblings.indexOf(this) + 1, 0, sibling);
+      siblings.splice(siblings.indexOf(this) + 1, 0, ...nodes);
     }
     /**
      * @returns {Element[]} the list this element is in: the toolbar, the
@@ -638,7 +639,20 @@ function loadBridge({
         calls.push(["PDFLib.load", [...bytes], { ...options }]);
         if (pdfLib.failure) throw pdfLib.failure;
         return {
-          insertPage: (index, size) => calls.push(["PDFLib.insertPage", index, [...size]]),
+          insertPage: (index, size) => {
+            calls.push(["PDFLib.insertPage", index, [...size]]);
+            return {
+              node: {
+                addContentStream: (/** @type {any} */ ref) =>
+                  calls.push(["PDFLib.addContentStream", index, ref]),
+              },
+            };
+          },
+          context: {
+            /** A stream is its contents, and its reference the stream itself. */
+            flateStream: (/** @type {string} */ contents) => ({ flate: contents }),
+            register: (/** @type {any} */ stream) => stream,
+          },
           /** @param {number} index */
           getPage: (index) => ({
             getRotation: () => pdfLib.degrees(pdfLib.rotations[index] ?? 0),
@@ -989,6 +1003,7 @@ function loadBridge({
   page.parent = embedded ? embedder : page;
   page.navigator ??= { languages: ["en-US"] };
   vm.runInNewContext(GEOMETRY, page, { filename: "geometry.js" });
+  vm.runInNewContext(BACKGROUNDS, page, { filename: "backgrounds.js" });
   vm.runInNewContext(TEXTS, page, { filename: "texts.js" });
   vm.runInNewContext(BRIDGE, page, { filename: "bridge.js" });
 
@@ -1574,23 +1589,71 @@ describe("bridge.js Home", () => {
   });
 });
 
-describe("bridge.js Insert Blank Page", () => {
-  it("adds a toolbar button, enabled once a document that can change has loaded", async () => {
+/** The backgrounds Insert Page's menus list, with their labels. */
+const BACKGROUND_LABELS = [
+  ["blank", "Blank"],
+  ["lined", "Lined (5\u00a0mm)"],
+  ["grid", "Grid (5\u00a0mm)"],
+  ["dotted", "Dotted (5\u00a0mm)"],
+  ["fine-dotted", "Dotted (1\u00a0mm)"],
+  ["isometric", "Isometric"],
+];
+
+/** The commands of Edit > Insert Page, by background. */
+const INSERT_COMMANDS = {
+  blank: "insertBlankPage",
+  lined: "insertLinedPage",
+  grid: "insertGridPage",
+  dotted: "insertDottedPage",
+  "fine-dotted": "insertFineDottedPage",
+  isometric: "insertIsometricPage",
+};
+
+describe("bridge.js Insert Page", () => {
+  it("adds a toolbar button with a menu of the backgrounds, enabled once a document that can change has loaded", async () => {
     const bridge = loadBridge();
     await bridge.load();
-    const button = bridge.toolbar.find((element) => element.id === "pdflionInsertBlankPage");
-    assert.ok(button);
-    assert.equal(bridge.toolbar.indexOf(button), bridge.toolbar.length - 2, "before the separator");
+    const container = bridge.toolbar.find((element) => element.id === "pdflionInsertPage");
+    assert.ok(container);
+    assert.equal(bridge.toolbar.indexOf(container), bridge.toolbar.length - 2, "before the separator");
+    assert.equal(container.className, "toolbarButtonWithContainer");
+    const [button, menu] = container.children;
+    assert.equal(button.id, "pdflionInsertPageButton");
     assert.equal(button.className, "toolbarButton");
-    assert.equal(button.title, "Insert Blank Page");
+    assert.equal(button.title, "Insert Page");
+    assert.equal(button.attributes["aria-haspopup"], "true");
+    assert.equal(button.attributes["aria-controls"], "pdflionInsertPageMenu");
+    assert.equal(menu.id, "pdflionInsertPageMenu");
+    const items = menu.children[0].children;
+    assert.deepEqual(
+      items.map((item) => [item.id, item.attributes["data-background"], item.children[0].textContent]),
+      BACKGROUND_LABELS.map(([background, label]) => [
+        `pdflionInsertPage-${background}`,
+        background,
+        label,
+      ]),
+    );
+    for (const item of items) {
+      assert.equal(item.className, "toolbarButton labeled pdflionBackgroundItem");
+      assert.equal(item.attributes.role, "menuitem");
+    }
     assert.equal(button.disabled, true);
     bridge.openDocument();
     await settle();
     assert.equal(button.disabled, false);
 
     button.listeners.click();
+    assert.equal(button.attributes["aria-expanded"], "true");
+    assert.equal(menu.classes.has("hidden"), false);
+    // Choosing one closes the menu first, then inserts the page.
+    menu.listeners.click();
+    items[1].listeners.click();
+    assert.equal(button.attributes["aria-expanded"], "false");
     for (let turn = 0; turn < 10; turn++) await settle();
     assert.equal(named(bridge.calls, "PDFLib.insertPage").length, 1);
+    const [[, index, { flate }]] = named(bridge.calls, "PDFLib.addContentStream");
+    assert.equal(index, 1);
+    assert.equal(flate, bridge.page.PDFLionBackgrounds.contentStream("lined", 612, 792));
   });
 
   it("keeps the button disabled for a locked document", async () => {
@@ -1598,8 +1661,44 @@ describe("bridge.js Insert Blank Page", () => {
     await bridge.load();
     bridge.openDocument({ info: { EncryptFilterName: "Standard" } });
     await settle();
-    const button = bridge.toolbar.find((element) => element.id === "pdflionInsertBlankPage");
-    assert.equal(button.disabled, true);
+    const container = bridge.toolbar.find((element) => element.id === "pdflionInsertPage");
+    assert.equal(container.children[0].disabled, true);
+  });
+
+  it("lists the backgrounds backgrounds.js draws", () => {
+    const bridge = loadBridge();
+    assert.deepEqual(
+      [...bridge.page.PDFLionBackgrounds.BACKGROUNDS],
+      BACKGROUND_LABELS.map(([background]) => background),
+    );
+  });
+
+  for (const [background, command] of Object.entries(INSERT_COMMANDS)) {
+    it(`inserts a page on ${background} for ${command}`, async () => {
+      const bridge = loadBridge();
+      await bridge.load();
+      bridge.openDocument();
+      assert.equal(await bridge.run(command), true);
+      assert.deepEqual(named(bridge.calls, "PDFLib.insertPage"), [["PDFLib.insertPage", 1, [612, 792]]]);
+      const streams = named(bridge.calls, "PDFLib.addContentStream");
+      if (background === "blank") {
+        assert.deepEqual(streams, []);
+      } else {
+        const content = bridge.page.PDFLionBackgrounds.contentStream(background, 612, 792);
+        assert.ok(content.length > 0);
+        assert.deepEqual(streams, [["PDFLib.addContentStream", 1, { flate: content }]]);
+      }
+    });
+  }
+
+  it("draws the background at the size of a page shown on its side", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.pdfViewer.pages = [{ view: [0, 0, 612, 792], rotate: 90 }];
+    assert.equal(await bridge.run("insertGridPage"), true);
+    const [[, , { flate }]] = named(bridge.calls, "PDFLib.addContentStream");
+    assert.equal(flate, bridge.page.PDFLionBackgrounds.contentStream("grid", 792, 612));
   });
 
   it("does without a toolbar", async () => {
@@ -1854,15 +1953,23 @@ describe("bridge.js page overview", () => {
       [
         ["pdflionRotatePagesLeft", "Rotate Pages Left", true],
         ["pdflionRotatePagesRight", "Rotate Pages Right", true],
-        ["pdflionOverviewInsertBlankPage", "Insert Blank Page", true],
+        ["pdflionOverviewInsertPage", undefined, undefined],
       ],
     );
-    for (const tool of tools.children) {
-      assert.equal(tool.className, "toolbarButton viewsManagerButton");
+    const [insert, menu] = tools.children[2].children;
+    assert.equal(tools.children[2].className, "toolbarButtonWithContainer");
+    assert.deepEqual([insert.id, insert.title, insert.disabled], ["pdflionOverviewInsertPageButton", "Insert Page", true]);
+    assert.deepEqual(
+      menu.children[0].children.map((item) => item.attributes["data-background"]),
+      BACKGROUND_LABELS.map(([background]) => background),
+    );
+    const buttons = [tools.children[0], tools.children[1], insert];
+    for (const button of buttons) {
+      assert.equal(button.className, "toolbarButton viewsManagerButton");
     }
     bridge.openDocument();
     await settle();
-    for (const tool of tools.children) assert.equal(tool.disabled, false, tool.id);
+    for (const button of buttons) assert.equal(button.disabled, false, button.id);
   });
 
   for (const [before, description] of [
@@ -2072,7 +2179,9 @@ describe("bridge.js page overview", () => {
     ];
     bridge.page.document.checkedPages = [1, 3];
     bridge.run("pageOverview");
-    await bridge.header[0].children[2].listeners.click();
+    // The first of Insert Page's menu, Blank.
+    const [, menu] = bridge.header[0].children[2].children;
+    await menu.children[0].children[0].listeners.click();
     assert.deepEqual(named(bridge.calls, "PDFLib.insertPage"), [["PDFLib.insertPage", 3, [300, 400]]]);
     assert.equal(bridge.app.initialBookmark, "page=4&zoom=auto");
   });
@@ -2200,8 +2309,11 @@ describe("bridge.js rotating pages", () => {
     await bridge.load();
     bridge.openDocument({ info: { EncryptFilterName: "Standard" } });
     await settle();
-    for (const button of bridge.header[0].children) assert.equal(button.disabled, true);
-    assert.equal(await bridge.header[0].children[1].listeners.click(), false);
+    const [rotateLeft, rotateRight, insert] = bridge.header[0].children;
+    for (const button of [rotateLeft, rotateRight, insert.children[0]]) {
+      assert.equal(button.disabled, true);
+    }
+    assert.equal(await rotateRight.listeners.click(), false);
     assert.deepEqual(bridge.pdflion.dialogs, [["locked-encrypted", undefined]]);
     assert.deepEqual(named(bridge.calls, "PDFLib.load"), []);
   });
@@ -4968,19 +5080,19 @@ describe("bridge.js the toolbar's narrowest steps", () => {
     assert.deepEqual([redoOff.id, redoOff.disabled], ["pdflionRedoItem", true]);
   });
 
-  it("have Find…, Page Overview and Insert Blank Page in the ⋮ menu", async () => {
+  it("have Find…, Page Overview and Insert Page in the ⋮ menu", async () => {
     const bridge = loadBridge();
     await bridge.load();
     const [tiny] = bridge.menuContainer.children;
     assert.equal(tiny.className, "pdflionVisibleTiny");
-    const [find, overview, insert, separator] = tiny.children;
+    const [find, overview, insert, backgrounds, separator] = tiny.children;
     assert.equal(separator.className, "horizontalToolbarSeparator");
     assert.deepEqual(
       [find, overview, insert].map((item) => [item.id, item.children[0].textContent]),
       [
         ["pdflionSecondaryFind", "Find…"],
         ["pdflionSecondaryPageOverview", "Page Overview"],
-        ["pdflionSecondaryInsertBlankPage", "Insert Blank Page"],
+        ["pdflionSecondaryInsertPage", "Insert Page"],
       ],
     );
 
@@ -4990,10 +5102,298 @@ describe("bridge.js the toolbar's narrowest steps", () => {
     assert.ok(bridge.outerContainer.classes.has("pdflionPageOverview"));
     assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 2);
 
-    // Insert Blank Page works as its button does.
+    // Insert Page works as its button does, and shows the backgrounds below it.
     assert.equal(insert.disabled, true);
     bridge.openDocument();
     await settle();
     assert.equal(insert.disabled, false);
+    assert.equal(backgrounds.id, "pdflionSecondaryBackgrounds");
+    assert.equal(backgrounds.hidden, true);
+    assert.equal(insert.attributes["aria-expanded"], "false");
+    assert.deepEqual(
+      backgrounds.children.map((item) => [item.id, item.children[0].textContent]),
+      BACKGROUND_LABELS.map(([background, label]) => [
+        `pdflionSecondaryInsertPage-${background}`,
+        label,
+      ]),
+    );
+    insert.listeners.click();
+    assert.equal(backgrounds.hidden, false);
+    assert.equal(insert.attributes["aria-expanded"], "true");
+    insert.listeners.click();
+    assert.equal(backgrounds.hidden, true);
+
+    insert.listeners.click();
+    backgrounds.children[5].listeners.click();
+    assert.equal(backgrounds.hidden, true, "closed once one is chosen");
+    assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 3);
+    for (let turn = 0; turn < 10; turn++) await settle();
+    const [[, , { flate }]] = named(bridge.calls, "PDFLib.addContentStream");
+    assert.equal(flate, bridge.page.PDFLionBackgrounds.contentStream("isometric", 612, 792));
+  });
+});
+
+describe("bridge.js select and screenshot tools", () => {
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const buttonsOf = (bridge) => {
+    const find = (/** @type {string} */ id) => bridge.toolbar.find((element) => element.id === id);
+    return {
+      select: find("pdflionEditorSelect").children[0],
+      screenshot: find("pdflionEditorScreenshot").children[0],
+    };
+  };
+
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const mode = (bridge) => bridge.app.pdfViewer.annotationEditorMode;
+
+  /**
+   * Turns the select tool on over a first page at the window's top left, 792
+   * points tall at 100 %, with stand-ins for pdf.js's editors on it: Pencil's
+   * drawings by their strokes, and text boxes and signatures by their boxes.
+   *
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @param {{ id: string, editorType: string, strokes?: number[][], box?: number[] }[]} shown
+   */
+  async function selecting(bridge, shown) {
+    await bridge.load();
+    const { app, uiManager, calls } = bridge;
+    const pageDiv = {
+      dataset: { pageNumber: "1" },
+      clientLeft: 0,
+      clientTop: 0,
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 612, bottom: 792 }),
+      /** @param {string} selector */
+      closest: (selector) => (selector === "#viewerContainer .page[data-page-number]" ? pageDiv : null),
+    };
+    app.pdfViewer.pageDiv = pageDiv;
+    app.pdfViewer.viewport = {
+      scale: 1,
+      convertToPdfPoint: (/** @type {number} */ x, /** @type {number} */ y) => [x, 792 - y],
+    };
+    const editors = shown.map(({ id, editorType, strokes = [], box }) => ({
+      id,
+      editorType,
+      pageIndex: 0,
+      isSelected: false,
+      div: {},
+      serialize: () => (editorType === "ink" ? { paths: { points: strokes }, thickness: 2 } : null),
+      getPDFRect: () => box,
+      screenToPageTranslation: (/** @type {number} */ x, /** @type {number} */ y) => [x, y],
+    }));
+    uiManager.getEditors = function* () {
+      yield* editors;
+    };
+    Object.defineProperty(uiManager, "hasSelection", {
+      get: () => editors.some((editor) => editor.isSelected),
+      configurable: true,
+    });
+    uiManager.unselectAll = () => {
+      calls.push(["ui.unselectAll"]);
+      for (const editor of editors) editor.isSelected = false;
+    };
+    uiManager.toggleSelected = (/** @type {any} */ editor) => {
+      editor.isSelected = !editor.isSelected;
+    };
+    uiManager.setUpDragSession = () => calls.push(["ui.setUpDragSession"]);
+    uiManager.dragSelectedEditors = (/** @type {number} */ x, /** @type {number} */ y) =>
+      calls.push(["ui.dragSelectedEditors", x, y]);
+    uiManager.endDragSession = () => calls.push(["ui.endDragSession"]);
+    uiManager.delete = () => calls.push(["ui.delete"]);
+    app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    buttonsOf(bridge).select.listeners.click();
+    /**
+     * @param {number[][]} points in the window, which at 100 % are PDF points from the top
+     * @param {object} [init] the press's
+     */
+    const drag = (points, init = {}) => {
+      const [[clientX, clientY], ...moves] = points;
+      const press = {
+        target: pageDiv,
+        pointerType: "mouse",
+        button: 0,
+        pointerId: 7,
+        clientX,
+        clientY,
+        stopped: false,
+        prevented: false,
+        stopPropagation() {
+          this.stopped = true;
+        },
+        preventDefault() {
+          this.prevented = true;
+        },
+        ...init,
+      };
+      bridge.viewerContainer.listeners.pointerdown(press);
+      for (const [x, y] of moves) bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: x, clientY: y });
+      bridge.fire("pointerup", { target: pageDiv, pointerId: 7 });
+      return press;
+    };
+    return { editors, drag, selected: () => editors.filter((e) => e.isSelected).map((e) => e.id) };
+  }
+
+  it("adds Select and Screenshot after the eraser, which work whenever pdf.js's tools do", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const ids = bridge.toolbar.map((element) => element.id);
+    const eraser = ids.indexOf("pdflionEditorEraser");
+    assert.deepEqual(ids.slice(eraser, eraser + 3), [
+      "pdflionEditorEraser",
+      "pdflionEditorSelect",
+      "pdflionEditorScreenshot",
+    ]);
+    const { select, screenshot } = buttonsOf(bridge);
+    assert.deepEqual([select.title, screenshot.title], ["Select", "Screenshot"]);
+    assert.equal(select.disabled, true);
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    assert.deepEqual([select.disabled, screenshot.disabled], [false, false]);
+    const [, marquee] = bridge.outerContainer.children;
+    assert.deepEqual([marquee.id, marquee.hidden], ["pdflionMarquee", true]);
+  });
+
+  it("turn on in pdf.js's ink mode, one at a time, and off for another tool or Pencil", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    const { select, screenshot } = buttonsOf(bridge);
+    const classes = bridge.outerContainer.classes;
+    select.listeners.click();
+    assert.equal(mode(bridge), 15);
+    assert.ok(classes.has("pdflionSelecting"));
+    assert.equal(select.attributes["aria-pressed"], "true");
+    assert.equal(bridge.pencilButton.attributes["aria-expanded"], "false");
+
+    screenshot.listeners.click();
+    assert.ok(!classes.has("pdflionSelecting") && classes.has("pdflionCapturing"));
+    assert.equal(select.attributes["aria-pressed"], "false");
+    assert.equal(mode(bridge), 15);
+
+    // Pencil's button turns it off, and leaves Pencil on.
+    const click = bridge.fire("click", { target: element("#editorInkButton") });
+    assert.ok(click.stopped);
+    assert.ok(!classes.has("pdflionCapturing"));
+    assert.equal(mode(bridge), 15);
+
+    select.listeners.click();
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 3 });
+    assert.ok(!classes.has("pdflionSelecting"));
+    select.listeners.click();
+    select.listeners.click();
+    assert.equal(mode(bridge), 0, "its button turns it off to no tool");
+  });
+
+  it("selects the drawings and text boxes a rectangle reaches, but no signature", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [
+      // Strokes at y 700 and 500 in PDF coordinates, 92 and 292 down the window.
+      { id: "crossed", editorType: "ink", strokes: [[100, 700, 300, 700]] },
+      { id: "missed", editorType: "ink", strokes: [[100, 500, 300, 500]] },
+      { id: "text", editorType: "freetext", box: [250, 640, 350, 720] },
+      { id: "signature", editorType: "signature", box: [100, 690, 300, 710] },
+    ]);
+    // A drag from 50, 50 to 260, 120: x 50 to 260, y 672 to 742.
+    const press = page.drag([[50, 50], [150, 100], [260, 120]]);
+    assert.ok(press.stopped && press.prevented, "pdf.js gets no press to draw with");
+    assert.deepEqual(page.selected(), ["crossed", "text"]);
+
+    // A click elsewhere clears the selection, and Shift adds to it.
+    page.drag([[500, 500]]);
+    assert.deepEqual(page.selected(), []);
+    page.drag([[90, 280], [320, 300]]);
+    page.drag([[50, 50], [260, 120]], { shiftKey: true });
+    assert.deepEqual(page.selected(), ["crossed", "missed", "text"]);
+  });
+
+  it("moves the selection with a drag on what's selected, through pdf.js's drag session", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [
+      { id: "a", editorType: "ink", strokes: [[100, 700, 300, 700]] },
+      { id: "b", editorType: "ink", strokes: [[100, 500, 300, 500]] },
+    ]);
+    page.drag([[50, 80], [320, 320]]);
+    assert.deepEqual(page.selected(), ["a", "b"]);
+    // On a's ink, 92 down the window.
+    page.drag([[200, 92], [200, 142], [200, 192]]);
+    assert.deepEqual(page.selected(), ["a", "b"]);
+    assert.deepEqual(
+      named(bridge.calls, "ui.dragSelectedEditors").map(([, x, y]) => [x, y]),
+      [[0, 50], [0, 50]],
+    );
+    assert.equal(named(bridge.calls, "ui.endDragSession").length, 1);
+
+    // A click on one of them selects it alone.
+    page.drag([[200, 292]]);
+    assert.deepEqual(page.selected(), ["b"]);
+  });
+
+  it("deletes the selection with Delete, and Esc clears it, then turns the tool off", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [{ id: "a", editorType: "ink", strokes: [[100, 700, 300, 700]] }]);
+    page.drag([[200, 92]]);
+    assert.ok(bridge.fire("keydown", { key: "Delete" }).stopped);
+    assert.equal(named(bridge.calls, "ui.delete").length, 1);
+
+    bridge.fire("keydown", { key: "Escape" });
+    assert.deepEqual(page.selected(), []);
+    assert.ok(bridge.outerContainer.classes.has("pdflionSelecting"));
+    bridge.fire("keydown", { key: "Escape" });
+    assert.ok(!bridge.outerContainer.classes.has("pdflionSelecting"));
+    assert.equal(mode(bridge), 0);
+  });
+
+  it("keeps pdf.js's own selecting from switching to the editor's tool", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [{ id: "image", editorType: "stamp", box: [100, 600, 200, 700] }]);
+    const switched = named(bridge.calls, "updateToolbar").length;
+    bridge.uiManager.setSelected = (/** @type {any} */ editor) => bridge.calls.push(["updateToolbar", editor.id]);
+    bridge.app.eventBus.dispatch("annotationeditoruimanager", { uiManager: bridge.uiManager });
+    bridge.uiManager.setSelected(page.editors[0]);
+    assert.deepEqual(page.selected(), ["image"]);
+    assert.equal(named(bridge.calls, "updateToolbar").length, switched);
+
+    // pdf.js's own once the tool is off.
+    bridge.fire("keydown", { key: "Escape" });
+    bridge.fire("keydown", { key: "Escape" });
+    bridge.uiManager.setSelected(page.editors[0]);
+    assert.equal(named(bridge.calls, "updateToolbar").length, switched + 1);
+  });
+
+  it("opens the host's page menu on a page, and deletes or pastes as it says", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [{ id: "a", editorType: "ink", strokes: [[100, 700, 300, 700]] }]);
+    bridge.openDocument();
+    /** @type {any[]} */
+    const asked = [];
+    /** @type {(choice: string | null) => void} */
+    let answer = () => {};
+    bridge.pdflion.showPageMenu = (/** @type {any} */ options) => {
+      asked.push({ ...options });
+      return new Promise((resolve) => (answer = resolve));
+    };
+    const menu = (/** @type {number} */ clientX, /** @type {number} */ clientY) => {
+      const event = { target: bridge.app.pdfViewer.pageDiv, clientX, clientY, prevented: false };
+      Object.assign(event, { preventDefault: () => (event.prevented = true) });
+      bridge.viewerContainer.listeners.contextmenu(event);
+      return event;
+    };
+
+    // On the drawing, which it selects.
+    assert.ok(menu(200, 92).prevented);
+    assert.deepEqual(asked, [{ editors: true, text: false, editable: true }]);
+    assert.deepEqual(page.selected(), ["a"]);
+    answer("delete");
+    await settle();
+    assert.equal(named(bridge.calls, "ui.delete").length, 1);
+
+    // Paste then expects a paste event, which goes where the menu opened.
+    menu(300, 400);
+    answer("paste");
+    await settle();
+    const paste = bridge.fire("paste", {
+      clipboardData: { items: [], getData: () => "" },
+    });
+    assert.ok(paste.stopped && paste.prevented, "pdf.js's own paste doesn't run");
+    // Another one, as from ⌘V, is pdf.js's.
+    assert.ok(!bridge.fire("paste", { clipboardData: { items: [], getData: () => "" } }).stopped);
   });
 });

@@ -170,8 +170,66 @@
   mask-image: url(/pdflion/icons/grid_view.svg);
 }
 
-:is(#pdflionInsertBlankPage, #pdflionOverviewInsertBlankPage)::before {
+:is(#pdflionInsertPageButton, #pdflionOverviewInsertPageButton, #pdflionSecondaryInsertPage)::before {
   mask-image: url(/pdflion/icons/note_add.svg);
+}
+
+/*
+ * Insert Page's menus of the page backgrounds (bridge.js), in the toolbar and
+ * the thumbnails' header, and its items in the ⋮ menu: each a page with its
+ * background as its icon.
+ */
+.pdflionBackgroundItem {
+  &[data-background="blank"]::before {
+    mask-image: url(/pdflion/icons/page_blank.svg);
+  }
+
+  &[data-background="lined"]::before {
+    mask-image: url(/pdflion/icons/page_lined.svg);
+  }
+
+  &[data-background="grid"]::before {
+    mask-image: url(/pdflion/icons/page_grid.svg);
+  }
+
+  &[data-background="dotted"]::before {
+    mask-image: url(/pdflion/icons/page_dotted.svg);
+  }
+
+  &[data-background="fine-dotted"]::before {
+    mask-image: url(/pdflion/icons/page_dotted_fine.svg);
+  }
+
+  &[data-background="isometric"]::before {
+    mask-image: url(/pdflion/icons/page_isometric.svg);
+  }
+}
+
+/* Over the option box of the tool that's on, as the ★ menu is. */
+.pdflionInsertPageMenu {
+  z-index: 30001;
+
+  .menuContainer {
+    min-width: 180px;
+  }
+}
+
+/* In the ⋮ menu, the backgrounds show below Insert Page, set in. */
+#pdflionSecondaryInsertPage::after {
+  content: "";
+  width: 20px;
+  height: 20px;
+  margin-inline-start: auto;
+  mask: url(/pdflion/icons/keyboard_arrow_down.svg) center / contain no-repeat;
+  background-color: var(--toolbar-icon-bg-color);
+}
+
+#pdflionSecondaryInsertPage[aria-expanded="true"]::after {
+  mask-image: url(/pdflion/icons/keyboard_arrow_up.svg);
+}
+
+#pdflionSecondaryBackgrounds > .toolbarButton.labeled {
+  padding-inline-start: 32px;
 }
 
 #pdflionRotatePagesLeft::before {
@@ -184,6 +242,19 @@
 
 #pdflionEditorEraserButton::before {
   mask-image: url(/pdflion/icons/ink_eraser.svg);
+}
+
+/* pdf.js's Stamp tool, which the page menu's Add Image from File… replaces (bridge.js). */
+#editorStamp {
+  display: none !important;
+}
+
+#pdflionEditorSelectButton::before {
+  mask-image: url(/pdflion/icons/select_area.svg);
+}
+
+#pdflionEditorScreenshotButton::before {
+  mask-image: url(/pdflion/icons/screenshot_region.svg);
 }
 
 /*
@@ -210,6 +281,14 @@
 
   &[data-tool="pdflionEditorEraserButton"]::before {
     mask-image: url(/pdflion/icons/ink_eraser.svg);
+  }
+
+  &[data-tool="pdflionEditorSelectButton"]::before {
+    mask-image: url(/pdflion/icons/select_area.svg);
+  }
+
+  &[data-tool="pdflionEditorScreenshotButton"]::before {
+    mask-image: url(/pdflion/icons/screenshot_region.svg);
   }
 
   &[data-tool="editorStampButton"]::before {
@@ -303,10 +382,6 @@
 
 #pdflionSecondaryPageOverview::before {
   mask-image: url(/pdflion/icons/grid_view.svg);
-}
-
-#pdflionSecondaryInsertBlankPage::before {
-  mask-image: url(/pdflion/icons/note_add.svg);
 }
 
 #pdflionUndoItem::before {
@@ -405,12 +480,12 @@
 }
 
 /*
- * While the eraser is on, pdf.js is in Pencil's ink mode, and shows Pencil on
- * with its option box open: shown off instead. The pages show the eraser's
- * circle rather than a cursor, and a touch erases rather than scrolls, unless
- * only a pen draws.
+ * While the eraser, the select tool or the screenshot tool is on, pdf.js is
+ * in Pencil's ink mode, and shows Pencil on with its option box open: shown
+ * off instead. A touch on the pages erases, selects or takes a screenshot
+ * rather than scrolls, unless only a pen draws.
  */
-#outerContainer.pdflionErasing {
+#outerContainer:is(.pdflionErasing, .pdflionSelecting, .pdflionCapturing) {
   #editorInkButton.toggled {
     background-color: transparent;
 
@@ -427,15 +502,92 @@
     display: none !important;
   }
 
+  &:not(.pdflionPenOnly) #viewerContainer .page {
+    touch-action: none;
+  }
+}
+
+/* The eraser shows its circle on the pages rather than a cursor. */
+#outerContainer.pdflionErasing {
   #viewerContainer .page {
     &,
     * {
       cursor: none !important;
     }
   }
+}
 
-  &:not(.pdflionPenOnly) #viewerContainer .page {
-    touch-action: none;
+/* The screenshot tool's pages show a crosshair. */
+#outerContainer.pdflionCapturing #viewerContainer .page {
+  &,
+  * {
+    cursor: crosshair !important;
+  }
+}
+
+/*
+ * The select tool shows what it has selected: drawings and highlights by a
+ * dashed outline, which they otherwise never show, and text boxes and images
+ * as pdf.js does, with an image's handles, which resize it, and the toolbar
+ * of a text box or an image, which take presses, while the rest of them
+ * doesn't (bridge.js picks them itself).
+ */
+#outerContainer.pdflionSelecting .annotationEditorLayer {
+  :is(.inkEditor, .highlightEditor).selectedEditor {
+    outline: 2px dashed var(--md-sys-color-primary);
+    outline-offset: 2px;
+  }
+
+  :is(.freeTextEditor, .stampEditor).selectedEditor :is(.resizers, .resizer, .editToolbar, .editToolbar *) {
+    pointer-events: auto !important;
+  }
+}
+
+/* The rectangle a drag of the select or screenshot tool draws. */
+#pdflionMarquee {
+  position: fixed;
+  z-index: 100001;
+  box-sizing: border-box;
+  border: 1px dashed var(--md-sys-color-primary);
+  background-color: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);
+  pointer-events: none;
+
+  /* A screenshot flashes as it's copied. */
+  &.pdflionFlash {
+    animation: pdflionFlash 400ms ease-out forwards;
+  }
+}
+
+@keyframes pdflionFlash {
+  from {
+    background-color: white;
+    opacity: 1;
+  }
+
+  to {
+    background-color: white;
+    opacity: 0;
+  }
+}
+
+/* The pages' context menu, where the host shows none of its own (bridge.js). */
+#pdflionPageMenu {
+  position: fixed;
+  z-index: 100002;
+  min-width: 180px;
+  padding-block: 8px;
+  border-radius: var(--md-shape-extra-small);
+  background-color: var(--doorhanger-bg-color);
+  box-shadow: var(--md-sys-elevation-2);
+
+  .menuContainer {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Its items have no icons, as a context menu's. */
+  .toolbarButton::before {
+    display: none;
   }
 }
 
@@ -912,10 +1064,10 @@
 /*
  * PDFLion's last steps, for windows narrower than a desktop's can be, such as
  * an iPad's in Split View or Slide Over. First Find, Page Overview and Insert
- * Blank Page go into the ⋮ menu. Find's place stays, where its bar opens.
+ * Page go into the ⋮ menu. Find's place stays, where its bar opens.
  */
 :where(#toolbarContainer.pdflionToolbarTiny) {
-  :is(#viewFindButton, #pdflionPageOverview, #pdflionInsertBlankPage) {
+  :is(#viewFindButton, #pdflionPageOverview, #pdflionInsertPage) {
     display: none;
   }
 
@@ -1156,8 +1308,16 @@
     display: flex;
   }
 
+  /* Insert Page, with its menu, is as big as its button. */
+  > .toolbarButtonWithContainer {
+    width: 32px;
+    height: 32px;
+    aspect-ratio: auto;
+  }
+
   /* As pdf.js's Add file. */
-  #viewsManager & > button {
+  #viewsManager & > button,
+  #viewsManager & > .toolbarButtonWithContainer > button {
     width: 32px;
     height: 32px;
     background: var(--button-no-bg);
@@ -1544,5 +1704,20 @@ dialog .buttonRow {
 
   .pdflionEraserMode {
     min-height: 44px;
+  }
+}
+
+/* PDFLion's own menu and rectangle, in high contrast. */
+@media (forced-colors: active) {
+  #pdflionPageMenu {
+    border: 1px solid CanvasText;
+  }
+
+  #pdflionMarquee {
+    border-color: Highlight;
+  }
+
+  #outerContainer.pdflionSelecting .annotationEditorLayer :is(.inkEditor, .highlightEditor).selectedEditor {
+    outline-color: Highlight;
   }
 }

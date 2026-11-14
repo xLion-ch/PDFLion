@@ -43,6 +43,7 @@ describe("build-web.js parts", () => {
         `<meta http-equiv="Content-Security-Policy" content="${VIEWER_CSP}">`,
         '<link rel="stylesheet" href="../../pdflion/overrides.css">',
         '<script src="../../pdflion/geometry.js"></script>',
+        '<script src="../../pdflion/backgrounds.js"></script>',
         '<script src="../../web/keys.js"></script>',
         '<script src="../../web/viewer-host.js"></script>',
         '<script src="../../shared/texts.js"></script>',

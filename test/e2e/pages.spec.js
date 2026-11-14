@@ -201,7 +201,40 @@ const settled = (page) =>
  * @param {Page} page
  * @returns {Promise<void>} once the page change under way has ended
  */
-const pageChangeEnded = (page) => expect(page.locator("#pdflionInsertBlankPage")).toBeEnabled();
+const pageChangeEnded = (page) => expect(page.locator("#pdflionInsertPageButton")).toBeEnabled();
+
+/** Edit > Insert Page's commands, by the background each draws. */
+const INSERT_COMMANDS = {
+  blank: "insertBlankPage",
+  lined: "insertLinedPage",
+  grid: "insertGridPage",
+  dotted: "insertDottedPage",
+  "fine-dotted": "insertFineDottedPage",
+  isometric: "insertIsometricPage",
+};
+
+/**
+ * Renders a page of the document at 2 pixels a point, as the viewer would,
+ * and counts the pixels that aren't white.
+ *
+ * @param {Page} page
+ * @param {number} number
+ * @returns {Promise<{ drawn: number, all: number }>}
+ */
+const drawnPixels = (page, number) =>
+  page.evaluate(async (number) => {
+    const pdfPage = await PDFViewerApplication.pdfDocument.getPage(number);
+    const viewport = pdfPage.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
+    await pdfPage.render({ canvasContext: context, viewport, background: "white" }).promise;
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    let drawn = 0;
+    for (let i = 0; i < data.length; i += 4) if (data[i] < 245) drawn++;
+    return { drawn, all: data.length / 4 };
+  }, number);
 
 /**
  * @param {Page} page
@@ -214,7 +247,7 @@ const boundsOf = (page, selector) =>
     selector,
   );
 
-test("Insert Blank Page adds a page after the current one, and Save appends it", async ({
+test("Insert Page adds a page after the current one, and Save appends it", async ({
   pdflion,
 }) => {
   const file = await tracemonkey(await tempDir());
@@ -269,13 +302,81 @@ test("a typed form value survives inserting a page and saving", async ({ pdflion
   await expect(page.locator(".annotationLayer input")).toHaveValue("Ada Lovelace");
 });
 
-test("the toolbar button inserts a page too", async ({ pdflion }) => {
+test("the toolbar button inserts a page too, on the background chosen in its menu", async ({
+  pdflion,
+}) => {
   const { page } = await pdflion([await tracemonkey(await tempDir())]);
-  const button = page.locator("#pdflionInsertBlankPage");
+  const button = page.locator("#pdflionInsertPageButton");
+  const menu = page.locator("#pdflionInsertPageMenu");
   await expect(button).toBeEnabled();
   await button.click();
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Blank",
+    "Lined (5\u00a0mm)",
+    "Grid (5\u00a0mm)",
+    "Dotted (5\u00a0mm)",
+    "Dotted (1\u00a0mm)",
+    "Isometric",
+  ]);
+  await page.locator("#pdflionInsertPage-grid").click();
+  await expect(menu).toBeHidden();
   await expect.poll(() => pagesCount(page)).toBe(15);
   await expect(button).toBeEnabled();
+  expect((await drawnPixels(page, 2)).drawn).toBeGreaterThan(1000);
+
+  // The keys open it and choose, and Esc closes it.
+  await button.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu).toBeVisible();
+  await expect(page.locator("#pdflionInsertPage-blank")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(button).toBeFocused();
+});
+
+test("each background of Edit > Insert Page draws, and Save keeps it", async ({ pdflion }) => {
+  const file = path.join(await tempDir(), "pages.pdf");
+  await writeLabelled(file, 1);
+  let { app, page } = await pdflion([file]);
+  const backgrounds = Object.keys(INSERT_COMMANDS);
+  // Each after the one before, so they end up in the menu's order.
+  for (const [index, command] of Object.values(INSERT_COMMANDS).entries()) {
+    await clickMenu(app, page, command);
+    await expect.poll(() => pagesCount(page)).toBe(index + 2);
+    await pageChangeEnded(page);
+    expect(await currentPage(page)).toBe(index + 2);
+  }
+  /** @returns {Promise<Record<string, number>>} each background's share of drawn pixels */
+  const shares = async () => {
+    /** @type {Record<string, number>} */
+    const drawn = {};
+    for (const [index, background] of backgrounds.entries()) {
+      const { drawn: pixels, all } = await drawnPixels(page, index + 2);
+      drawn[background] = pixels / all;
+    }
+    return drawn;
+  };
+  const before = await shares();
+  expect(before.blank).toBe(0);
+  for (const background of backgrounds.slice(1)) {
+    // Light, but there: from a few lines' worth to the 1 mm dots' haze.
+    expect(before[background], background).toBeGreaterThan(0.005);
+    expect(before[background], background).toBeLessThan(0.25);
+  }
+  // Grid has Lined's lines and as many again across.
+  expect(before.grid).toBeGreaterThan(before.lined * 1.5);
+  // Dots far apart cover less than dots close together.
+  expect(before["fine-dotted"]).toBeGreaterThan(before.dotted * 2);
+  expect(await pageView(page, 2)).toEqual(await pageView(page, 1));
+
+  await clickMenu(app, page, "save");
+  await expect.poll(() => isEdited(app, page)).toBe(false);
+  await app.close();
+
+  ({ app, page } = await pdflion([file]));
+  expect(await pagesCount(page)).toBe(7);
+  expect(await shares()).toEqual(before);
 });
 
 test("a document with a password keeps its pages, and says why", async ({ pdflion }) => {
@@ -291,7 +392,7 @@ test("a document with a password keeps its pages, and says why", async ({ pdflio
     .toEqual(["The pages of the document “protected.pdf” can’t be changed."]);
   expect(await pagesCount(page)).toBe(1);
   expect(await isEdited(app, page)).toBe(false);
-  await expect(page.locator("#pdflionInsertBlankPage")).toBeDisabled();
+  await expect(page.locator("#pdflionInsertPageButton")).toBeDisabled();
 });
 
 test("a signed document asks before its first page change only", async ({ pdflion }) => {
@@ -629,7 +730,7 @@ test("pages moved and deleted in the page overview's grid are saved", async ({ p
   expect(await pageTexts(page)).toEqual(changed);
 });
 
-test("Insert Blank Page in the page overview goes after the last checked page", async ({
+test("Insert Page in the page overview goes after the last checked page", async ({
   pdflion,
 }) => {
   const file = path.join(await tempDir(), "pages.pdf");
@@ -637,12 +738,18 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
   const { page } = await pdflion([file]);
   await page.locator("#pdflionPageOverview").click();
   await expect(page.locator("#thumbnailsView > .thumbnail")).toHaveCount(3);
-  const insert = page.locator("#pdflionOverviewInsertBlankPage");
+  const insert = page.locator("#pdflionOverviewInsertPageButton");
+  const blank = page.locator("#pdflionOverviewInsertPage-blank");
   await expect(insert).toBeEnabled();
 
   await thumbnail(page, 1).locator("input").check();
   await thumbnail(page, 2).locator("input").check();
   await insert.click();
+  // Its menu opens below it, inside the window.
+  await expect(page.locator("#pdflionOverviewInsertPageMenu")).toBeVisible();
+  const box = await page.locator("#pdflionOverviewInsertPageMenu").boundingBox();
+  expect(box?.x).toBeGreaterThanOrEqual(0);
+  await blank.click();
   await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "", "Page 3"]);
   await pageChangeEnded(page);
   expect(await currentPage(page)).toBe(3);
@@ -656,6 +763,7 @@ test("Insert Blank Page in the page overview goes after the last checked page", 
     PDFViewerApplication.page = 1;
   });
   await insert.click();
+  await blank.click();
   await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "", "Page 2", "", "Page 3"]);
   expect(await overviewOpen(page)).toBe(true);
 });
@@ -677,8 +785,10 @@ test("the sidebar's thumbnails have the page tools too, which act on the checked
   await page.locator("#pdflionRotatePagesLeft").click();
   await expect.poll(() => pageRotations(page)).toEqual([0, 270, 0]);
   await pageChangeEnded(page);
-  await page.locator("#pdflionOverviewInsertBlankPage").click();
+  await page.locator("#pdflionOverviewInsertPageButton").click();
+  await page.locator("#pdflionOverviewInsertPage-dotted").click();
   await expect.poll(() => pageTexts(page)).toEqual(["Page 1", "Page 2", "", "Page 3"]);
+  expect((await drawnPixels(page, 3)).drawn).toBeGreaterThan(1000);
   await pageChangeEnded(page);
   expect(await overviewOpen(page)).toBe(false);
 });

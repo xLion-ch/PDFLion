@@ -40,11 +40,12 @@ const homeHtml = path.join(homeRoot, "home.html");
 /**
  * Added before `</head>` of viewer.html. The classic scripts run in order,
  * before the viewer's deferred module scripts, so bridge.js can use what
- * geometry.js and texts.js define. overrides.css comes after viewer.css.
+ * geometry.js, backgrounds.js and texts.js define. overrides.css comes after viewer.css.
  */
 const VIEWER_INJECTION = [
   '<link rel="stylesheet" href="/pdflion/overrides.css">',
   '<script src="/pdflion/geometry.js"></script>',
+  '<script src="/pdflion/backgrounds.js"></script>',
   '<script src="/shared/texts.js"></script>',
   '<script src="/pdflion/bridge.js"></script>',
 ].join("");

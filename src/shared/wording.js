@@ -105,6 +105,11 @@ const PAGE_DIALOGS = {
     confirm: () => t("changePages"),
     cancelByDefault: true,
   },
+  // Not about pages, but the viewer's alert all the same.
+  "screenshot-failed": {
+    message: () => t("screenshotFailed"),
+    detail: () => t("screenshotFailedDetail"),
+  },
   rewrite: {
     message: (name) => t("pagesRewrite", { name }),
     detail: (_name, items) =>
