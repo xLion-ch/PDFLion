@@ -167,3 +167,60 @@ async function inPage(frame, [x, y]) {
   if (!box) throw new Error("No frame");
   return [box.x + x, box.y + y];
 }
+
+test("with no tool on, a long press beside the text opens the page's menu, selecting nothing", async ({
+  page,
+}) => {
+  await openAppExplained(page);
+  await openFromHome(page, [TRACEMONKEY]);
+  const frame = await documentFrame(page, NAME);
+  // Only the text selects, not the page around it, which Safari would select whole.
+  const selects = (/** @type {string} */ selector) =>
+    frame
+      .locator(selector)
+      .first()
+      .evaluate((element) => getComputedStyle(element).webkitUserSelect);
+  expect(await selects(`${FIRST_PAGE} .textLayer`)).toBe("none");
+  expect(await selects(`${FIRST_PAGE} .textLayer span:not(.markedContent)`)).toBe("text");
+
+  const finger = { pointerType: /** @type {const} */ ("touch"), pointerId: 22 };
+  // In the left margin, on the text layer, which covers the page.
+  const [{ target }] = await dispatch(frame, FIRST_PAGE, [
+    { ...finger, type: "pointerdown", at: [0.02, 0.5] },
+    { ...finger, type: "pointerup", at: [0.02, 0.5], wait: 700 },
+  ]);
+  expect(target).toContain("textLayer");
+  const menu = frame.locator("#pdflionPageMenu");
+  await expect(menu).toBeVisible();
+  expect(await frame.evaluate(() => document.getSelection()?.toString())).toBe("");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+});
+
+test("with pen-only drawing on, a finger's drag still selects in the select tool", async ({
+  page,
+}) => {
+  await openAppExplained(page);
+  await openFromHome(page, [TRACEMONKEY]);
+  const frame = await documentFrame(page, NAME);
+  await drawStroke(page, frame);
+  await frame.locator("#secondaryToolbarToggleButton").click();
+  await frame.locator("#pdflionSecondaryPenOnly").click();
+  await expect(frame.locator("#outerContainer")).toHaveClass(/pdflionPenOnly/);
+  await frame.locator("#pdflionEditorSelectButton").click();
+  await expect.poll(async () => (await editors(frame)).length).toBe(1);
+  // The pages don't scroll under a finger.
+  const touchAction = await frame
+    .locator(FIRST_PAGE)
+    .evaluate((element) => getComputedStyle(element).touchAction);
+  expect(touchAction).toBe("none");
+
+  const finger = { pointerType: /** @type {const} */ ("touch"), pointerId: 23 };
+  await dispatch(frame, FIRST_PAGE, [
+    { ...finger, type: "pointerdown", at: [0.05, 0.15] },
+    { ...finger, type: "pointermove", at: [0.3, 0.3] },
+    { ...finger, type: "pointermove", at: [0.6, 0.5] },
+    { ...finger, type: "pointerup", at: [0.6, 0.5] },
+  ]);
+  await expect.poll(async () => (await editors(frame))[0].selected).toBe(true);
+});

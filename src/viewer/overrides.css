@@ -483,7 +483,7 @@
  * While the eraser, the select tool or the screenshot tool is on, pdf.js is
  * in Pencil's ink mode, and shows Pencil on with its option box open: shown
  * off instead. A touch on the pages erases, selects or takes a screenshot
- * rather than scrolls, unless only a pen draws.
+ * rather than scrolls, and for the eraser only while fingers erase too.
  */
 #outerContainer:is(.pdflionErasing, .pdflionSelecting, .pdflionCapturing) {
   #editorInkButton.toggled {
@@ -502,7 +502,7 @@
     display: none !important;
   }
 
-  &:not(.pdflionPenOnly) #viewerContainer .page {
+  &:is(.pdflionSelecting, .pdflionCapturing, :not(.pdflionPenOnly)) #viewerContainer .page {
     touch-action: none;
   }
 }
@@ -1689,6 +1689,89 @@ dialog .buttonRow {
 }
 
 /*
+ * The pages' own scrollbar (bridge.js's addScrollbar()), where the browser's
+ * are overlays a finger can't drag, as on an iPad: a thumb on the right, 24px
+ * wide to touch, under the toolbar's menus. The browser's own is hidden.
+ */
+#pdflionScrollbar {
+  position: absolute;
+  top: var(--toolbar-height);
+  right: 0;
+  bottom: 0;
+  width: 24px;
+  z-index: 1;
+  pointer-events: none;
+
+  &[hidden] {
+    display: none;
+  }
+
+  .pdflionScrollThumb {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 100%;
+    pointer-events: auto;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+
+    &::before {
+      content: "";
+      position: absolute;
+      inset: 4px 4px 4px auto;
+      width: 6px;
+      border-radius: 3px;
+      background-color: color-mix(in srgb, var(--md-sys-color-on-surface-variant) 60%, transparent);
+      transition: width 150ms;
+    }
+  }
+
+  &.pdflionDragging .pdflionScrollThumb::before {
+    width: 10px;
+    border-radius: 5px;
+    background-color: var(--md-sys-color-primary);
+  }
+}
+
+#viewerContainer.pdflionOwnScrollbar {
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+#outerContainer.pdflionPageOverview #pdflionScrollbar {
+  display: none;
+}
+
+/*
+ * With a touch screen, a long press on a page selects its text alone, not
+ * the page around it, which Safari would select whole, and elsewhere opens
+ * the page menu (bridge.js), with no callout. Highlight's text layer, which
+ * selects as it's dragged over, form fields and text boxes select text.
+ */
+@media (pointer: coarse) {
+  #viewerContainer .page {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+
+    :is(.textLayer.highlighting, .textLayer :is(span, br)),
+    :is(input, textarea, [contenteditable]) {
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
+    .textLayer span {
+      -webkit-touch-callout: default;
+    }
+  }
+}
+
+/*
  * With a finger, the toolbar's buttons stay 40px at every step, and menu
  * items, the eraser's modes and pen-only drawing's switch are 44px high, as
  * Apple asks of touch targets.
@@ -1715,6 +1798,14 @@ dialog .buttonRow {
 
   #pdflionMarquee {
     border-color: Highlight;
+  }
+
+  #pdflionScrollbar .pdflionScrollThumb::before {
+    background-color: ButtonText;
+  }
+
+  #pdflionScrollbar.pdflionDragging .pdflionScrollThumb::before {
+    background-color: Highlight;
   }
 
   #outerContainer.pdflionSelecting .annotationEditorLayer :is(.inkEditor, .highlightEditor).selectedEditor {

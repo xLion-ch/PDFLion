@@ -312,29 +312,37 @@ export async function rendered(page) {
 export async function setSize(app, page, { width, height }) {
   const win = await app.browserWindow(page);
   await win.evaluate((win, [width, height]) => win.setContentSize(width, height), [width, height]);
-  // The window may take a moment to resize, and the tab's view, the page's
-  // own size, follows it.
+  // The window may take a moment to resize, the tab's view follows it, and
+  // the page's own size the view. Each check reads them all anew, since a
+  // window manager may resize the window again, as on CI's Linux. The page's
+  // size is read from main, since page.evaluate() would count as a gesture.
   const layout = () =>
-    win.evaluate((win, url) => {
+    win.evaluate(async (win, url) => {
       const [width, height] = win.getContentSize();
-      const tab = win.contentView.children.find(
-        (child) =>
-          /** @type {Electron.WebContentsView} */ (child).webContents?.getURL().split("#")[0] ===
-          url.split("#")[0],
+      const tab = /** @type {Electron.WebContentsView | undefined} */ (
+        win.contentView.children.find(
+          (child) =>
+            /** @type {Electron.WebContentsView} */ (child).webContents?.getURL().split("#")[0] ===
+            url.split("#")[0],
+        )
       );
-      return { content: { width, height }, view: tab?.getBounds() };
+      const inner = await tab?.webContents.executeJavaScript("[innerWidth, innerHeight]");
+      return { content: { width, height }, view: tab?.getBounds(), inner };
     }, page.url());
+  /** @type {{ width: number, height: number }} */
+  let got = { width, height };
   await expect
     .poll(async () => {
-      const { content, view } = await layout();
-      return view?.width === content.width && view.y + view.height === content.height;
-    }, { message: "the tab's view fills the window" })
+      const { content, view, inner } = await layout();
+      got = content;
+      return (
+        view?.width === content.width &&
+        view.y + view.height === content.height &&
+        inner?.[0] === view.width &&
+        inner[1] === view.height
+      );
+    }, { message: "the tab's view fills the window, and the page its view" })
     .toBe(true);
-  const { content: got, view } = await layout();
-  await page.waitForFunction(
-    ({ width, height }) => innerWidth === width && innerHeight === height,
-    /** @type {Electron.Rectangle} */ (view),
-  );
   // ResizeObservers, such as the toolbar's, run in the frame after a resize.
   await page.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
