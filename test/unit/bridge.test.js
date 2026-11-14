@@ -549,6 +549,16 @@ function loadBridge({
       if (!toolbar) return null;
       return [...this.toolbar, ...this.header].find((element) => element.id === id) ?? null;
     },
+    /** The text selected, which a long press that opens a menu unselects. */
+    selection: "",
+    getSelection() {
+      return {
+        toString: () => this.selection,
+        removeAllRanges: () => {
+          this.selection = "";
+        },
+      };
+    },
     /** @type {unknown} */
     activeElement: null,
     /** Whether a thumbnail's checkbox is checked. */
@@ -1146,6 +1156,8 @@ describe("bridge.js viewer options", () => {
       externalLinkTarget: 2,
       enableSplitMerge: true,
       enableMerge: true,
+      // SidebarView.NONE: never the sidebar as a document opens.
+      sidebarViewOnLoad: 0,
     });
   });
 

@@ -98,6 +98,18 @@
   const SWIPE_DISTANCE = 50;
   const SWIPE_TIME = 800;
 
+  /**
+   * How recent a touch event must be, in ms, for a pinch's gesture events to
+   * count as fingers', which pdf.js zooms by, rather than a trackpad's.
+   */
+  const FINGERS_TIME = 500;
+
+  /** The pages' own scrollbar's thumb is at least this tall, in CSS pixels. */
+  const SCROLL_THUMB_MIN = 48;
+
+  /** The pages' own scrollbar shows once they scroll this share of the view. */
+  const SCROLL_LEAST = 0.1;
+
   /** `AnnotationEditorType.HIGHLIGHT` in src/shared/util.js. */
   const EDITOR_HIGHLIGHT = 9;
 
@@ -137,6 +149,12 @@
 
   /** A page of the document, as pdf.js shows it. */
   const PAGE = "#viewerContainer .page[data-page-number]";
+
+  /**
+   * A page's text in pdf.js's text layer, which itself covers the whole page:
+   * its spans, but not its `.markedContent` groups or `.endOfContent`.
+   */
+  const TEXT = ".textLayer :is(span:not(.markedContent), br)";
 
   /**
    * `AnnotationEditorType.STAMP` in src/shared/util.js: images, which pasting
@@ -820,6 +838,9 @@
       // pages of other files.
       enableSplitMerge: true,
       enableMerge: true,
+      // A document opens without the sidebar, whatever pdf.js's view history
+      // or the document's page mode says. reopen() keeps it as it was.
+      sidebarViewOnLoad: SIDEBAR_NONE,
     });
 
     const app = window.PDFViewerApplication;
@@ -845,6 +866,7 @@
     pageButtons.push(...addNarrowMenuItems(app));
     toolSettingsLoaded = followToolSettings(app);
     followToolbarWidth();
+    addScrollbar();
     guardPageTools(app);
     app.initializedPromise.then(() => {
       window.pdflion.onCommand((command) =>
@@ -4112,14 +4134,15 @@
    * @returns {boolean} whether a long press there opens the page menu: on a
    *   page where the press draws nothing, so not with Pencil, Highlight,
    *   Text or the eraser, unless only a pen draws and it's a finger, and not
-   *   on text with no tool on, where Safari selects it, for its own menu
+   *   on text with no tool on, where Safari selects it, for its own menu.
+   *   pdf.js's text layer covers the whole page, so that's its text alone.
    */
   function longPressOpensMenu(app, down) {
     if (!targetIn(down, PAGE)) return false;
     if (areaTool || isFingerKeptOff(app, down)) return true;
     const mode = app.pdfViewer?.annotationEditorMode;
     if (mode === EDITOR_STAMP) return true;
-    return mode === EDITOR_NONE && !targetIn(down, ".textLayer");
+    return mode === EDITOR_NONE && !targetIn(down, TEXT);
   }
 
   /**
@@ -4729,11 +4752,15 @@
    * @param {any} app
    * @param {PointerEvent} event
    * @returns {boolean} whether it's a finger that only scrolls and zooms:
-   *   pen-only drawing is on, and so is Pencil, Highlight or the eraser
+   *   pen-only drawing is on, and so is Pencil, Highlight or the eraser. The
+   *   select and screenshot tools, which draw nothing, take fingers too.
    */
   function isFingerKeptOff(app, event) {
     return (
-      penOnly && event.pointerType === "touch" && PEN_TOOLS.has(app.pdfViewer?.annotationEditorMode)
+      penOnly &&
+      !areaTool &&
+      event.pointerType === "touch" &&
+      PEN_TOOLS.has(app.pdfViewer?.annotationEditorMode)
     );
   }
 
@@ -4741,26 +4768,35 @@
    * Zooms the document for a pinch on a trackpad in Safari, as pdf.js does
    * for Chromium's, which comes as wheel events with ctrlKey. Safari sends
    * it as gesture events alone, without touches, so pdf.js's TouchManager
-   * never sees it, and Safari would zoom the whole page. A pinch with
-   * fingers on the screen, which brings gesture events too, stays
-   * TouchManager's, and so does a pinch that comes as wheel events after all.
+   * never sees it, and Safari would zoom the whole app. A pinch with fingers
+   * on the screen, which brings gesture events too, stays TouchManager's,
+   * and so does a pinch that comes as wheel events after all.
+   *
+   * Safari's own zoom is prevented for every pinch on the pages, fingers'
+   * too, which it would otherwise zoom the app by as pdf.js zooms the
+   * document, moving the pages under the fingers.
    *
    * @param {any} app
    */
   function followTrackpadPinch(app) {
     const container = document.getElementById("viewerContainer");
     if (!container) return;
-    /** How many fingers are on the screen, as the last touch event said. */
+    /** How many fingers are on the screen, as the last touch event said, and when. */
     let touches = 0;
+    let touchedAt = -Infinity;
     /** @param {TouchEvent} event */
     const countTouches = (event) => {
       touches = event.touches?.length ?? 0;
+      touchedAt = event.timeStamp;
     };
-    for (const type of ["touchstart", "touchend", "touchcancel"]) {
-      window.addEventListener(type, /** @type {EventListener} */ (countTouches), true);
+    for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"]) {
+      window.addEventListener(type, /** @type {EventListener} */ (countTouches), {
+        capture: true,
+        passive: true,
+      });
     }
     /**
-     * The pinch, from the scale it started at.
+     * The pinch, from the scale it started at, or null for fingers'.
      * @type {{ scale: number, byWheel: boolean } | null}
      */
     let pinch = null;
@@ -4772,14 +4808,18 @@
       true,
     );
     container.addEventListener("gesturestart", (event) => {
-      pinch = null;
-      if (touches > 0 || app.pdfViewer?.isInPresentationMode) return;
       event.preventDefault();
-      pinch = { scale: app.pdfViewer.currentScale, byWheel: false };
+      // A finger pinch's gesture comes with its second finger's touchstart.
+      // A count that old is one whose end never came.
+      const fingers = touches > 0 && event.timeStamp - touchedAt < FINGERS_TIME;
+      pinch =
+        fingers || app.pdfViewer?.isInPresentationMode
+          ? null
+          : { scale: app.pdfViewer.currentScale, byWheel: false };
     });
     container.addEventListener("gesturechange", (event) => {
-      if (!pinch) return;
       event.preventDefault();
+      if (!pinch) return;
       const { scale, clientX, clientY } = /** @type {any} */ (event);
       if (pinch.byWheel || !(scale > 0)) return;
       // From where it started, so that pdf.js's rounding doesn't add up.
@@ -4787,10 +4827,110 @@
       if (Math.abs(factor - 1) >= 0.005) app.updateZoom(null, factor, [clientX, clientY]);
     });
     container.addEventListener("gestureend", (event) => {
-      if (!pinch) return;
       event.preventDefault();
       pinch = null;
     });
+  }
+
+  /**
+   * A scrollbar of the pages' own, on the right, whose thumb a finger, a pen
+   * or a pointer drags, where the browser's are overlays that show only as
+   * the pages scroll, and can't be dragged, as Safari's on an iPad. With a
+   * touch screen alone, since a mouse's browser has scrollbars it drags.
+   */
+  function addScrollbar() {
+    const container = document.getElementById("viewerContainer");
+    const main = document.getElementById("mainContainer");
+    if (!container || !main) return;
+    const bar = document.createElement("div");
+    bar.id = "pdflionScrollbar";
+    bar.hidden = true;
+    // The pages scroll with keys and screen readers as they are.
+    bar.setAttribute("aria-hidden", "true");
+    const thumb = document.createElement("div");
+    thumb.className = "pdflionScrollThumb";
+    bar.append(thumb);
+    main.append(bar);
+
+    const coarse = window.matchMedia("(pointer: coarse)");
+    const overlay = hasOverlayScrollbars();
+    let pending = 0;
+    const place = () => {
+      pending = 0;
+      const own = coarse.matches && overlay;
+      container.classList.toggle("pdflionOwnScrollbar", own);
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const range = scrollHeight - clientHeight;
+      // Not for the little that page-fit's margins leave to scroll, where
+      // the thumb would fill the track, and take taps beside the page.
+      bar.hidden = !own || range < clientHeight * SCROLL_LEAST;
+      if (bar.hidden) return;
+      const track = bar.clientHeight;
+      const share = clientHeight / scrollHeight;
+      const size = Math.min(track, Math.max(SCROLL_THUMB_MIN, track * share));
+      const top = ((track - size) * Math.min(scrollTop, range)) / range;
+      thumb.style.height = `${size}px`;
+      thumb.style.transform = `translateY(${top}px)`;
+    };
+    const update = () => {
+      pending ||= requestAnimationFrame(place);
+    };
+    container.addEventListener("scroll", update, { passive: true });
+    const resizes = new ResizeObserver(update);
+    resizes.observe(container);
+    // The pages, which zooming resizes.
+    const viewer = document.getElementById("viewer");
+    if (viewer) resizes.observe(viewer);
+    coarse.addEventListener("change", update);
+    update();
+
+    thumb.addEventListener("pointerdown", (down) => {
+      if (down.button !== 0) return;
+      down.preventDefault();
+      down.stopPropagation();
+      try {
+        thumb.setPointerCapture(down.pointerId);
+      } catch {
+        // Not a pointer the browser has down, as the tests' events aren't.
+      }
+      const start = container.scrollTop;
+      const free = bar.clientHeight - thumb.offsetHeight;
+      const perPixel = free > 0 ? (container.scrollHeight - container.clientHeight) / free : 0;
+      bar.classList.toggle("pdflionDragging", true);
+      const dragging = new AbortController();
+      const { signal } = dragging;
+      thumb.addEventListener(
+        "pointermove",
+        ({ pointerId, clientY }) => {
+          if (pointerId !== down.pointerId) return;
+          container.scrollTop = start + (clientY - down.clientY) * perPixel;
+        },
+        { signal },
+      );
+      /** @param {PointerEvent} event */
+      const end = ({ pointerId }) => {
+        if (pointerId !== down.pointerId) return;
+        dragging.abort();
+        bar.classList.toggle("pdflionDragging", false);
+      };
+      for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+        thumb.addEventListener(type, /** @type {EventListener} */ (end), { signal });
+      }
+    });
+  }
+
+  /**
+   * @returns {boolean} whether the browser's scrollbars are overlays, which
+   *   take no room beside what they scroll
+   */
+  function hasOverlayScrollbars() {
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position: absolute; top: -200px; width: 100px; height: 100px; overflow: scroll";
+    document.body.append(probe);
+    const overlay = probe.offsetWidth === probe.clientWidth;
+    probe.remove();
+    return overlay;
   }
 
   /**
@@ -5427,8 +5567,13 @@
    * iPadOS doesn't: it sends a contextmenu event where the press is. The
    * browser's own, as Chromium sends after a touch's long press, and a click
    * after the press, are dropped. A drag after it closes the host's menu,
-   * since iPadOS starts one with a long press too. The same as in
-   * src/tabs/tabs.js and src/home/home.js.
+   * since iPadOS starts one with a long press too. As in src/tabs/tabs.js
+   * and src/home/home.js, but on the pages too, which scroll and have text:
+   * - A finger's or a pen's press is followed by its touch events, which go
+   *   on where Safari cancels its pointer, as it does when its own long
+   *   press begins. A press during which the element scrolled opens nothing.
+   * - Text Safari selected during the press is unselected before the menu
+   *   opens, and nothing more until the press ends.
    *
    * It follows the press from before the element's own listeners, which may
    * stop it, as the select tool's on the pages do, and sends the event at
@@ -5449,9 +5594,13 @@
       const pressing = new AbortController();
       const { signal } = pressing;
       const stop = () => pressing.abort();
+      const scrolled = [element.scrollLeft, element.scrollTop];
+      const unselected = !document.getSelection()?.toString();
       const timer = setTimeout(() => {
         stop();
+        if (element.scrollLeft !== scrolled[0] || element.scrollTop !== scrolled[1]) return;
         opened = true;
+        if (unselected) keepUnselected();
         const { clientX, clientY } = down;
         const menu = new MouseEvent("contextmenu", {
           bubbles: true,
@@ -5477,7 +5626,7 @@
       // Before any listener that stops them, as the eraser's do.
       window.addEventListener("pointermove", moved, { signal, capture: true });
       window.addEventListener("pointerup", ended, { signal, capture: true });
-      window.addEventListener("pointercancel", ended, { signal, capture: true });
+      followPressTouches(down, stop, signal);
       element.addEventListener("dragstart", stop, { signal });
       element.addEventListener("contextmenu", (event) => event.isTrusted && stop(), { signal });
     }, true);
@@ -5507,6 +5656,74 @@
     element.addEventListener("dragstart", () => {
       if (opened && typeof window.pdflion.closeMenu === "function") window.pdflion.closeMenu();
     });
+  }
+
+  /**
+   * Ends a long press, as addLongPress() follows it, when its finger or pen
+   * moves too far or lifts, by its touch events, or a second finger lands,
+   * which pinches. Safari cancels the pointer as its own long press begins,
+   * so a pointercancel ends only a mouse's. A press with no touch events, as
+   * the tests dispatch, ends with its pointerup.
+   *
+   * @param {PointerEvent} down
+   * @param {() => void} stop
+   * @param {AbortSignal} signal
+   */
+  function followPressTouches(down, stop, signal) {
+    const options = { signal, capture: true, passive: true };
+    if (down.pointerType === "mouse") {
+      window.addEventListener(
+        "pointercancel",
+        ({ pointerId }) => pointerId === down.pointerId && stop(),
+        options,
+      );
+      return;
+    }
+    /**
+     * @param {TouchEvent} event
+     * @returns {Touch[]} the touches down
+     */
+    const touchesOf = (event) => [...(event.touches ?? [])];
+    window.addEventListener(
+      "touchstart",
+      (event) => down.pointerType === "touch" && touchesOf(event).length > 1 && stop(),
+      options,
+    );
+    window.addEventListener(
+      "touchmove",
+      (event) => {
+        const touches = touchesOf(event);
+        if (touches.length !== 1) return;
+        const [{ clientX, clientY }] = touches;
+        if (Math.hypot(clientX - down.clientX, clientY - down.clientY) > LONG_PRESS_SLOP) stop();
+      },
+      options,
+    );
+    window.addEventListener(
+      "touchend",
+      (event) => touchesOf(event).length === 0 && stop(),
+      options,
+    );
+  }
+
+  /**
+   * Unselects the text Safari selected during a long press that opened a
+   * menu, and keeps it from selecting more until the press ends.
+   */
+  function keepUnselected() {
+    document.getSelection()?.removeAllRanges();
+    const holding = new AbortController();
+    const { signal } = holding;
+    document.addEventListener("selectstart", (event) => event.preventDefault(), {
+      signal,
+      capture: true,
+    });
+    const end = () => holding.abort();
+    for (const type of ["pointerup", "touchend", "touchcancel"]) {
+      window.addEventListener(type, end, { signal, capture: true });
+    }
+    // In case the end never comes, as for a press the browser took over.
+    setTimeout(end, 5000);
   }
 
   /**

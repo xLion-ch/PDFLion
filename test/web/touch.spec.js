@@ -204,16 +204,18 @@ test("a pinch on a trackpad zooms the document, and a pinch with fingers is pdf.
   expect(await frame.evaluate(() => visualViewport?.scale)).toBe(1);
 
   // With a finger on the screen, the gesture is the fingers', which
-  // pdf.js's TouchManager pinches.
+  // pdf.js's TouchManager pinches. Safari mustn't zoom the app meanwhile.
   const zoomed = await scale();
-  await dispatch(frame, '#viewerContainer .page[data-page-number="1"]', [
-    { type: "touchstart", at: [0.5, 0.2], identifier: 51 },
-  ]);
-  expect(await pinch([1, 2, 2])).toEqual([false, false, false]);
-  await dispatch(frame, '#viewerContainer .page[data-page-number="1"]', [
-    { type: "touchend", at: [0.5, 0.2], identifier: 51 },
-  ]);
+  const firstPage = '#viewerContainer .page[data-page-number="1"]';
+  await dispatch(frame, firstPage, [{ type: "touchstart", at: [0.5, 0.2], identifier: 51 }]);
+  expect(await pinch([1, 2, 2])).toEqual([true, true, true]);
   expect(await scale()).toBe(zoomed);
+
+  // A finger whose end never came, long ago, is no longer on the screen.
+  await page.waitForTimeout(700);
+  expect(await pinch([1, 0.5, 0.5])).toEqual([true, true, true]);
+  await expect.poll(scale).toBeCloseTo(zoomed / 2, 1);
+  await dispatch(frame, firstPage, [{ type: "touchend", at: [0.5, 0.2], identifier: 51 }]);
 });
 
 test("a long press on a Home card or a tab opens its menu", async ({ page }) => {
@@ -317,4 +319,26 @@ test("in Page Scrolling, a swipe or a tap beside the page turns it", async ({ pa
     .toBe(15);
   await swipe(1, line([0.8, 0.5], [0.2, 0.52], 6));
   expect(await current()).toBe(1);
+});
+
+test("the pages have a scrollbar of their own, whose thumb a finger drags", async ({ page }) => {
+  const frame = await openPaper(page);
+  const thumb = frame.locator("#pdflionScrollbar .pdflionScrollThumb");
+  await expect(thumb).toBeVisible();
+  const scrollTop = () =>
+    frame.evaluate(() => document.getElementById("viewerContainer")?.scrollTop ?? 0);
+  const top = await scrollTop();
+  const before = await thumb.boundingBox();
+
+  const finger = { pointerType: /** @type {const} */ ("touch"), pointerId: 61 };
+  await dispatch(frame, "#pdflionScrollbar .pdflionScrollThumb", [
+    { ...finger, type: "pointerdown", at: [0.5, 0.5] },
+    { ...finger, type: "pointermove", at: [0.5, 3] },
+    { ...finger, type: "pointerup", at: [0.5, 3] },
+  ]);
+  await expect.poll(scrollTop).toBeGreaterThan(top + 100);
+  // The thumb follows the pages, at the right.
+  await expect.poll(async () => (await thumb.boundingBox())?.y).toBeGreaterThan(before?.y ?? 0);
+  const frameWidth = await frame.evaluate(() => innerWidth);
+  expect(Math.round((before?.x ?? 0) + (before?.width ?? 0))).toBe(frameWidth);
 });
