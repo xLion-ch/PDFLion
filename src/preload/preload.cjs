@@ -59,7 +59,7 @@ contextBridge.exposeInMainWorld("pdflion", {
    * Shows an alert or a prompt about changing the document's pages.
    *
    * @param {string} reason `locked-encrypted`, `locked-xfa`, `failed`,
-   *   `signed` or `rewrite`
+   *   `signed`, `rewrite`, or `screenshot-failed`
    * @param {string[]} [items] for `rewrite`, what saving would drop
    * @returns {Promise<boolean>} whether the user went ahead, for a prompt
    */
@@ -85,6 +85,15 @@ contextBridge.exposeInMainWorld("pdflion", {
   onEditFavourite(callback) {
     ipcRenderer.on("pdflion:edit-favourite", (_event, favourite) => callback(favourite));
   },
+  /**
+   * Shows the pages' context menu, whose Cut, Copy and Paste main runs.
+   *
+   * @param {{ editors: boolean, text: boolean }} options whether drawings,
+   *   text boxes or images are selected, and whether text is
+   * @returns {Promise<"paste" | "delete" | null>} Paste, after which a paste
+   *   event comes, Delete, for the page to carry out, or null
+   */
+  showPageMenu: (options) => ipcRenderer.invoke("pdflion:page-menu", options),
   /**
    * @param {Uint8Array} png the document's first page, for Home, which main
    *   keeps if the document has a file

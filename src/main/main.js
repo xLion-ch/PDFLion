@@ -11,6 +11,7 @@ import { commandLineFiles, secondInstanceFiles } from "./arguments.js";
 import { handleHome } from "./home.js";
 import { handleIpc } from "./ipc.js";
 import { installMenu } from "./menu.js";
+import { handlePageMenu } from "./pagemenu.js";
 import { handlePermissions } from "./permissions.js";
 import { handleProtocol, registerScheme } from "./protocol.js";
 import { handleStrip } from "./strip.js";
@@ -94,6 +95,7 @@ function start() {
     handleHome();
     handleStrip();
     handleToolSettings();
+    handlePageMenu();
     guardUnsavedChanges();
     installMenu();
     startUpdates();

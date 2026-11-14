@@ -298,10 +298,10 @@ function loadBridge({
       const siblings = this.siblings();
       siblings.splice(siblings.indexOf(this), 0, sibling);
     }
-    /** @param {Element} sibling */
-    after(sibling) {
+    /** @param {Element[]} nodes */
+    after(...nodes) {
       const siblings = this.siblings();
-      siblings.splice(siblings.indexOf(this) + 1, 0, sibling);
+      siblings.splice(siblings.indexOf(this) + 1, 0, ...nodes);
     }
     /**
      * @returns {Element[]} the list this element is in: the toolbar, the
@@ -5130,5 +5130,270 @@ describe("bridge.js the toolbar's narrowest steps", () => {
     for (let turn = 0; turn < 10; turn++) await settle();
     const [[, , { flate }]] = named(bridge.calls, "PDFLib.addContentStream");
     assert.equal(flate, bridge.page.PDFLionBackgrounds.contentStream("isometric", 612, 792));
+  });
+});
+
+describe("bridge.js select and screenshot tools", () => {
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const buttonsOf = (bridge) => {
+    const find = (/** @type {string} */ id) => bridge.toolbar.find((element) => element.id === id);
+    return {
+      select: find("pdflionEditorSelect").children[0],
+      screenshot: find("pdflionEditorScreenshot").children[0],
+    };
+  };
+
+  /** @param {ReturnType<typeof loadBridge>} bridge */
+  const mode = (bridge) => bridge.app.pdfViewer.annotationEditorMode;
+
+  /**
+   * Turns the select tool on over a first page at the window's top left, 792
+   * points tall at 100 %, with stand-ins for pdf.js's editors on it: Pencil's
+   * drawings by their strokes, and text boxes and signatures by their boxes.
+   *
+   * @param {ReturnType<typeof loadBridge>} bridge
+   * @param {{ id: string, editorType: string, strokes?: number[][], box?: number[] }[]} shown
+   */
+  async function selecting(bridge, shown) {
+    await bridge.load();
+    const { app, uiManager, calls } = bridge;
+    const pageDiv = {
+      dataset: { pageNumber: "1" },
+      clientLeft: 0,
+      clientTop: 0,
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 612, bottom: 792 }),
+      /** @param {string} selector */
+      closest: (selector) => (selector === "#viewerContainer .page[data-page-number]" ? pageDiv : null),
+    };
+    app.pdfViewer.pageDiv = pageDiv;
+    app.pdfViewer.viewport = {
+      scale: 1,
+      convertToPdfPoint: (/** @type {number} */ x, /** @type {number} */ y) => [x, 792 - y],
+    };
+    const editors = shown.map(({ id, editorType, strokes = [], box }) => ({
+      id,
+      editorType,
+      pageIndex: 0,
+      isSelected: false,
+      div: {},
+      serialize: () => (editorType === "ink" ? { paths: { points: strokes }, thickness: 2 } : null),
+      getPDFRect: () => box,
+      screenToPageTranslation: (/** @type {number} */ x, /** @type {number} */ y) => [x, y],
+    }));
+    uiManager.getEditors = function* () {
+      yield* editors;
+    };
+    Object.defineProperty(uiManager, "hasSelection", {
+      get: () => editors.some((editor) => editor.isSelected),
+      configurable: true,
+    });
+    uiManager.unselectAll = () => {
+      calls.push(["ui.unselectAll"]);
+      for (const editor of editors) editor.isSelected = false;
+    };
+    uiManager.toggleSelected = (/** @type {any} */ editor) => {
+      editor.isSelected = !editor.isSelected;
+    };
+    uiManager.setUpDragSession = () => calls.push(["ui.setUpDragSession"]);
+    uiManager.dragSelectedEditors = (/** @type {number} */ x, /** @type {number} */ y) =>
+      calls.push(["ui.dragSelectedEditors", x, y]);
+    uiManager.endDragSession = () => calls.push(["ui.endDragSession"]);
+    uiManager.delete = () => calls.push(["ui.delete"]);
+    app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    buttonsOf(bridge).select.listeners.click();
+    /**
+     * @param {number[][]} points in the window, which at 100 % are PDF points from the top
+     * @param {object} [init] the press's
+     */
+    const drag = (points, init = {}) => {
+      const [[clientX, clientY], ...moves] = points;
+      const press = {
+        target: pageDiv,
+        pointerType: "mouse",
+        button: 0,
+        pointerId: 7,
+        clientX,
+        clientY,
+        stopped: false,
+        prevented: false,
+        stopPropagation() {
+          this.stopped = true;
+        },
+        preventDefault() {
+          this.prevented = true;
+        },
+        ...init,
+      };
+      bridge.viewerContainer.listeners.pointerdown(press);
+      for (const [x, y] of moves) bridge.fire("pointermove", { target: pageDiv, pointerId: 7, clientX: x, clientY: y });
+      bridge.fire("pointerup", { target: pageDiv, pointerId: 7 });
+      return press;
+    };
+    return { editors, drag, selected: () => editors.filter((e) => e.isSelected).map((e) => e.id) };
+  }
+
+  it("adds Select and Screenshot after the eraser, which work whenever pdf.js's tools do", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    const ids = bridge.toolbar.map((element) => element.id);
+    const eraser = ids.indexOf("pdflionEditorEraser");
+    assert.deepEqual(ids.slice(eraser, eraser + 3), [
+      "pdflionEditorEraser",
+      "pdflionEditorSelect",
+      "pdflionEditorScreenshot",
+    ]);
+    const { select, screenshot } = buttonsOf(bridge);
+    assert.deepEqual([select.title, screenshot.title], ["Select", "Screenshot"]);
+    assert.equal(select.disabled, true);
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    assert.deepEqual([select.disabled, screenshot.disabled], [false, false]);
+    const [, marquee] = bridge.outerContainer.children;
+    assert.deepEqual([marquee.id, marquee.hidden], ["pdflionMarquee", true]);
+  });
+
+  it("turn on in pdf.js's ink mode, one at a time, and off for another tool or Pencil", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.app.eventBus.dispatch("annotationeditormodechanged", { mode: 0 });
+    const { select, screenshot } = buttonsOf(bridge);
+    const classes = bridge.outerContainer.classes;
+    select.listeners.click();
+    assert.equal(mode(bridge), 15);
+    assert.ok(classes.has("pdflionSelecting"));
+    assert.equal(select.attributes["aria-pressed"], "true");
+    assert.equal(bridge.pencilButton.attributes["aria-expanded"], "false");
+
+    screenshot.listeners.click();
+    assert.ok(!classes.has("pdflionSelecting") && classes.has("pdflionCapturing"));
+    assert.equal(select.attributes["aria-pressed"], "false");
+    assert.equal(mode(bridge), 15);
+
+    // Pencil's button turns it off, and leaves Pencil on.
+    const click = bridge.fire("click", { target: element("#editorInkButton") });
+    assert.ok(click.stopped);
+    assert.ok(!classes.has("pdflionCapturing"));
+    assert.equal(mode(bridge), 15);
+
+    select.listeners.click();
+    bridge.app.eventBus.dispatch("switchannotationeditormode", { mode: 3 });
+    assert.ok(!classes.has("pdflionSelecting"));
+    select.listeners.click();
+    select.listeners.click();
+    assert.equal(mode(bridge), 0, "its button turns it off to no tool");
+  });
+
+  it("selects the drawings and text boxes a rectangle reaches, but no signature", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [
+      // Strokes at y 700 and 500 in PDF coordinates, 92 and 292 down the window.
+      { id: "crossed", editorType: "ink", strokes: [[100, 700, 300, 700]] },
+      { id: "missed", editorType: "ink", strokes: [[100, 500, 300, 500]] },
+      { id: "text", editorType: "freetext", box: [250, 640, 350, 720] },
+      { id: "signature", editorType: "signature", box: [100, 690, 300, 710] },
+    ]);
+    // A drag from 50, 50 to 260, 120: x 50 to 260, y 672 to 742.
+    const press = page.drag([[50, 50], [150, 100], [260, 120]]);
+    assert.ok(press.stopped && press.prevented, "pdf.js gets no press to draw with");
+    assert.deepEqual(page.selected(), ["crossed", "text"]);
+
+    // A click elsewhere clears the selection, and Shift adds to it.
+    page.drag([[500, 500]]);
+    assert.deepEqual(page.selected(), []);
+    page.drag([[90, 280], [320, 300]]);
+    page.drag([[50, 50], [260, 120]], { shiftKey: true });
+    assert.deepEqual(page.selected(), ["crossed", "missed", "text"]);
+  });
+
+  it("moves the selection with a drag on what's selected, through pdf.js's drag session", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [
+      { id: "a", editorType: "ink", strokes: [[100, 700, 300, 700]] },
+      { id: "b", editorType: "ink", strokes: [[100, 500, 300, 500]] },
+    ]);
+    page.drag([[50, 80], [320, 320]]);
+    assert.deepEqual(page.selected(), ["a", "b"]);
+    // On a's ink, 92 down the window.
+    page.drag([[200, 92], [200, 142], [200, 192]]);
+    assert.deepEqual(page.selected(), ["a", "b"]);
+    assert.deepEqual(
+      named(bridge.calls, "ui.dragSelectedEditors").map(([, x, y]) => [x, y]),
+      [[0, 50], [0, 50]],
+    );
+    assert.equal(named(bridge.calls, "ui.endDragSession").length, 1);
+
+    // A click on one of them selects it alone.
+    page.drag([[200, 292]]);
+    assert.deepEqual(page.selected(), ["b"]);
+  });
+
+  it("deletes the selection with Delete, and Esc clears it, then turns the tool off", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [{ id: "a", editorType: "ink", strokes: [[100, 700, 300, 700]] }]);
+    page.drag([[200, 92]]);
+    assert.ok(bridge.fire("keydown", { key: "Delete" }).stopped);
+    assert.equal(named(bridge.calls, "ui.delete").length, 1);
+
+    bridge.fire("keydown", { key: "Escape" });
+    assert.deepEqual(page.selected(), []);
+    assert.ok(bridge.outerContainer.classes.has("pdflionSelecting"));
+    bridge.fire("keydown", { key: "Escape" });
+    assert.ok(!bridge.outerContainer.classes.has("pdflionSelecting"));
+    assert.equal(mode(bridge), 0);
+  });
+
+  it("keeps pdf.js's own selecting from switching to the editor's tool", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [{ id: "image", editorType: "stamp", box: [100, 600, 200, 700] }]);
+    const switched = named(bridge.calls, "updateToolbar").length;
+    bridge.uiManager.setSelected = (/** @type {any} */ editor) => bridge.calls.push(["updateToolbar", editor.id]);
+    bridge.app.eventBus.dispatch("annotationeditoruimanager", { uiManager: bridge.uiManager });
+    bridge.uiManager.setSelected(page.editors[0]);
+    assert.deepEqual(page.selected(), ["image"]);
+    assert.equal(named(bridge.calls, "updateToolbar").length, switched);
+
+    // pdf.js's own once the tool is off.
+    bridge.fire("keydown", { key: "Escape" });
+    bridge.fire("keydown", { key: "Escape" });
+    bridge.uiManager.setSelected(page.editors[0]);
+    assert.equal(named(bridge.calls, "updateToolbar").length, switched + 1);
+  });
+
+  it("opens the host's page menu on a page, and deletes or pastes as it says", async () => {
+    const bridge = loadBridge();
+    const page = await selecting(bridge, [{ id: "a", editorType: "ink", strokes: [[100, 700, 300, 700]] }]);
+    bridge.openDocument();
+    /** @type {any[]} */
+    const asked = [];
+    /** @type {(choice: string | null) => void} */
+    let answer = () => {};
+    bridge.pdflion.showPageMenu = (/** @type {any} */ options) => {
+      asked.push({ ...options });
+      return new Promise((resolve) => (answer = resolve));
+    };
+    const menu = (/** @type {number} */ clientX, /** @type {number} */ clientY) => {
+      const event = { target: bridge.app.pdfViewer.pageDiv, clientX, clientY, prevented: false };
+      Object.assign(event, { preventDefault: () => (event.prevented = true) });
+      bridge.viewerContainer.listeners.contextmenu(event);
+      return event;
+    };
+
+    // On the drawing, which it selects.
+    assert.ok(menu(200, 92).prevented);
+    assert.deepEqual(asked, [{ editors: true, text: false }]);
+    assert.deepEqual(page.selected(), ["a"]);
+    answer("delete");
+    await settle();
+    assert.equal(named(bridge.calls, "ui.delete").length, 1);
+
+    // Paste then expects a paste event, which goes where the menu opened.
+    menu(300, 400);
+    answer("paste");
+    await settle();
+    const paste = bridge.fire("paste", {
+      clipboardData: { items: [], getData: () => "" },
+    });
+    assert.ok(paste.stopped && paste.prevented, "pdf.js's own paste doesn't run");
+    // Another one, as from ⌘V, is pdf.js's.
+    assert.ok(!bridge.fire("paste", { clipboardData: { items: [], getData: () => "" } }).stopped);
   });
 });

@@ -138,6 +138,44 @@
   /** A page of the document, as pdf.js shows it. */
   const PAGE = "#viewerContainer .page[data-page-number]";
 
+  /**
+   * `AnnotationEditorType.STAMP` in src/shared/util.js: images, which pasting
+   * an image makes.
+   */
+  const EDITOR_STAMP = 13;
+
+  /**
+   * The editors the select tool takes, by their `editorType`: Pencil's
+   * drawings, highlights, text boxes and images. Not signatures, which are
+   * drawings too.
+   */
+  const SELECTABLE = new Set(["ink", "highlight", "freetext", "stamp"]);
+
+  /**
+   * A press of the select or screenshot tool that moves less than this, in
+   * CSS pixels, is a click.
+   */
+  const CLICK_SLOP = 4;
+
+  /** How near a press must come to a drawing's ink to take it, in CSS pixels. */
+  const PICK_RADIUS = 6;
+
+  /**
+   * A screenshot's pixels for each CSS pixel, at least, as on a Retina
+   * screen, and its longest side, at most.
+   */
+  const SCREENSHOT_RATIO = 2;
+  const SCREENSHOT_MAX_SIDE = 4096;
+
+  /**
+   * How long the page menu's Paste waits for the paste event main sends
+   * after it, in ms.
+   */
+  const PASTE_WAIT = 1000;
+
+  /** What pdf.js puts on the clipboard for the editors it copies. */
+  const EDITORS_TYPE = "application/pdfjs";
+
   /** @cantoo/pdf-lib's browser build, which defines `window.PDFLib`. */
   const PDF_LIB_URL = new URL("../../lib/pdf-lib.min.js", location.href).href;
 
@@ -470,6 +508,48 @@
   let erasingDone = Promise.resolve();
 
   /**
+   * PDFLion's tools for an area of a page: the select tool, which selects
+   * drawings, highlights, text boxes and images within a rectangle, and the
+   * screenshot tool, which copies a rectangle of a page as an image. Like
+   * the eraser, they work in pdf.js's ink mode: see startAreaTool().
+   * @typedef {"select" | "screenshot"} AreaToolName
+   */
+
+  /** @type {AreaToolName | null} the one that's on */
+  let areaTool = null;
+
+  /** @type {Record<AreaToolName, HTMLButtonElement> | null} their buttons */
+  let areaButtons = null;
+
+  /** @type {HTMLElement | null} the rectangle a drag of them shows */
+  let marquee = null;
+
+  /**
+   * @typedef {object} AreaDrag a drag of the select or screenshot tool
+   * @property {AbortController} listening for its pointer events
+   * @property {(cancelled: boolean) => void} end
+   */
+
+  /** @type {AreaDrag | null} */
+  let areaDrag = null;
+
+  /**
+   * @typedef {object} Place a place on a page, as placeOf() reads it, and
+   *   where it is in the window
+   * @property {number} pageIndex
+   * @property {number[]} point in PDF coordinates
+   * @property {number} scale how many CSS pixels a point is there
+   * @property {number} clientX
+   * @property {number} clientY
+   */
+
+  /** @type {Place | null} where the page menu's Paste goes, until its paste event comes */
+  let pastePlace = null;
+
+  /** @type {AbortController | null} what closes the page's own menu, while it's open */
+  let menuClosing = null;
+
+  /**
    * @typedef {object} Favourite a drawing tool with its settings, as main
    *   keeps them for every tab (src/shared/tools.js)
    * @property {"highlight" | "freetext" | "ink"} tool pdf.js's name for it
@@ -725,6 +805,7 @@
     overviewButton = addOverviewButton(app);
     pageButtons = [addInsertButton(app), ...addOverviewTools(app)].filter((button) => !!button);
     eraserTool = addEraserTool(app);
+    areaButtons = addAreaTools(app);
     addSaveFavouriteButtons();
     favouritesBar = addFavouritesBar();
     undoButtons = addUndoButtons(app);
@@ -747,6 +828,8 @@
       followOverview(app);
       // After the overview's, whose Esc comes first.
       followEraser(app);
+      followAreaTools(app);
+      followPageMenu(app);
       followPen(app);
       followPageTurns(app);
       followTrackpadPinch(app);
@@ -1125,7 +1208,8 @@
    * @param {any} app
    */
   function followPencilStrokes(app) {
-    const drawsMarks = () => PEN_TOOLS.has(app.pdfViewer?.annotationEditorMode) && !erasing;
+    const drawsMarks = () =>
+      PEN_TOOLS.has(app.pdfViewer?.annotationEditorMode) && !erasing && !areaTool;
     for (const type of ["pointerup", "pointercancel"]) {
       window.addEventListener(type, () => {
         if (!drawsMarks()) return;
@@ -2792,6 +2876,8 @@
   function startErasing(app) {
     const ui = uiManager(app);
     if (erasing || !ui) return;
+    // The select and screenshot tools work in ink mode too, which stays.
+    stopAreaTool(app);
     erasing = true;
     showEditedFavourite(null);
     showErasing(true);
@@ -3348,6 +3434,957 @@
   }
 
   /**
+   * Adds the select and screenshot tools to the toolbar, after the eraser,
+   * built like pdf.js's tools, without option boxes, and the rectangle a
+   * drag of them shows, which overrides.css draws.
+   *
+   * @param {any} app
+   * @returns {Record<AreaToolName, HTMLButtonElement> | null}
+   */
+  function addAreaTools(app) {
+    const after =
+      document.getElementById("pdflionEditorEraser") ?? document.getElementById("editorInk");
+    const outerContainer = document.getElementById("outerContainer");
+    if (!after || !outerContainer) return null;
+    /**
+     * @param {AreaToolName} name
+     * @param {string} id its container's, which its button's adds `Button` to
+     * @param {string} label
+     */
+    const tool = (name, id, label) => {
+      const button = makeButton(`${id}Button`, "toolbarButton", label);
+      button.disabled = true;
+      button.setAttribute("aria-pressed", "false");
+      button.addEventListener("click", () => toggleAreaTool(app, name));
+      const container = createElement(
+        "div",
+        { id, className: "toolbarButtonWithContainer" },
+        button,
+      );
+      return { button, container };
+    };
+    const select = tool("select", "pdflionEditorSelect", t("selectTool"));
+    const screenshot = tool("screenshot", "pdflionEditorScreenshot", t("screenshotTool"));
+    after.after(select.container, screenshot.container);
+    marquee = createElement("div", { id: "pdflionMarquee", hidden: true });
+    outerContainer.append(marquee);
+    return { select: select.button, screenshot: screenshot.button };
+  }
+
+  /**
+   * Keeps the select and screenshot tools in step with pdf.js and the user,
+   * as followEraser() does the eraser:
+   * - their buttons work whenever pdf.js's tools do
+   * - another tool turns them off, and Pencil's button just turns them off
+   * - a press on a page selects, moves, or takes a screenshot
+   * - Esc ends a drag, then clears the selection, then turns the tool off,
+   *   and Delete deletes what's selected
+   * - pdf.js's own selecting, as when an editor gets the focus, or a press
+   *   on an image's handle reaches the image too, selects without switching
+   *   to the editor's tool, which setSelected() in src/display/editor/tools.js
+   *   does. An editor selected already stays so, with the rest.
+   *
+   * @param {any} app
+   */
+  function followAreaTools(app) {
+    app.eventBus.on("annotationeditoruimanager", (/** @type {{ uiManager: any }} */ { uiManager: ui }) => {
+      const original = ui.setSelected;
+      if (typeof original !== "function") return;
+      ui.setSelected = function (/** @type {any} */ editor) {
+        if (areaTool !== "select") return original.call(this, editor);
+        if (!editor.isSelected) {
+          commitDrawing(this);
+          this.toggleSelected(editor);
+        }
+      };
+    });
+    app.eventBus.on("annotationeditormodechanged", (/** @type {{ mode: number }} */ { mode }) => {
+      for (const button of Object.values(areaButtons ?? {})) {
+        button.disabled = mode === EDITOR_DISABLE;
+      }
+      if (!areaTool) return;
+      if (mode === EDITOR_INK) hidePencil();
+      else stopAreaTool(app);
+    });
+    window.addEventListener(
+      "click",
+      (event) => {
+        if (!areaTool || !targetIn(event, "#editorInkButton")) return;
+        event.stopImmediatePropagation();
+        stopAreaTool(app, EDITOR_INK);
+      },
+      true,
+    );
+    // Before pdf.js's keyboard manager, which would delete and unselect too.
+    window.addEventListener("keydown", (event) => areaKey(app, event), true);
+    const container = document.getElementById("viewerContainer");
+    container?.addEventListener("pointerdown", (event) => startAreaPress(app, event), true);
+  }
+
+  /**
+   * Turns the select or screenshot tool on, or off to no tool: their buttons.
+   *
+   * @param {any} app
+   * @param {AreaToolName} name
+   * @returns {boolean} whether it's on now
+   */
+  function toggleAreaTool(app, name) {
+    if (areaTool === name) stopAreaTool(app, EDITOR_NONE);
+    else startAreaTool(app, name);
+    return areaTool === name;
+  }
+
+  /**
+   * Turns the select or screenshot tool on, in pdf.js's ink mode, where pdf.js
+   * has every drawing, highlight, text box and image as an editor, and
+   * draws nothing, since presses on pages are taken first (startAreaPress()).
+   * pdf.js shows Pencil on meanwhile, which overrides.css shows off.
+   *
+   * @param {any} app
+   * @param {AreaToolName} name
+   */
+  function startAreaTool(app, name) {
+    const ui = uiManager(app);
+    if (!ui || areaTool === name) return;
+    endAreaDrag();
+    // The eraser works in ink mode too, which stays.
+    if (erasing) stopErasing(app);
+    if (areaTool === "select") commitDrawing(ui);
+    areaTool = name;
+    showEditedFavourite(null);
+    showAreaTool();
+    updateFavouritesPressed(app);
+    if (app.pdfViewer.annotationEditorMode === EDITOR_INK) {
+      commitDrawing(ui);
+      hidePencil();
+    } else {
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_INK });
+    }
+  }
+
+  /**
+   * Turns the select or screenshot tool off.
+   *
+   * @param {any} app
+   * @param {number} [mode] pdf.js's tool from now on: none, after the tool's
+   *   button or Esc, or Pencil, whose ink mode stays. Without it, pdf.js has
+   *   changed tools already, or another of PDFLion's takes ink mode over.
+   */
+  function stopAreaTool(app, mode) {
+    if (!areaTool) return;
+    endAreaDrag();
+    if (areaTool === "select") {
+      const ui = uiManager(app);
+      if (ui) commitDrawing(ui);
+    }
+    areaTool = null;
+    showAreaTool();
+    updateFavouritesPressed(app);
+    if (mode === EDITOR_NONE) {
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_NONE });
+    } else if (mode === EDITOR_INK) {
+      // pdf.js shows Pencil on again, with its option box.
+      document.getElementById("editorInkButton")?.setAttribute("aria-expanded", "true");
+    }
+  }
+
+  /** Shows which of the select and screenshot tools is on, if any. */
+  function showAreaTool() {
+    const outerContainer = document.getElementById("outerContainer");
+    outerContainer?.classList.toggle("pdflionSelecting", areaTool === "select");
+    outerContainer?.classList.toggle("pdflionCapturing", areaTool === "screenshot");
+    for (const [name, button] of Object.entries(areaButtons ?? {})) {
+      button.classList.toggle("toggled", areaTool === name);
+      button.setAttribute("aria-pressed", String(areaTool === name));
+    }
+    showActiveTool();
+  }
+
+  /**
+   * The select and screenshot tools' keys: Esc ends a drag, then clears the
+   * selection, then turns the tool off, unless pdf.js or the page overview
+   * used it. Delete and Backspace delete what's selected, as one step to
+   * undo, unless text is being typed.
+   *
+   * @param {any} app
+   * @param {KeyboardEvent} event
+   */
+  function areaKey(app, event) {
+    // The page's own menu takes them first.
+    if (!areaTool || event.defaultPrevented || overview || menuClosing) return;
+    const ui = uiManager(app);
+    if (event.key === "Escape") {
+      if (areaDrag) endAreaDrag();
+      else if (areaTool === "select" && ui?.hasSelection) commitDrawing(ui);
+      else stopAreaTool(app, EDITOR_NONE);
+    } else if (
+      (event.key === "Delete" || event.key === "Backspace") &&
+      areaTool === "select" &&
+      ui?.hasSelection &&
+      !isTyping()
+    ) {
+      ui.delete();
+    } else {
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  /**
+   * A press on a page with the select or screenshot tool on, taken before
+   * pdf.js would draw with it:
+   * - the select tool takes the drawing, highlight, text box or image under
+   *   it, which a drag then moves, with the rest of the selection. Shift or
+   *   ⌘ (Ctrl) adds it to the selection, or takes it out. Anywhere else, a
+   *   drag selects what's in its rectangle, and a click clears the selection.
+   *   A selected image's handles resize it, and its toolbar is pdf.js's.
+   * - the screenshot tool copies the rectangle a drag makes.
+   *
+   * A finger kept off the pages by pen-only drawing scrolls instead.
+   *
+   * @param {any} app
+   * @param {PointerEvent} event
+   */
+  function startAreaPress(app, event) {
+    if (!areaTool || areaDrag || event.button !== 0 || isFingerKeptOff(app, event)) return;
+    const ui = uiManager(app);
+    const place = placeOf(app, event);
+    if (!ui || !place) return;
+    if (areaTool === "select" && targetIn(event, ".resizer, .editToolbar")) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const picked = areaTool === "select" ? editorAt(app, place) : null;
+    if (picked) dragSelection(ui, picked, event);
+    else drawMarquee(app, event);
+  }
+
+  /**
+   * @param {any} app
+   * @param {number} pageIndex
+   * @returns {any[]} the editors on the page the select tool takes, in the
+   *   order pdf.js has them, the last on top
+   */
+  function selectableEditors(app, pageIndex) {
+    const ui = uiManager(app);
+    if (!ui) return [];
+    return [...ui.getEditors(pageIndex)].filter(
+      (editor) =>
+        SELECTABLE.has(editor.editorType) && editor.div && !editor.div.hidden && !editor.isEmpty?.(),
+    );
+  }
+
+  /**
+   * @param {any} app
+   * @param {{ pageIndex: number, point: number[], scale: number }} place
+   * @returns {any} the topmost editor the select tool takes there: a text box
+   *   or an image whose box it's in, or a drawing or highlight whose ink it's
+   *   within PICK_RADIUS of, or null
+   */
+  function editorAt(app, { pageIndex, point, scale }) {
+    const radius = PICK_RADIUS / scale;
+    const editors = selectableEditors(app, pageIndex).reverse();
+    return (
+      editors.find((editor) => {
+        const box = boxOf(editor);
+        if (box) return overlaps(box, [point[0], point[1], point[0], point[1]], radius);
+        const drawing = drawingOfEditor(editor);
+        return !!drawing && touches(drawing, point, radius);
+      }) ?? null
+    );
+  }
+
+  /**
+   * @param {any} editor
+   * @param {number[]} box x1, y1, x2, y2 in PDF coordinates, the lower corner first
+   * @returns {boolean} whether the select tool's rectangle takes it: any of
+   *   a text box's or an image's box in it, or any of a drawing's or a
+   *   highlight's ink
+   */
+  function inRectangle(editor, box) {
+    const own = boxOf(editor);
+    if (own) return overlaps(own, box, 0);
+    const drawing = drawingOfEditor(editor);
+    if (!drawing) return false;
+    return (
+      drawing.quads.some((quad) => overlaps(quad, box, 0)) ||
+      drawing.strokes.some((stroke) =>
+        window.PDFLionGeometry.hitsBox(stroke, box, drawing.thickness),
+      )
+    );
+  }
+
+  /**
+   * @param {any} editor
+   * @returns {number[] | null} a text box's or an image's box in PDF
+   *   coordinates, the lower corner first, or null for a drawing or a highlight
+   */
+  function boxOf(editor) {
+    if (editor.editorType !== "freetext" && editor.editorType !== "stamp") return null;
+    const rect = editor.getPDFRect?.();
+    if (!rect) return null;
+    const [x1, y1, x2, y2] = rect;
+    return [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+  }
+
+  /**
+   * @param {any} editor
+   * @returns {Drawing | null} a drawing's or a highlight's ink, as the eraser
+   *   reads it
+   */
+  function drawingOfEditor(editor) {
+    return editor.editorType === "highlight" ? highlightOf(editor) : inkOf(editor);
+  }
+
+  /**
+   * @param {ArrayLike<number>} a a box, the lower corner first
+   * @param {ArrayLike<number>} b another
+   * @param {number} reach how far apart they may be
+   * @returns {boolean} whether they overlap, or come that near
+   */
+  function overlaps(a, b, reach) {
+    return (
+      a[0] <= b[2] + reach && b[0] <= a[2] + reach && a[1] <= b[3] + reach && b[1] <= a[3] + reach
+    );
+  }
+
+  /**
+   * @param {PointerEvent | MouseEvent} event
+   * @returns {boolean} whether it adds to the selection, or takes from it:
+   *   with Shift, or ⌘ on Apple's systems and Ctrl elsewhere
+   */
+  function addsToSelection(event) {
+    const apple =
+      window.pdflion.commandKey === "meta" || /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+    return event.shiftKey || (apple ? event.metaKey : event.ctrlKey);
+  }
+
+  /**
+   * Selects the editor pressed on, unless it's selected already, and moves
+   * the selection with the drag, through pdf.js's own drag of the selected
+   * editors, which is one step to undo, also across pages. With Shift or ⌘,
+   * the press adds the editor to the selection, or takes it out, instead.
+   * pdf.js's own selecting would switch to the editor's tool.
+   *
+   * @param {any} ui
+   * @param {any} editor
+   * @param {PointerEvent} down
+   */
+  function dragSelection(ui, editor, down) {
+    if (addsToSelection(down)) {
+      ui.toggleSelected(editor);
+      return;
+    }
+    const wasSelected = editor.isSelected;
+    if (!wasSelected) {
+      commitDrawing(ui);
+      ui.toggleSelected(editor);
+    }
+    ui.setUpDragSession();
+    let [lastX, lastY] = [down.clientX, down.clientY];
+    let moved = false;
+    followAreaDrag(down, {
+      move({ clientX, clientY }) {
+        if (!moved && Math.hypot(clientX - down.clientX, clientY - down.clientY) < CLICK_SLOP) {
+          return;
+        }
+        moved = true;
+        const [tx, ty] = editor.screenToPageTranslation(clientX - lastX, clientY - lastY);
+        [lastX, lastY] = [clientX, clientY];
+        ui.dragSelectedEditors(tx, ty);
+      },
+      end() {
+        ui.endDragSession();
+        // A click on one of several selected selects it alone, as in pdf.js.
+        if (!moved && wasSelected) {
+          commitDrawing(ui);
+          ui.toggleSelected(editor);
+        }
+      },
+    });
+  }
+
+  /**
+   * Follows a drag of the select or screenshot tool, from its press to its
+   * lift, which Esc or another tool cuts short (endAreaDrag()). It leaves
+   * the events to others, such as a long press's.
+   *
+   * @param {PointerEvent} down
+   * @param {{ move: (event: PointerEvent) => void, end: (cancelled: boolean) => void }} handlers
+   */
+  function followAreaDrag(down, { move, end }) {
+    const listening = new AbortController();
+    /** @type {AreaDrag} */
+    const drag = { listening, end };
+    areaDrag = drag;
+    const options = { capture: true, signal: listening.signal };
+    window.addEventListener(
+      "pointermove",
+      (event) => {
+        if (event.pointerId === down.pointerId) move(event);
+      },
+      options,
+    );
+    for (const type of ["pointerup", "pointercancel"]) {
+      window.addEventListener(
+        type,
+        (event) => {
+          if (/** @type {PointerEvent} */ (event).pointerId !== down.pointerId) return;
+          finishAreaDrag(drag, type === "pointercancel");
+        },
+        options,
+      );
+    }
+  }
+
+  /**
+   * @param {AreaDrag} drag
+   * @param {boolean} cancelled
+   */
+  function finishAreaDrag(drag, cancelled) {
+    drag.listening.abort();
+    if (areaDrag === drag) areaDrag = null;
+    drag.end(cancelled);
+  }
+
+  /** Cuts the drag of the select or screenshot tool under way short, if any. */
+  function endAreaDrag() {
+    if (areaDrag) finishAreaDrag(areaDrag, true);
+  }
+
+  /**
+   * Draws the rectangle a drag makes on the page it started on. The select
+   * tool then selects what's in it, adding to the selection with Shift or ⌘,
+   * and a click clears the selection. The screenshot tool copies it.
+   *
+   * @param {any} app
+   * @param {PointerEvent} down
+   */
+  function drawMarquee(app, down) {
+    const page = /** @type {HTMLElement | null} */ (targetIn(down, PAGE));
+    const ui = uiManager(app);
+    const box = marquee;
+    if (!page || !ui || !box) return;
+    const tool = areaTool;
+    const bounds = page.getBoundingClientRect();
+    /** @returns {number[]} the place, kept on the page */
+    const clamp = (/** @type {number} */ x, /** @type {number} */ y) => [
+      Math.min(Math.max(x, bounds.left), bounds.right),
+      Math.min(Math.max(y, bounds.top), bounds.bottom),
+    ];
+    const start = clamp(down.clientX, down.clientY);
+    let end = start;
+    followAreaDrag(down, {
+      move({ clientX, clientY }) {
+        end = clamp(clientX, clientY);
+        showMarquee(box, start, end);
+      },
+      end(cancelled) {
+        const big = Math.hypot(end[0] - start[0], end[1] - start[1]) >= CLICK_SLOP;
+        if (cancelled || !big || tool !== "screenshot") box.hidden = true;
+        if (cancelled) return;
+        if (tool === "select") {
+          if (!addsToSelection(down)) commitDrawing(ui);
+          if (big) selectInRectangle(app, page, start, end);
+        } else if (big) {
+          copyScreenshot(app, page, start, end);
+        }
+      },
+    });
+  }
+
+  /**
+   * @param {HTMLElement} box the marquee
+   * @param {number[]} start a corner, in the window
+   * @param {number[]} end the other
+   */
+  function showMarquee(box, start, end) {
+    box.classList.toggle("pdflionFlash", false);
+    Object.assign(box.style, {
+      left: `${Math.min(start[0], end[0])}px`,
+      top: `${Math.min(start[1], end[1])}px`,
+      width: `${Math.abs(end[0] - start[0])}px`,
+      height: `${Math.abs(end[1] - start[1])}px`,
+    });
+    box.hidden = false;
+  }
+
+  /**
+   * @param {any} app
+   * @param {HTMLElement} page
+   * @param {number[]} start a corner, in the window
+   * @param {number[]} end the other
+   * @returns {{ view: any, pageIndex: number, x: number, y: number, width: number,
+   *   height: number, box: number[] } | null} the rectangle on the page view,
+   *   in CSS pixels from its top left, and in PDF coordinates, the lower
+   *   corner first
+   */
+  function pageRectangle(app, page, start, end) {
+    const pageIndex = Number(page.dataset.pageNumber) - 1;
+    const view = app.pdfViewer.getPageView(pageIndex);
+    if (view?.div !== page || !view.viewport) return null;
+    const { left, top } = page.getBoundingClientRect();
+    const [ax, ay] = [start[0] - left - page.clientLeft, start[1] - top - page.clientTop];
+    const [bx, by] = [end[0] - left - page.clientLeft, end[1] - top - page.clientTop];
+    const [p, q] = [view.viewport.convertToPdfPoint(ax, ay), view.viewport.convertToPdfPoint(bx, by)];
+    return {
+      view,
+      pageIndex,
+      x: Math.min(ax, bx),
+      y: Math.min(ay, by),
+      width: Math.abs(bx - ax),
+      height: Math.abs(by - ay),
+      box: [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])],
+    };
+  }
+
+  /**
+   * Selects the drawings, highlights, text boxes and images in a rectangle
+   * of a page, adding them to the selection.
+   *
+   * @param {any} app
+   * @param {HTMLElement} page
+   * @param {number[]} start a corner, in the window
+   * @param {number[]} end the other
+   */
+  function selectInRectangle(app, page, start, end) {
+    const ui = uiManager(app);
+    const rectangle = pageRectangle(app, page, start, end);
+    if (!ui || !rectangle) return;
+    for (const editor of selectableEditors(app, rectangle.pageIndex)) {
+      if (!editor.isSelected && inRectangle(editor, rectangle.box)) ui.toggleSelected(editor);
+    }
+  }
+
+  /**
+   * Copies a rectangle of a page to the clipboard as a PNG, as the page shows
+   * it, with its annotations, drawings, highlights, text boxes and images,
+   * at twice the screen's pixels or more. It writes the clipboard before
+   * the image is ready, during the lift that ends the drag, since Safari
+   * takes it only then. The rectangle flashes once it's copied.
+   *
+   * @param {any} app
+   * @param {HTMLElement} page
+   * @param {number[]} start a corner, in the window
+   * @param {number[]} end the other
+   */
+  function copyScreenshot(app, page, start, end) {
+    const rectangle = pageRectangle(app, page, start, end);
+    if (!rectangle) {
+      if (marquee) marquee.hidden = true;
+      return;
+    }
+    const png = screenshotOf(app, rectangle);
+    /** @type {Promise<void>} */
+    let copying;
+    try {
+      copying = navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    } catch (error) {
+      copying = Promise.reject(error);
+    }
+    copying.then(
+      () => {
+        flashMarquee();
+        announce(t("screenshotCopied"));
+      },
+      (error) => {
+        console.error("Couldn't copy the screenshot:", error);
+        if (marquee) marquee.hidden = true;
+        window.pdflion.pageDialog("screenshot-failed");
+      },
+    );
+  }
+
+  /**
+   * @param {any} app
+   * @param {{ view: any, x: number, y: number, width: number, height: number }} rectangle
+   * @returns {Promise<Blob>} the rectangle of the page view as a PNG
+   */
+  async function screenshotOf(app, { view, x, y, width, height }) {
+    // Pencil's open drawing joins the annotations, which the image shows.
+    endPencilDrawing(app);
+    const ratio = Math.min(
+      Math.max(window.devicePixelRatio || 1, SCREENSHOT_RATIO),
+      SCREENSHOT_MAX_SIDE / Math.max(width, height),
+    );
+    const { scale, rotation } = view.viewport;
+    const viewport = view.pdfPage.getViewport({
+      scale: scale * ratio,
+      rotation,
+      offsetX: -x * ratio,
+      offsetY: -y * ratio,
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * ratio));
+    canvas.height = Math.max(1, Math.round(height * ratio));
+    await view.pdfPage.render({
+      canvasContext: canvas.getContext("2d"),
+      viewport,
+      annotationMode: ANNOTATIONS_AS_THEY_ARE,
+      background: "white",
+    }).promise;
+    return new Promise((resolve, reject) =>
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("No PNG"))), "image/png"),
+    );
+  }
+
+  /** Flashes the screenshot's rectangle, once copied, then hides it. */
+  function flashMarquee() {
+    const box = marquee;
+    if (!box || box.hidden) return;
+    box.classList.toggle("pdflionFlash", true);
+    setTimeout(() => {
+      if (!box.classList.contains("pdflionFlash")) return;
+      box.classList.toggle("pdflionFlash", false);
+      box.hidden = true;
+    }, 400);
+  }
+
+  /** @param {string} text said to screen readers, through pdf.js's alert */
+  function announce(text) {
+    const alert = document.getElementById("viewer-alert");
+    if (alert) alert.textContent = text;
+  }
+
+  /**
+   * The pages' context menu, on a right click, or a long press with a finger
+   * or a pen, as iPadOS sends none: Cut, Copy, Paste and Delete. They act on
+   * the drawings, text boxes and images selected, or Copy on the text
+   * selected, and Paste puts what the clipboard holds where the menu opened:
+   * an image as pdf.js's image annotation, which can be moved and resized,
+   * or drawings, text boxes and images pdf.js copied.
+   *
+   * The desktop's host shows it natively, and runs Cut, Copy and Paste, which
+   * then come as clipboard events. Otherwise the menu is the page's own,
+   * whose Paste reads the clipboard during the tap, as Safari requires.
+   *
+   * @param {any} app
+   */
+  function followPageMenu(app) {
+    const container = document.getElementById("viewerContainer");
+    if (!container) return;
+    container.addEventListener("contextmenu", (event) => openPageMenu(app, event));
+    addLongPress(container, undefined, (down) => longPressOpensMenu(app, down));
+    window.addEventListener("paste", (event) => pasteAtPlace(app, event), true);
+  }
+
+  /**
+   * @param {any} app
+   * @param {PointerEvent} down
+   * @returns {boolean} whether a long press there opens the page menu: on a
+   *   page where the press draws nothing, so not with Pencil, Highlight,
+   *   Text or the eraser, unless only a pen draws and it's a finger, and not
+   *   on text with no tool on, where Safari selects it, for its own menu
+   */
+  function longPressOpensMenu(app, down) {
+    if (!targetIn(down, PAGE)) return false;
+    if (areaTool || isFingerKeptOff(app, down)) return true;
+    const mode = app.pdfViewer?.annotationEditorMode;
+    if (mode === EDITOR_STAMP) return true;
+    return mode === EDITOR_NONE && !targetIn(down, ".textLayer");
+  }
+
+  /**
+   * Opens the page menu where a contextmenu event is. In the select tool, a
+   * drawing, highlight, text box or image under it that isn't selected is
+   * selected alone first. Form fields keep the browser's own menu.
+   *
+   * @param {any} app
+   * @param {MouseEvent} event
+   */
+  function openPageMenu(app, event) {
+    if (targetIn(event, "input, textarea, select, [contenteditable]")) return;
+    const ui = uiManager(app);
+    const place = placeOf(app, /** @type {any} */ (event));
+    if (!ui || !place || !app.pdfDocument) return;
+    event.preventDefault();
+    // A long press started the select or screenshot tool's drag.
+    endAreaDrag();
+    if (areaTool === "select") {
+      const picked = editorAt(app, place);
+      if (picked && !picked.isSelected) {
+        commitDrawing(ui);
+        ui.toggleSelected(picked);
+      }
+    }
+    const mode = app.pdfViewer.annotationEditorMode;
+    const options = {
+      editors: isToolMode(mode) && !!ui.hasSelection,
+      text: !isToolMode(mode) && !!document.getSelection()?.toString(),
+    };
+    const at = { ...place, clientX: event.clientX, clientY: event.clientY };
+    if (typeof window.pdflion.showPageMenu === "function") showHostPageMenu(app, at, options);
+    else showOwnPageMenu(app, at, options);
+  }
+
+  /**
+   * Shows the host's page menu, which runs Cut, Copy and Paste itself. Its
+   * Paste sends a paste event, which pastes at the place (pasteAtPlace()).
+   *
+   * @param {any} app
+   * @param {Place} place
+   * @param {{ editors: boolean, text: boolean }} options
+   */
+  async function showHostPageMenu(app, place, options) {
+    pastePlace = place;
+    const chosen = await window.pdflion.showPageMenu(options);
+    if (chosen === "delete") uiManager(app)?.delete();
+    const forget = () => {
+      if (pastePlace === place) pastePlace = null;
+    };
+    if (chosen === "paste") setTimeout(forget, PASTE_WAIT);
+    else forget();
+  }
+
+  /**
+   * Shows the page's own menu at the place: Cut, Copy, Paste, and Delete.
+   *
+   * @param {any} app
+   * @param {Place} place
+   * @param {{ editors: boolean, text: boolean }} options
+   */
+  function showOwnPageMenu(app, place, { editors, text }) {
+    closePageMenu();
+    const container = document.getElementById("toolbarContainer");
+    if (!container) return;
+    /**
+     * @param {string} id
+     * @param {string} label
+     * @param {boolean} enabled
+     * @param {() => void} action
+     */
+    const item = (id, label, enabled, action) => {
+      const button = makeButton(id, "toolbarButton labeled", label);
+      button.setAttribute("role", "menuitem");
+      button.tabIndex = -1;
+      button.disabled = !enabled;
+      button.addEventListener("click", () => {
+        closePageMenu();
+        action();
+      });
+      return button;
+    };
+    const items = [
+      item("pdflionPageMenuCut", t("cut"), editors, () => {
+        document.execCommand("copy");
+        uiManager(app)?.delete();
+      }),
+      item("pdflionPageMenuCopy", t("copy"), editors || text, () => document.execCommand("copy")),
+      item("pdflionPageMenuPaste", t("paste"), true, () => pasteFromClipboard(app, place)),
+      createElement("div", { className: "horizontalToolbarSeparator" }),
+      item("pdflionPageMenuDelete", t("delete"), editors, () => uiManager(app)?.delete()),
+    ];
+    const menu = createElement(
+      "div",
+      { id: "pdflionPageMenu", className: "menu" },
+      createElement("div", { className: "menuContainer", role: "menu" }, ...items),
+    );
+    container.append(menu);
+    // Where the press was, kept in the window.
+    const { width, height } = menu.getBoundingClientRect();
+    const left = Math.max(0, Math.min(place.clientX, window.innerWidth - width));
+    const top = Math.max(0, Math.min(place.clientY, window.innerHeight - height));
+    Object.assign(menu.style, { left: `${left}px`, top: `${top}px` });
+    const choices = /** @type {HTMLButtonElement[]} */ (items).filter(
+      (choice) => choice.tagName === "BUTTON" && !choice.disabled,
+    );
+    choices[0]?.focus();
+    const closing = new AbortController();
+    const { signal } = closing;
+    window.addEventListener(
+      "pointerdown",
+      ({ target }) => {
+        if (!menu.contains(/** @type {Node} */ (target))) closePageMenu();
+      },
+      { capture: true, signal },
+    );
+    window.addEventListener("blur", () => closePageMenu(), { signal });
+    window.addEventListener(
+      "keydown",
+      (event) => {
+        const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+        if (event.key === "Escape") closePageMenu();
+        else if (step) {
+          const index = choices.indexOf(/** @type {any} */ (document.activeElement));
+          choices.at((index + step) % choices.length)?.focus();
+        } else return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      { capture: true, signal },
+    );
+    signal.addEventListener("abort", () => menu.remove());
+    menuClosing = closing;
+  }
+
+  /** Closes the page's own menu, if it's open. */
+  function closePageMenu() {
+    menuClosing?.abort();
+    menuClosing = null;
+  }
+
+  /**
+   * Pastes an image from the clipboard at a place, for the page's own menu:
+   * it reads the clipboard during the tap on Paste, as Safari requires,
+   * which may ask first. The clipboard shows web pages images and text
+   * only, so drawings pdf.js copied paste with ⌘V instead.
+   *
+   * @param {any} app
+   * @param {Place} place
+   */
+  function pasteFromClipboard(app, place) {
+    /** @type {Promise<ClipboardItems>} */
+    let reading;
+    try {
+      reading = navigator.clipboard.read();
+    } catch (error) {
+      reading = Promise.reject(error);
+    }
+    reading
+      .then(async (items) => {
+        for (const item of items) {
+          const type = item.types.find((name) => name.startsWith("image/"));
+          if (!type) continue;
+          const blob = await item.getType(type);
+          await insertImageAt(app, place, new File([blob], "image", { type }));
+          return;
+        }
+      })
+      .catch((error) => console.warn("Couldn't paste:", error));
+  }
+
+  /**
+   * Takes the paste event the host's page menu sends after its Paste, and
+   * pastes what it holds at the menu's place, rather than where pdf.js would.
+   * Other paste events, as from ⌘V, stay pdf.js's.
+   *
+   * @param {any} app
+   * @param {ClipboardEvent} event
+   */
+  function pasteAtPlace(app, event) {
+    const place = pastePlace;
+    const data = event.clipboardData;
+    if (!place || !data) return;
+    pastePlace = null;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    // The data can be read only while the event is dispatched.
+    const image = [...data.items]
+      .find((item) => item.kind === "file" && item.type.startsWith("image/"))
+      ?.getAsFile();
+    const editors = image ? "" : data.getData(EDITORS_TYPE);
+    if (image) insertImageAt(app, place, image);
+    else if (editors) pasteEditorsAt(app, place, editors);
+  }
+
+  /**
+   * Adds an image as pdf.js's image annotation, centred on a place, as
+   * pdf.js's own paste does in the middle of the page: in its Stamp mode,
+   * where it's then selected, to move it, and to resize it by its handles.
+   * pdf.js opens the Stamp menu as it switches to Stamp, which stays closed.
+   *
+   * @param {any} app
+   * @param {Place} place
+   * @param {File} file
+   */
+  async function insertImageAt(app, place, file) {
+    const ui = uiManager(app);
+    const mode = app.pdfViewer.annotationEditorMode;
+    if (!ui || mode === EDITOR_DISABLE) return;
+    if (mode !== EDITOR_STAMP) {
+      const changed = nextEvent(app.eventBus, "annotationeditormodechanged");
+      app.eventBus.dispatch("switchannotationeditormode", { source: null, mode: EDITOR_STAMP });
+      await changed;
+      document.getElementById("editorStampButton")?.setAttribute("aria-expanded", "false");
+      document.getElementById("editorStampParamsToolbar")?.classList.toggle("hidden", true);
+    }
+    const layer = ui.getLayer(place.pageIndex);
+    if (!layer?.div) return;
+    const [offsetX, offsetY] = layerPoint(layer.div, place);
+    layer.createAndAddNewEditor({ offsetX, offsetY }, true, { bitmapFile: file });
+  }
+
+  /**
+   * @param {HTMLElement} div a page's editing layer, which pdf.js lays out
+   *   unturned and turns by its `data-main-rotation` (web/pdf_viewer.css)
+   * @param {{ clientX: number, clientY: number }} place in the window
+   * @returns {number[]} the place in the layer's own, unturned pixels, as
+   *   pdf.js places new editors (createAndAddNewEditor() in
+   *   src/display/editor/annotation_editor_layer.js)
+   */
+  function layerPoint(div, { clientX, clientY }) {
+    const { left, top } = div.getBoundingClientRect();
+    const [dx, dy] = [clientX - left, clientY - top];
+    const [width, height] = [div.offsetWidth, div.offsetHeight];
+    switch (Number(div.getAttribute("data-main-rotation")) || 0) {
+      case 90:
+        return [dy, height - dx];
+      case 180:
+        return [width - dx, height - dy];
+      case 270:
+        return [width - dy, dx];
+      default:
+        return [dx, dy];
+    }
+  }
+
+  /**
+   * Pastes the drawings, text boxes and images pdf.js copied, centred on a
+   * place: pdf.js's own paste puts them on the current page where they were,
+   * selected, so the place's page becomes the current one first, and they
+   * move from there. They're pasted in the select tool, to move them on.
+   *
+   * @param {any} app
+   * @param {Place} place
+   * @param {string} json what pdf.js copied
+   */
+  async function pasteEditorsAt(app, place, json) {
+    const ui = uiManager(app);
+    if (!ui || app.pdfViewer.annotationEditorMode === EDITOR_DISABLE) return;
+    if (areaTool !== "select") {
+      const changed =
+        app.pdfViewer.annotationEditorMode === EDITOR_INK
+          ? null
+          : nextEvent(app.eventBus, "annotationeditormodechanged");
+      startAreaTool(app, "select");
+      await changed;
+    }
+    ui.onPageChanging({ pageNumber: place.pageIndex + 1 });
+    const before = new Set(ui.getEditors(place.pageIndex));
+    await ui.paste({
+      preventDefault() {},
+      clipboardData: { items: [], getData: (/** @type {string} */ type) => (type === EDITORS_TYPE ? json : "") },
+    });
+    const pasted = [...ui.getEditors(place.pageIndex)].filter(
+      (editor) => editor.isSelected && !before.has(editor),
+    );
+    moveEditorsTo(pasted, place.point);
+  }
+
+  /**
+   * Moves editors together so that the middle of the box around them is at a
+   * point, without a step to undo of its own: undoing the paste removes them.
+   *
+   * @param {any[]} editors on one page
+   * @param {number[]} point in PDF coordinates
+   */
+  function moveEditorsTo(editors, point) {
+    const boxes = editors.map((editor) => editor.getPDFRect?.()).filter(Boolean);
+    if (boxes.length === 0) return;
+    const xs = boxes.flatMap(([x1, , x2]) => [x1, x2]);
+    const ys = boxes.flatMap(([, y1, , y2]) => [y1, y2]);
+    const dx = point[0] - (Math.min(...xs) + Math.max(...xs)) / 2;
+    const dy = point[1] - (Math.min(...ys) + Math.max(...ys)) / 2;
+    for (const editor of editors) {
+      // translateInPage() takes a move down the page as positive, turned as
+      // the page shows.
+      const [x, y] = editor.pageTranslationToScreen(dx, -dy);
+      editor.translateInPage(x, y);
+      editor.translationDone();
+    }
+  }
+
+  /**
    * Adds pen-only drawing's item to the top of the ⋮ menu, as a setting
    * of its own that applies to every tool, rather than a switch in some
    * tools' option boxes, which looked as if it applied to that tool alone.
@@ -3649,7 +4686,8 @@
           /** @type {any} */ (touch).touchType !== "stylus" &&
           isPageMode() &&
           !drawsWithFingers &&
-          !erasing
+          !erasing &&
+          !areaTool
             ? { x: touch.clientX, y: touch.clientY, time: event.timeStamp }
             : null;
       },
@@ -4236,16 +5274,22 @@
    * since iPadOS starts one with a long press too. The same as in
    * src/tabs/tabs.js and src/home/home.js.
    *
+   * It follows the press from before the element's own listeners, which may
+   * stop it, as the select tool's on the pages do, and sends the event at
+   * the press's target.
+   *
    * @param {HTMLElement} element
    * @param {(down: PointerEvent) => void} [held] called once the menu has
    *   opened, while the press goes on
+   * @param {(down: PointerEvent) => boolean} [accepts] whether a press there
+   *   may open the menu
    */
-  function addLongPress(element, held) {
+  function addLongPress(element, held, accepts = () => true) {
     /** Whether the last press opened the menu, until the next. */
     let opened = false;
     element.addEventListener("pointerdown", (down) => {
       opened = false;
-      if (down.pointerType === "mouse" || down.button !== 0) return;
+      if (down.pointerType === "mouse" || down.button !== 0 || !accepts(down)) return;
       const pressing = new AbortController();
       const { signal } = pressing;
       const stop = () => pressing.abort();
@@ -4259,7 +5303,9 @@
           clientX,
           clientY,
         });
-        element.dispatchEvent(menu);
+        const target = /** @type {any} */ (down.target);
+        const at = typeof target?.dispatchEvent === "function" && element.contains(target);
+        (at ? target : element).dispatchEvent(menu);
         held?.(down);
       }, LONG_PRESS_TIME);
       signal.addEventListener("abort", () => clearTimeout(timer));
@@ -4272,12 +5318,13 @@
       const ended = ({ pointerId }) => {
         if (pointerId === down.pointerId) stop();
       };
-      window.addEventListener("pointermove", moved, { signal });
-      window.addEventListener("pointerup", ended, { signal });
-      window.addEventListener("pointercancel", ended, { signal });
+      // Before any listener that stops them, as the eraser's do.
+      window.addEventListener("pointermove", moved, { signal, capture: true });
+      window.addEventListener("pointerup", ended, { signal, capture: true });
+      window.addEventListener("pointercancel", ended, { signal, capture: true });
       element.addEventListener("dragstart", stop, { signal });
       element.addEventListener("contextmenu", (event) => event.isTrusted && stop(), { signal });
-    });
+    }, true);
     // Before the element's own listeners.
     element.addEventListener(
       "contextmenu",
@@ -4416,6 +5463,7 @@
     }
     const { mode, params } = FAVOURITE_TOOLS[favourite.tool];
     if (erasing && mode === EDITOR_INK) stopErasing(app, EDITOR_INK);
+    if (areaTool && mode === EDITOR_INK) stopAreaTool(app, EDITOR_INK);
     if (app.pdfViewer.annotationEditorMode !== mode) {
       favouriteMode = mode;
       app.eventBus.dispatch("switchannotationeditormode", { source: null, mode });
@@ -4455,6 +5503,7 @@
    *   option box shows them
    */
   function currentFavourite(app) {
+    if (areaTool) return null;
     if (erasing) return readFavourite("eraser");
     const mode = app.pdfViewer?.annotationEditorMode;
     const tool = Object.keys(FAVOURITE_TOOLS).find((name) => FAVOURITE_TOOLS[name].mode === mode);
@@ -4864,9 +5913,10 @@
   /**
    * @param {HTMLButtonElement} tool
    * @returns {boolean} whether it's on: pdf.js shows Pencil on while the
-   *   eraser is
+   *   eraser, the select tool or the screenshot tool is
    */
   function isToolOn(tool) {
+    if (areaTool) return tool === areaButtons?.[areaTool];
     return erasing ? tool === eraserTool?.button : tool.classList.contains("toggled");
   }
 

@@ -1,7 +1,7 @@
 /**
- * Geometry for the eraser. A stroke is a flat list of x, y pairs in PDF
- * coordinates, as pdf.js's ink editors give them (`serialize(true).paths.points`),
- * and the eraser is a circle.
+ * Geometry for the eraser, and for the select tool's rectangle. A stroke is
+ * a flat list of x, y pairs in PDF coordinates, as pdf.js's ink editors give
+ * them (`serialize(true).paths.points`), and the eraser is a circle.
  *
  * protocol.js injects this classic script into viewer.html before bridge.js,
  * which finds it as `window.PDFLionGeometry`. It touches nothing in pdf.js.
@@ -78,6 +78,66 @@
    */
   function hitsStroke(stroke, center, radius, thickness) {
     return distanceToPolyline(center, stroke) < radius + thickness / 2;
+  }
+
+  /**
+   * Whether a stroke's ink reaches into a box, as the select tool's rectangle
+   * takes it: a point of it inside, or a segment across it. The box grows by
+   * half the stroke's thickness, which its ink reaches past its points.
+   *
+   * @param {Points} stroke
+   * @param {ArrayLike<number>} box x1, y1, x2, y2, the lower corner first
+   * @param {number} thickness
+   * @returns {boolean}
+   */
+  function hitsBox(stroke, box, thickness) {
+    const reach = thickness / 2;
+    const [x1, y1, x2, y2] = [box[0] - reach, box[1] - reach, box[2] + reach, box[3] + reach];
+    const count = pointCount(stroke);
+    const inside = (/** @type {number} */ x, /** @type {number} */ y) =>
+      x >= x1 && x <= x2 && y >= y1 && y <= y2;
+    if (count === 1) return inside(stroke[0], stroke[1]);
+    for (let i = 0; i < count - 1; i++) {
+      const [ax, ay, bx, by] = segment(stroke, i);
+      if (inside(ax, ay) || inside(bx, by) || crossesBox(ax, ay, bx, by, x1, y1, x2, y2)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * @returns {boolean} whether the segment from a to b crosses the box, by
+   *   clipping it to the box's sides in turn (Liang–Barsky)
+   */
+  function crossesBox(
+    /** @type {number} */ ax,
+    /** @type {number} */ ay,
+    /** @type {number} */ bx,
+    /** @type {number} */ by,
+    /** @type {number} */ x1,
+    /** @type {number} */ y1,
+    /** @type {number} */ x2,
+    /** @type {number} */ y2,
+  ) {
+    const [dx, dy] = [bx - ax, by - ay];
+    let [from, to] = [0, 1];
+    for (const [p, q] of [
+      [-dx, ax - x1],
+      [dx, x2 - ax],
+      [-dy, ay - y1],
+      [dy, y2 - ay],
+    ]) {
+      if (p === 0) {
+        if (q < 0) return false;
+        continue;
+      }
+      const r = q / p;
+      if (p < 0) from = Math.max(from, r);
+      else to = Math.min(to, r);
+      if (from > to) return false;
+    }
+    return true;
   }
 
   /**
@@ -217,6 +277,7 @@
     resample,
     distanceToPolyline,
     hitsStroke,
+    hitsBox,
     cutStroke,
   });
 })();
