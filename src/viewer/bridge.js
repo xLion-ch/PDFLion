@@ -226,7 +226,7 @@
    * buttons, its hidden zoom menu, and the drawing tools in one button with
    * a menu.
    * Then, narrower than a desktop window gets, Find, Page Overview and Insert
-   * Blank Page go into the ⋮ menu, the zoom buttons and the status go, and
+   * Page go into the ⋮ menu, the zoom buttons and the status go, and
    * last Undo and Redo go into the tools' menu. Each step keeps those before
    * it. layoutToolbar() takes the first at which the toolbar fits.
    */
@@ -383,9 +383,9 @@
   let pdfLib = null;
 
   /**
-   * @type {HTMLButtonElement[]} the buttons that change pages: Insert Blank
-   *   Page in the toolbar and the overview, and the overview's Rotate Pages
-   *   Left and Right
+   * @type {HTMLButtonElement[]} the buttons that change pages: Insert Page in
+   *   the toolbar, the overview and the ⋮ menu, and the overview's Rotate
+   *   Pages Left and Right
    */
   let pageButtons = [];
 
@@ -601,6 +601,20 @@
   const ZOOM_NAMES = ["auto", "page-actual", "page-fit", "page-width"];
 
   /**
+   * Insert Page's backgrounds, as backgrounds.js names them, in the order its
+   * menus list them: each with its label's text, and the command that inserts
+   * a page on it.
+   */
+  const PAGE_BACKGROUNDS = [
+    ["blank", "backgroundBlank", "insertBlankPage"],
+    ["lined", "backgroundLined", "insertLinedPage"],
+    ["grid", "backgroundGrid", "insertGridPage"],
+    ["dotted", "backgroundDotted", "insertDottedPage"],
+    ["fine-dotted", "backgroundFineDotted", "insertFineDottedPage"],
+    ["isometric", "backgroundIsometric", "insertIsometricPage"],
+  ];
+
+  /**
    * Commands main sends, mostly from the menu, mapped to pdf.js calls. What a
    * command returns goes back to main.
    * @type {Record<string, (app: any) => unknown>}
@@ -622,7 +636,13 @@
     // An unchanged document is already saved.
     save: (app) => !edited || save(app, window.pdflion.save),
     saveAs: (app) => save(app, window.pdflion.saveAs),
-    insertBlankPage: (app) => insertBlankPage(app),
+    // Edit > Insert Page's, one for each background.
+    ...Object.fromEntries(
+      PAGE_BACKGROUNDS.map(([background, , command]) => [
+        command,
+        (/** @type {any} */ app) => insertPage(app, background),
+      ]),
+    ),
     // As its button, which works only while pdf.js's tools do.
     eraser: (app) => (eraserTool && !eraserTool.button.disabled ? toggleEraser(app) : false),
     // Edit > Undo and Redo. False leaves them to Chromium, which main asks next.
@@ -1468,16 +1488,18 @@
   }
 
   /**
-   * Inserts an empty page after the current one, of the size that page is
-   * shown at, and goes to it. From the thumbnails' header, in the sidebar or
-   * the page overview, it goes after the last checked page, if any. The page is added after the document's bytes, as
-   * an incremental update, so everything the file holds stays as it was.
+   * Inserts a new page after the current one, of the size that page is shown
+   * at, on a background, and goes to it. From the thumbnails' header, in the
+   * sidebar or the page overview, it goes after the last checked page, if
+   * any. The page is added after the document's bytes, as an incremental
+   * update, so everything the file holds stays as it was.
    *
    * @param {any} app
+   * @param {string} background one of PAGE_BACKGROUNDS', such as "lined"
    * @param {boolean} [fromThumbnails] whether the thumbnails' header asked
    * @returns {Promise<boolean>} whether the page was inserted
    */
-  function insertBlankPage(app, fromThumbnails = false) {
+  function insertPage(app, background, fromThumbnails = false) {
     return runPageChange(app, () => {
       // The page to insert after, which is also the new page's index.
       const index = ((overview || fromThumbnails) && checkedPages().at(-1)) || app.page;
@@ -1486,15 +1508,34 @@
       // A page shown on its side, by its /Rotate, is as wide as it's tall.
       const size = rotate % 180 === 0 ? [width, height] : [height, width];
       return changeDocument(app, index + 1, (bytes) =>
-        updateDocument(bytes, (document) => document.insertPage(index, size)),
+        updateDocument(bytes, (document) => {
+          const page = document.insertPage(index, size);
+          drawBackground(document, page, background, size);
+        }),
       );
     });
   }
 
   /**
+   * Draws a background on a page @cantoo/pdf-lib has just made, in a
+   * compressed content stream of its own. A blank page gets none.
+   *
+   * @param {any} document the PDFDocument
+   * @param {any} page its new PDFPage
+   * @param {string} background
+   * @param {number[]} size the page's width and height
+   */
+  function drawBackground(document, page, background, [width, height]) {
+    const content = window.PDFLionBackgrounds.contentStream(background, width, height);
+    if (!content) return;
+    const { context } = document;
+    page.node.addContentStream(context.register(context.flateStream(content)));
+  }
+
+  /**
    * Turns the pages checked in the thumbnails a quarter turn, or the current
    * page if none is. It sets their /Rotate after the document's bytes, as an
-   * incremental update, like insertBlankPage(), and they stay checked.
+   * incremental update, like insertPage(), and they stay checked.
    * View > Rotate Left and Right turn the view instead, which isn't saved.
    *
    * @param {any} app
@@ -2070,7 +2111,7 @@
   }
 
   /**
-   * Adds Insert Blank Page to the toolbar, at the end of the editing tools.
+   * Adds Insert Page to the toolbar, at the end of the editing tools.
    *
    * @param {any} app
    * @returns {HTMLButtonElement | null}
@@ -2078,11 +2119,69 @@
   function addInsertButton(app) {
     const separator = document.getElementById("editorModeSeparator");
     if (!separator) return null;
-    const button = makeButton("pdflionInsertBlankPage", "toolbarButton", t("insertBlankPage"));
-    button.disabled = true;
-    button.addEventListener("click", () => insertBlankPage(app));
-    separator.before(button);
+    const { container, button } = addInsertMenu("pdflionInsertPage", "toolbarButton", (background) =>
+      insertPage(app, background),
+    );
+    separator.before(container);
     return button;
+  }
+
+  /**
+   * Builds Insert Page: a button whose menu has the page backgrounds, each of
+   * which inserts a page on it. The menu works as the ★ menu does.
+   *
+   * @param {string} id the container's, which the button's and the menu's
+   *   ids add `Button` and `Menu` to, and the items' `-<background>`
+   * @param {string} className the button's
+   * @param {(background: string) => void} insert
+   * @returns {{ container: HTMLElement, button: HTMLButtonElement }}
+   */
+  function addInsertMenu(id, className, insert) {
+    const button = makeButton(`${id}Button`, className, t("insertPage"));
+    button.disabled = true;
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-haspopup", "true");
+    button.setAttribute("aria-controls", `${id}Menu`);
+    const items = createElement(
+      "div",
+      { className: "menuContainer", role: "menu" },
+      ...PAGE_BACKGROUNDS.map(([background, text]) => {
+        const item = backgroundItem(`${id}-${background}`, background, text);
+        item.setAttribute("role", "menuitem");
+        item.tabIndex = -1;
+        item.addEventListener("click", () => insert(background));
+        return item;
+      }),
+    );
+    const menu = createElement(
+      "div",
+      {
+        id: `${id}Menu`,
+        className: "editorParamsToolbar hidden doorHangerRight menu pdflionInsertPageMenu",
+      },
+      items,
+    );
+    const container = createElement(
+      "div",
+      { id, className: "toolbarButtonWithContainer" },
+      button,
+      menu,
+    );
+    followMenu(button, menu, items);
+    return { container, button };
+  }
+
+  /**
+   * @param {string} id
+   * @param {string} background
+   * @param {string} text its label's text
+   * @returns {HTMLButtonElement} an item of a menu of the page backgrounds,
+   *   which overrides.css gives the background's icon
+   */
+  function backgroundItem(id, background, text) {
+    const item = makeButton(id, "toolbarButton labeled pdflionBackgroundItem", t(text));
+    item.setAttribute("data-background", background);
+    return item;
   }
 
   /**
@@ -2218,7 +2317,8 @@
   /**
    * Adds to the top of the ⋮ menu what the toolbar's narrow steps take from
    * it, which overrides.css shows only then: Find…, Page Overview and Insert
-   * Blank Page, once they go.
+   * Page, once they go. Insert Page shows the backgrounds below it, as items
+   * of their own.
    *
    * @param {any} app
    * @returns {HTMLButtonElement[]} the items that change pages
@@ -2239,16 +2339,36 @@
       });
       return button;
     };
-    const insert = item("pdflionSecondaryInsertBlankPage", t("insertBlankPage"), () =>
-      insertBlankPage(app),
-    );
+    const insert = makeButton("pdflionSecondaryInsertPage", "toolbarButton labeled", t("insertPage"));
     insert.disabled = true;
+    insert.setAttribute("aria-expanded", "false");
+    insert.setAttribute("aria-controls", "pdflionSecondaryBackgrounds");
+    /** @param {boolean} open */
+    const expand = (open) => {
+      insert.setAttribute("aria-expanded", String(open));
+      backgrounds.hidden = !open;
+    };
+    const backgrounds = createElement(
+      "div",
+      { id: "pdflionSecondaryBackgrounds", hidden: true },
+      ...PAGE_BACKGROUNDS.map(([background, text]) => {
+        const choice = backgroundItem(`pdflionSecondaryInsertPage-${background}`, background, text);
+        choice.addEventListener("click", () => {
+          app.secondaryToolbar?.close();
+          expand(false);
+          insertPage(app, background);
+        });
+        return choice;
+      }),
+    );
+    insert.addEventListener("click", () => expand(backgrounds.hidden));
     const tiny = createElement(
       "div",
       { className: "pdflionVisibleTiny" },
       item("pdflionSecondaryFind", t("find"), () => app.findBar?.open()),
       item("pdflionSecondaryPageOverview", t("pageOverview"), () => toggleOverview(app)),
       insert,
+      backgrounds,
       createElement("div", { className: "horizontalToolbarSeparator" }),
     );
     container.prepend(tiny);
@@ -2273,7 +2393,7 @@
 
   /**
    * Adds PDFLion's own page tools to the views manager's header, before
-   * pdf.js's Add file: Rotate Pages Left and Right, and Insert Blank Page.
+   * pdf.js's Add file: Rotate Pages Left and Right, and Insert Page.
    * overrides.css shows them with Add file, in the sidebar's thumbnails and
    * the overview, and not for a locked document.
    *
@@ -2290,11 +2410,12 @@
     rotateLeft.addEventListener("click", () => rotatePages(app, -90));
     const rotateRight = makeButton("pdflionRotatePagesRight", className, t("rotatePagesRight"));
     rotateRight.addEventListener("click", () => rotatePages(app, 90));
-    const insert = makeButton("pdflionOverviewInsertBlankPage", className, t("insertBlankPage"));
-    insert.addEventListener("click", () => insertBlankPage(app, true));
-    const buttons = [rotateLeft, rotateRight, insert];
+    const insert = addInsertMenu("pdflionOverviewInsertPage", className, (background) =>
+      insertPage(app, background, true),
+    );
+    const buttons = [rotateLeft, rotateRight, insert.button];
     for (const button of buttons) button.disabled = true;
-    tools.append(...buttons);
+    tools.append(rotateLeft, rotateRight, insert.container);
     addFile.before(tools);
     return buttons;
   }

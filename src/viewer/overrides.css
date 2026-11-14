@@ -170,8 +170,66 @@
   mask-image: url(/pdflion/icons/grid_view.svg);
 }
 
-:is(#pdflionInsertBlankPage, #pdflionOverviewInsertBlankPage)::before {
+:is(#pdflionInsertPageButton, #pdflionOverviewInsertPageButton, #pdflionSecondaryInsertPage)::before {
   mask-image: url(/pdflion/icons/note_add.svg);
+}
+
+/*
+ * Insert Page's menus of the page backgrounds (bridge.js), in the toolbar and
+ * the thumbnails' header, and its items in the ⋮ menu: each a page with its
+ * background as its icon.
+ */
+.pdflionBackgroundItem {
+  &[data-background="blank"]::before {
+    mask-image: url(/pdflion/icons/page_blank.svg);
+  }
+
+  &[data-background="lined"]::before {
+    mask-image: url(/pdflion/icons/page_lined.svg);
+  }
+
+  &[data-background="grid"]::before {
+    mask-image: url(/pdflion/icons/page_grid.svg);
+  }
+
+  &[data-background="dotted"]::before {
+    mask-image: url(/pdflion/icons/page_dotted.svg);
+  }
+
+  &[data-background="fine-dotted"]::before {
+    mask-image: url(/pdflion/icons/page_dotted_fine.svg);
+  }
+
+  &[data-background="isometric"]::before {
+    mask-image: url(/pdflion/icons/page_isometric.svg);
+  }
+}
+
+/* Over the option box of the tool that's on, as the ★ menu is. */
+.pdflionInsertPageMenu {
+  z-index: 30001;
+
+  .menuContainer {
+    min-width: 180px;
+  }
+}
+
+/* In the ⋮ menu, the backgrounds show below Insert Page, set in. */
+#pdflionSecondaryInsertPage::after {
+  content: "";
+  width: 20px;
+  height: 20px;
+  margin-inline-start: auto;
+  mask: url(/pdflion/icons/keyboard_arrow_down.svg) center / contain no-repeat;
+  background-color: var(--toolbar-icon-bg-color);
+}
+
+#pdflionSecondaryInsertPage[aria-expanded="true"]::after {
+  mask-image: url(/pdflion/icons/keyboard_arrow_up.svg);
+}
+
+#pdflionSecondaryBackgrounds > .toolbarButton.labeled {
+  padding-inline-start: 32px;
 }
 
 #pdflionRotatePagesLeft::before {
@@ -303,10 +361,6 @@
 
 #pdflionSecondaryPageOverview::before {
   mask-image: url(/pdflion/icons/grid_view.svg);
-}
-
-#pdflionSecondaryInsertBlankPage::before {
-  mask-image: url(/pdflion/icons/note_add.svg);
 }
 
 #pdflionUndoItem::before {
@@ -912,10 +966,10 @@
 /*
  * PDFLion's last steps, for windows narrower than a desktop's can be, such as
  * an iPad's in Split View or Slide Over. First Find, Page Overview and Insert
- * Blank Page go into the ⋮ menu. Find's place stays, where its bar opens.
+ * Page go into the ⋮ menu. Find's place stays, where its bar opens.
  */
 :where(#toolbarContainer.pdflionToolbarTiny) {
-  :is(#viewFindButton, #pdflionPageOverview, #pdflionInsertBlankPage) {
+  :is(#viewFindButton, #pdflionPageOverview, #pdflionInsertPage) {
     display: none;
   }
 
@@ -1156,8 +1210,16 @@
     display: flex;
   }
 
+  /* Insert Page, with its menu, is as big as its button. */
+  > .toolbarButtonWithContainer {
+    width: 32px;
+    height: 32px;
+    aspect-ratio: auto;
+  }
+
   /* As pdf.js's Add file. */
-  #viewsManager & > button {
+  #viewsManager & > button,
+  #viewsManager & > .toolbarButtonWithContainer > button {
     width: 32px;
     height: 32px;
     background: var(--button-no-bg);

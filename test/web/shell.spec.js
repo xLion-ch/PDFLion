@@ -110,6 +110,46 @@ test("pdf.js keeps the keys PDFLion leaves it, such as zooming", async ({ page }
   await expect.poll(scale).toBeGreaterThan(before);
 });
 
+test("Insert Page's menu inserts each background, which the browser draws, the dots too", async ({
+  page,
+}) => {
+  await openAppExplained(page);
+  await openFromHome(page, [TRACEMONKEY]);
+  const viewer = await documentFrame(page, "compressed.tracemonkey-pldi-09.pdf");
+  const button = viewer.locator("#pdflionInsertPageButton");
+  const backgrounds = ["blank", "lined", "grid", "dotted", "fine-dotted", "isometric"];
+  /** @type {Record<string, number>} each background's share of the pixels drawn */
+  const drawn = {};
+  for (const [index, background] of backgrounds.entries()) {
+    await button.click();
+    await viewer.locator(`#pdflionInsertPage-${background}`).click();
+    await expect
+      .poll(() => viewer.evaluate(() => window.PDFViewerApplication.pagesCount))
+      .toBe(15 + index);
+    await expect(button).toBeEnabled();
+    // The new page, which the viewer shows, rendered as it would at 2 pixels a point.
+    drawn[background] = await viewer.evaluate(async () => {
+      const app = window.PDFViewerApplication;
+      const pdfPage = await app.pdfDocument.getPage(app.page);
+      const viewport = pdfPage.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
+      await pdfPage.render({ canvasContext: context, viewport, background: "white" }).promise;
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      let pixels = 0;
+      for (let i = 0; i < data.length; i += 4) if (data[i] < 245) pixels++;
+      return pixels / (data.length / 4);
+    });
+  }
+  expect(drawn.blank).toBe(0);
+  for (const background of backgrounds.slice(1)) {
+    expect(drawn[background], background).toBeGreaterThan(0.005);
+  }
+  expect(drawn["fine-dotted"]).toBeGreaterThan(drawn.dotted * 2);
+});
+
 test("closing a tab that isn't in Files says so, and offers Share", async ({ page }) => {
   await openApp(page);
   await openFromHome(page, [TRACEMONKEY]);

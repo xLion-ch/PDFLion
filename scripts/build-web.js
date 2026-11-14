@@ -5,8 +5,8 @@
  *
  * - `viewer/`: pdf.js's generic build, without its source maps, debugger and
  *   demo PDF, as the packaged desktop app leaves them out, and a viewer.html
- *   with PDFLion's overrides.css, geometry.js, the web's keys.js and
- *   viewer-host.js, and bridge.js, and a `<meta>` CSP that mirrors the
+ *   with PDFLion's overrides.css, geometry.js, backgrounds.js, the web's
+ *   keys.js and viewer-host.js, and bridge.js, and a `<meta>` CSP that mirrors the
  *   desktop's header
  * - `pdflion/`, `home/`, `tabs/`, `shared/`: src/viewer/, src/home/ (whose
  *   home.html gets home-host.js and a CSP), the strip's tabs.js and tabs.css,
@@ -82,6 +82,7 @@ export function injectViewer(html) {
     cspTag(VIEWER_CSP),
     '<link rel="stylesheet" href="../../pdflion/overrides.css">',
     '<script src="../../pdflion/geometry.js"></script>',
+    '<script src="../../pdflion/backgrounds.js"></script>',
     '<script src="../../web/keys.js"></script>',
     '<script src="../../web/viewer-host.js"></script>',
     '<script src="../../shared/texts.js"></script>',

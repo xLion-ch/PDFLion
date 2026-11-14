@@ -8,6 +8,7 @@ import vm from "node:vm";
 const SRC = path.resolve(fileURLToPath(import.meta.url), "..", "..", "..", "src");
 const BRIDGE = fs.readFileSync(path.join(SRC, "viewer", "bridge.js"), "utf8");
 const GEOMETRY = fs.readFileSync(path.join(SRC, "viewer", "geometry.js"), "utf8");
+const BACKGROUNDS = fs.readFileSync(path.join(SRC, "viewer", "backgrounds.js"), "utf8");
 const TEXTS = fs.readFileSync(path.join(SRC, "shared", "texts.js"), "utf8");
 
 /** Lets pending promises and stream reads settle. */
@@ -638,7 +639,20 @@ function loadBridge({
         calls.push(["PDFLib.load", [...bytes], { ...options }]);
         if (pdfLib.failure) throw pdfLib.failure;
         return {
-          insertPage: (index, size) => calls.push(["PDFLib.insertPage", index, [...size]]),
+          insertPage: (index, size) => {
+            calls.push(["PDFLib.insertPage", index, [...size]]);
+            return {
+              node: {
+                addContentStream: (/** @type {any} */ ref) =>
+                  calls.push(["PDFLib.addContentStream", index, ref]),
+              },
+            };
+          },
+          context: {
+            /** A stream is its contents, and its reference the stream itself. */
+            flateStream: (/** @type {string} */ contents) => ({ flate: contents }),
+            register: (/** @type {any} */ stream) => stream,
+          },
           /** @param {number} index */
           getPage: (index) => ({
             getRotation: () => pdfLib.degrees(pdfLib.rotations[index] ?? 0),
@@ -989,6 +1003,7 @@ function loadBridge({
   page.parent = embedded ? embedder : page;
   page.navigator ??= { languages: ["en-US"] };
   vm.runInNewContext(GEOMETRY, page, { filename: "geometry.js" });
+  vm.runInNewContext(BACKGROUNDS, page, { filename: "backgrounds.js" });
   vm.runInNewContext(TEXTS, page, { filename: "texts.js" });
   vm.runInNewContext(BRIDGE, page, { filename: "bridge.js" });
 
@@ -1574,23 +1589,71 @@ describe("bridge.js Home", () => {
   });
 });
 
-describe("bridge.js Insert Blank Page", () => {
-  it("adds a toolbar button, enabled once a document that can change has loaded", async () => {
+/** The backgrounds Insert Page's menus list, with their labels. */
+const BACKGROUND_LABELS = [
+  ["blank", "Blank"],
+  ["lined", "Lined (5\u00a0mm)"],
+  ["grid", "Grid (5\u00a0mm)"],
+  ["dotted", "Dotted (5\u00a0mm)"],
+  ["fine-dotted", "Dotted (1\u00a0mm)"],
+  ["isometric", "Isometric"],
+];
+
+/** The commands of Edit > Insert Page, by background. */
+const INSERT_COMMANDS = {
+  blank: "insertBlankPage",
+  lined: "insertLinedPage",
+  grid: "insertGridPage",
+  dotted: "insertDottedPage",
+  "fine-dotted": "insertFineDottedPage",
+  isometric: "insertIsometricPage",
+};
+
+describe("bridge.js Insert Page", () => {
+  it("adds a toolbar button with a menu of the backgrounds, enabled once a document that can change has loaded", async () => {
     const bridge = loadBridge();
     await bridge.load();
-    const button = bridge.toolbar.find((element) => element.id === "pdflionInsertBlankPage");
-    assert.ok(button);
-    assert.equal(bridge.toolbar.indexOf(button), bridge.toolbar.length - 2, "before the separator");
+    const container = bridge.toolbar.find((element) => element.id === "pdflionInsertPage");
+    assert.ok(container);
+    assert.equal(bridge.toolbar.indexOf(container), bridge.toolbar.length - 2, "before the separator");
+    assert.equal(container.className, "toolbarButtonWithContainer");
+    const [button, menu] = container.children;
+    assert.equal(button.id, "pdflionInsertPageButton");
     assert.equal(button.className, "toolbarButton");
-    assert.equal(button.title, "Insert Blank Page");
+    assert.equal(button.title, "Insert Page");
+    assert.equal(button.attributes["aria-haspopup"], "true");
+    assert.equal(button.attributes["aria-controls"], "pdflionInsertPageMenu");
+    assert.equal(menu.id, "pdflionInsertPageMenu");
+    const items = menu.children[0].children;
+    assert.deepEqual(
+      items.map((item) => [item.id, item.attributes["data-background"], item.children[0].textContent]),
+      BACKGROUND_LABELS.map(([background, label]) => [
+        `pdflionInsertPage-${background}`,
+        background,
+        label,
+      ]),
+    );
+    for (const item of items) {
+      assert.equal(item.className, "toolbarButton labeled pdflionBackgroundItem");
+      assert.equal(item.attributes.role, "menuitem");
+    }
     assert.equal(button.disabled, true);
     bridge.openDocument();
     await settle();
     assert.equal(button.disabled, false);
 
     button.listeners.click();
+    assert.equal(button.attributes["aria-expanded"], "true");
+    assert.equal(menu.classes.has("hidden"), false);
+    // Choosing one closes the menu first, then inserts the page.
+    menu.listeners.click();
+    items[1].listeners.click();
+    assert.equal(button.attributes["aria-expanded"], "false");
     for (let turn = 0; turn < 10; turn++) await settle();
     assert.equal(named(bridge.calls, "PDFLib.insertPage").length, 1);
+    const [[, index, { flate }]] = named(bridge.calls, "PDFLib.addContentStream");
+    assert.equal(index, 1);
+    assert.equal(flate, bridge.page.PDFLionBackgrounds.contentStream("lined", 612, 792));
   });
 
   it("keeps the button disabled for a locked document", async () => {
@@ -1598,8 +1661,44 @@ describe("bridge.js Insert Blank Page", () => {
     await bridge.load();
     bridge.openDocument({ info: { EncryptFilterName: "Standard" } });
     await settle();
-    const button = bridge.toolbar.find((element) => element.id === "pdflionInsertBlankPage");
-    assert.equal(button.disabled, true);
+    const container = bridge.toolbar.find((element) => element.id === "pdflionInsertPage");
+    assert.equal(container.children[0].disabled, true);
+  });
+
+  it("lists the backgrounds backgrounds.js draws", () => {
+    const bridge = loadBridge();
+    assert.deepEqual(
+      [...bridge.page.PDFLionBackgrounds.BACKGROUNDS],
+      BACKGROUND_LABELS.map(([background]) => background),
+    );
+  });
+
+  for (const [background, command] of Object.entries(INSERT_COMMANDS)) {
+    it(`inserts a page on ${background} for ${command}`, async () => {
+      const bridge = loadBridge();
+      await bridge.load();
+      bridge.openDocument();
+      assert.equal(await bridge.run(command), true);
+      assert.deepEqual(named(bridge.calls, "PDFLib.insertPage"), [["PDFLib.insertPage", 1, [612, 792]]]);
+      const streams = named(bridge.calls, "PDFLib.addContentStream");
+      if (background === "blank") {
+        assert.deepEqual(streams, []);
+      } else {
+        const content = bridge.page.PDFLionBackgrounds.contentStream(background, 612, 792);
+        assert.ok(content.length > 0);
+        assert.deepEqual(streams, [["PDFLib.addContentStream", 1, { flate: content }]]);
+      }
+    });
+  }
+
+  it("draws the background at the size of a page shown on its side", async () => {
+    const bridge = loadBridge();
+    await bridge.load();
+    bridge.openDocument();
+    bridge.app.pdfViewer.pages = [{ view: [0, 0, 612, 792], rotate: 90 }];
+    assert.equal(await bridge.run("insertGridPage"), true);
+    const [[, , { flate }]] = named(bridge.calls, "PDFLib.addContentStream");
+    assert.equal(flate, bridge.page.PDFLionBackgrounds.contentStream("grid", 792, 612));
   });
 
   it("does without a toolbar", async () => {
@@ -1854,15 +1953,23 @@ describe("bridge.js page overview", () => {
       [
         ["pdflionRotatePagesLeft", "Rotate Pages Left", true],
         ["pdflionRotatePagesRight", "Rotate Pages Right", true],
-        ["pdflionOverviewInsertBlankPage", "Insert Blank Page", true],
+        ["pdflionOverviewInsertPage", undefined, undefined],
       ],
     );
-    for (const tool of tools.children) {
-      assert.equal(tool.className, "toolbarButton viewsManagerButton");
+    const [insert, menu] = tools.children[2].children;
+    assert.equal(tools.children[2].className, "toolbarButtonWithContainer");
+    assert.deepEqual([insert.id, insert.title, insert.disabled], ["pdflionOverviewInsertPageButton", "Insert Page", true]);
+    assert.deepEqual(
+      menu.children[0].children.map((item) => item.attributes["data-background"]),
+      BACKGROUND_LABELS.map(([background]) => background),
+    );
+    const buttons = [tools.children[0], tools.children[1], insert];
+    for (const button of buttons) {
+      assert.equal(button.className, "toolbarButton viewsManagerButton");
     }
     bridge.openDocument();
     await settle();
-    for (const tool of tools.children) assert.equal(tool.disabled, false, tool.id);
+    for (const button of buttons) assert.equal(button.disabled, false, button.id);
   });
 
   for (const [before, description] of [
@@ -2072,7 +2179,9 @@ describe("bridge.js page overview", () => {
     ];
     bridge.page.document.checkedPages = [1, 3];
     bridge.run("pageOverview");
-    await bridge.header[0].children[2].listeners.click();
+    // The first of Insert Page's menu, Blank.
+    const [, menu] = bridge.header[0].children[2].children;
+    await menu.children[0].children[0].listeners.click();
     assert.deepEqual(named(bridge.calls, "PDFLib.insertPage"), [["PDFLib.insertPage", 3, [300, 400]]]);
     assert.equal(bridge.app.initialBookmark, "page=4&zoom=auto");
   });
@@ -2200,8 +2309,11 @@ describe("bridge.js rotating pages", () => {
     await bridge.load();
     bridge.openDocument({ info: { EncryptFilterName: "Standard" } });
     await settle();
-    for (const button of bridge.header[0].children) assert.equal(button.disabled, true);
-    assert.equal(await bridge.header[0].children[1].listeners.click(), false);
+    const [rotateLeft, rotateRight, insert] = bridge.header[0].children;
+    for (const button of [rotateLeft, rotateRight, insert.children[0]]) {
+      assert.equal(button.disabled, true);
+    }
+    assert.equal(await rotateRight.listeners.click(), false);
     assert.deepEqual(bridge.pdflion.dialogs, [["locked-encrypted", undefined]]);
     assert.deepEqual(named(bridge.calls, "PDFLib.load"), []);
   });
@@ -4968,19 +5080,19 @@ describe("bridge.js the toolbar's narrowest steps", () => {
     assert.deepEqual([redoOff.id, redoOff.disabled], ["pdflionRedoItem", true]);
   });
 
-  it("have Find…, Page Overview and Insert Blank Page in the ⋮ menu", async () => {
+  it("have Find…, Page Overview and Insert Page in the ⋮ menu", async () => {
     const bridge = loadBridge();
     await bridge.load();
     const [tiny] = bridge.menuContainer.children;
     assert.equal(tiny.className, "pdflionVisibleTiny");
-    const [find, overview, insert, separator] = tiny.children;
+    const [find, overview, insert, backgrounds, separator] = tiny.children;
     assert.equal(separator.className, "horizontalToolbarSeparator");
     assert.deepEqual(
       [find, overview, insert].map((item) => [item.id, item.children[0].textContent]),
       [
         ["pdflionSecondaryFind", "Find…"],
         ["pdflionSecondaryPageOverview", "Page Overview"],
-        ["pdflionSecondaryInsertBlankPage", "Insert Blank Page"],
+        ["pdflionSecondaryInsertPage", "Insert Page"],
       ],
     );
 
@@ -4990,10 +5102,33 @@ describe("bridge.js the toolbar's narrowest steps", () => {
     assert.ok(bridge.outerContainer.classes.has("pdflionPageOverview"));
     assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 2);
 
-    // Insert Blank Page works as its button does.
+    // Insert Page works as its button does, and shows the backgrounds below it.
     assert.equal(insert.disabled, true);
     bridge.openDocument();
     await settle();
     assert.equal(insert.disabled, false);
+    assert.equal(backgrounds.id, "pdflionSecondaryBackgrounds");
+    assert.equal(backgrounds.hidden, true);
+    assert.equal(insert.attributes["aria-expanded"], "false");
+    assert.deepEqual(
+      backgrounds.children.map((item) => [item.id, item.children[0].textContent]),
+      BACKGROUND_LABELS.map(([background, label]) => [
+        `pdflionSecondaryInsertPage-${background}`,
+        label,
+      ]),
+    );
+    insert.listeners.click();
+    assert.equal(backgrounds.hidden, false);
+    assert.equal(insert.attributes["aria-expanded"], "true");
+    insert.listeners.click();
+    assert.equal(backgrounds.hidden, true);
+
+    insert.listeners.click();
+    backgrounds.children[5].listeners.click();
+    assert.equal(backgrounds.hidden, true, "closed once one is chosen");
+    assert.equal(named(bridge.calls, "secondaryToolbar.close").length, 3);
+    for (let turn = 0; turn < 10; turn++) await settle();
+    const [[, , { flate }]] = named(bridge.calls, "PDFLib.addContentStream");
+    assert.equal(flate, bridge.page.PDFLionBackgrounds.contentStream("isometric", 612, 792));
   });
 });
